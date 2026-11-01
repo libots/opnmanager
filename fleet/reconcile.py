@@ -1,7 +1,7 @@
 """Deterministic, read-only reconciliation. Never contacts or changes a device."""
-import ipaddress
 import re
 from .models import Alias, Rule, InterfaceGroup, Category
+from .alias_patterns import compile_content
 
 PREFIX = "[opnmanager:"
 RULE_DEFAULTS = {"enabled": "1", "action": "pass", "direction": "in", "ipprotocol": "inet",
@@ -68,22 +68,14 @@ def plan_for(firewall, snapshot=None):
     available = {a.name for a in desired_aliases} | {a["name"] for a in data["aliases"] if a["name"] not in alias_names}
     expected = []
     for alias in desired_aliases:
-        expected.append(("alias", alias.name, alias.name, {"name": alias.name, "type": alias.type,
-            "content": alias.content, "description": alias.description, "enabled": str(int(alias.enabled))}))
-        for member in alias.content.splitlines():
-            member = member.strip()
-            if not member: continue
-            try:
-                if alias.type == "port":
-                    if member.isidentifier():
-                        if member not in available: raise ValueError()
-                    else:
-                        ports = [int(p) for p in member.split(":")]
-                        if not 1 <= len(ports) <= 2 or any(p < 1 or p > 65535 for p in ports) or ports[0] > ports[-1]: raise ValueError()
-                elif member not in available:
-                    ipaddress.ip_network(member, strict=False)
-            except ValueError:
-                plan["errors"].append(f"Alias {alias.name}: unresolved or invalid member {member} on this firewall.")
+        try:
+            excluded = [member.strip() for member in alias.content.splitlines() if member.strip() in alias_names and member.strip() not in available]
+            if excluded: raise ValueError("Referenced aliases are excluded from this firewall: " + ", ".join(excluded))
+            compiled = compile_content(alias.content, alias.type, available)
+            expected.append(("alias", alias.name, alias.name, {"name": alias.name, "type": alias.type,
+                "content": compiled, "description": alias.description, "enabled": str(int(alias.enabled))}))
+        except ValueError as exc:
+            plan["errors"].append(f"Alias {alias.name}: {exc}")
     # Alias cycles would produce invalid nested tables.
     graph = {a.name: [v.strip() for v in a.content.splitlines() if v.strip() in alias_names] for a in desired_aliases}
     def visit(name, path):

@@ -4,6 +4,7 @@ from django.db import transaction
 from .models import Rule, RuleOrigin, Alias, Category, InterfaceGroup
 from .reconcile import RULE_DEFAULTS, PREFIX, canonical
 from .choices import ICMP_TYPES, ICMP6_TYPES
+from .alias_patterns import compile_content
 
 # Non-default behavior we cannot represent must never be silently discarded.
 SUPPORTED = set(RULE_DEFAULTS) | {"uuid", "description", "interface", "sequence", "icmptype", "icmp6type"}
@@ -15,7 +16,7 @@ def tokens(value): return [v.strip() for v in value.split(",") if v.strip()]
 
 
 @transaction.atomic
-def import_rules(snapshot, indices, scope, targets):
+def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
     firewall = snapshot.firewall
     if firewall.snapshots.first().pk != snapshot.pk:
         raise ValidationError("A newer snapshot exists. Refresh the rules page before importing.")
@@ -24,20 +25,20 @@ def import_rules(snapshot, indices, scope, targets):
     source_categories = {r["uuid"]: r for r in snapshot.data.get("categories", []) if r.get("uuid")}
     source_aliases = {r["name"]: r for r in snapshot.data["aliases"]}
     def apply_scope(obj):
-        obj.scope = scope; obj.save(); obj.firewalls.set(targets)
+        obj.scope = scope; obj.save(); obj.firewalls.set(targets); obj.firewall_groups.set(firewall_groups)
     def import_alias(name, stack=()):
         if name not in source_aliases: return
-        existing = Alias.objects.filter(name=name).first()
-        if existing:
-            row = source_aliases[name]
-            fields = {"type": existing.type, "content": existing.content, "enabled": str(int(existing.enabled))}
-            if canonical(fields, fields, "alias") != canonical(row, fields, "alias"):
-                raise ValidationError(f"Alias {name} conflicts with an existing manager definition. Reconcile it before importing.")
-            return
         if name in stack: raise ValidationError(f"Alias cycle at {name}.")
         row = source_aliases[name]
         if row["type"] not in {"host", "network", "port"}: raise ValidationError(f"Alias {name} has an unsupported type.")
         for member in row["content"].splitlines(): import_alias(member.strip(), stack + (name,))
+        existing = Alias.objects.filter(name=name).first()
+        if existing:
+            row = source_aliases[name]
+            fields = {"type": existing.type, "content": compile_content(existing.content, existing.type, Alias.objects.values_list("name", flat=True)), "enabled": str(int(existing.enabled))}
+            if canonical(fields, fields, "alias") != canonical(row, fields, "alias"):
+                raise ValidationError(f"Alias {name} conflicts with an existing manager definition. Reconcile it before importing.")
+            return
         alias = Alias(name=name, type=row["type"], content=row["content"], description=row.get("description", ""), enabled=row.get("enabled", "1") == "1")
         alias.full_clean(); apply_scope(alias)
     def ensure_group(local):
@@ -52,7 +53,7 @@ def import_rules(snapshot, indices, scope, targets):
                 raise ValidationError(f"Group {local} conflicts with an existing manager definition. Reconcile it before importing.")
             return group
         group = InterfaceGroup(name=local, description=source.get("descr", ""), sequence=int(source.get("sequence") or 0), scope=scope)
-        group.full_clean(); group.save(); group.members.set(member_ids); group.firewalls.set(targets)
+        group.full_clean(); group.save(); group.members.set(member_ids); group.firewalls.set(targets); group.firewall_groups.set(firewall_groups)
         return group
     imported = []
     for index in indices:
@@ -97,12 +98,13 @@ def import_rules(snapshot, indices, scope, targets):
             values[key] = row.get(source_key, RULE_DEFAULTS[source_key]) == "1"
         for field in ("source_port", "destination_port"): import_alias(values[field])
         rule = Rule(**values); rule.full_clean(); rule.save()
-        rule.interfaces.set(interfaces); rule.interface_groups.set(groups); rule.firewalls.set(targets)
+        rule.interfaces.set(interfaces); rule.interface_groups.set(groups); rule.firewalls.set(targets); rule.firewall_groups.set(firewall_groups)
         for category_id in tokens(row.get("categories", "")):
             if category_id not in source_categories: raise ValidationError("Category inventory is missing. Pull a fresh snapshot.")
             category_row = source_categories[category_id]
             category, created = Category.objects.get_or_create(name=category_row["name"], defaults={"color": category_row.get("color") or "137b66", "scope": scope})
-            if created: category.firewalls.set(targets)
+            if created:
+                category.full_clean(); category.firewalls.set(targets); category.firewall_groups.set(firewall_groups)
             rule.categories.add(category)
         RuleOrigin.objects.create(firewall=firewall, rule=rule, remote_uuid=uid)
         imported.append(rule)

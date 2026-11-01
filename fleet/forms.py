@@ -13,7 +13,7 @@ class SnapshotImportForm(forms.Form):
         except (ValueError, UnicodeDecodeError, RecursionError) as exc:
             raise forms.ValidationError("Invalid snapshot JSON: " + str(exc))
 
-from .models import Rule, Alias, LogicalInterface, Firewall, InterfaceGroup
+from .models import Rule, Alias, LogicalInterface, Firewall, InterfaceGroup, FirewallGroup, Category
 from .choices import ICMP_TYPES, ICMP6_TYPES, PROTOCOLS
 
 
@@ -65,7 +65,7 @@ class RuleForm(forms.ModelForm):
     class Meta:
         model = Rule
         exclude = ["interface"]
-        widgets = {key: MultiSelectWidget() for key in ("interfaces", "interface_groups", "categories", "firewalls")}
+        widgets = {key: MultiSelectWidget() for key in ("interfaces", "interface_groups", "categories", "firewalls", "firewall_groups")}
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
@@ -125,6 +125,7 @@ class ImportRulesForm(forms.Form):
     rule_indices = forms.MultipleChoiceField(widget=forms.CheckboxSelectMultiple, label="Rules to import")
     scope = forms.ChoiceField(choices=Rule._meta.get_field("scope").choices, initial="selected")
     firewalls = forms.ModelMultipleChoiceField(queryset=Firewall.objects.all(), required=False, widget=MultiSelectWidget())
+    firewall_groups = forms.ModelMultipleChoiceField(queryset=FirewallGroup.objects.all(), required=False, widget=MultiSelectWidget())
     def __init__(self, *args, snapshot, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["rule_indices"].choices = [(str(i), row.get("description") or f"Rule {i + 1}") for i, row in enumerate(snapshot.data["rules"])]
@@ -132,8 +133,8 @@ class ImportRulesForm(forms.Form):
         self.fields["firewalls"].initial = [snapshot.firewall_id]
     def clean(self):
         data = super().clean()
-        if data.get("scope") == "selected" and not data.get("firewalls"):
-            raise forms.ValidationError("Select at least one target firewall.")
+        if data.get("scope") == "selected" and not data.get("firewalls") and not data.get("firewall_groups"):
+            raise forms.ValidationError("Select at least one firewall or firewall group.")
         return data
 
 
@@ -146,11 +147,47 @@ class LineTokenWidget(TokenWidget):
 
 
 class AliasForm(forms.ModelForm):
-    content = forms.CharField(widget=LineTokenWidget(tags=True), help_text="Search aliases, or type an address/network/port and press Enter for each entry.")
+    expansion_preview = forms.CharField(required=False, disabled=True, widget=forms.Textarea(attrs={"rows": 6}), help_text="Saved-content preview (first 50 entries). The synchronization review shows the full payload.")
+    content = forms.CharField(widget=LineTokenWidget(tags=True), help_text="Search aliases or type addresses, CIDRs, IP wildcard/range patterns, or ports. Edit as text accepts one item per line. Maximum 4096 compiled entries.")
     class Meta:
         model = Alias
         fields = "__all__"
-        widgets = {"firewalls": MultiSelectWidget()}
+        widgets = {"firewalls": MultiSelectWidget(), "firewall_groups": MultiSelectWidget()}
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["content"].widget.choices = [(a.name, a.name) for a in Alias.objects.exclude(pk=self.instance.pk)]
+        if self.instance.pk:
+            from .alias_patterns import compile_content
+            try:
+                compiled = compile_content(self.instance.content, self.instance.type, Alias.objects.values_list("name", flat=True))
+                entries = compiled.splitlines()
+                self.initial["expansion_preview"] = f"{len(entries)} entries\n" + "\n".join(entries[:50])
+            except ValueError as exc: self.initial["expansion_preview"] = str(exc)
+    def clean(self):
+        data = super().clean()
+        if data.get("content") and data.get("type"):
+            from .alias_patterns import compile_content
+            try: compile_content(data["content"], data["type"], set(Alias.objects.values_list("name", flat=True)) | {data.get("name", "")})
+            except ValueError as exc: self.add_error("content", str(exc))
+        return data
+
+
+class FirewallGroupForm(forms.ModelForm):
+    class Meta:
+        model = FirewallGroup
+        fields = "__all__"
+        widgets = {"firewalls": MultiSelectWidget()}
+
+
+class CategoryForm(forms.ModelForm):
+    class Meta:
+        model = Category
+        fields = "__all__"
+        widgets = {"firewalls": MultiSelectWidget(), "firewall_groups": MultiSelectWidget()}
+
+
+class InterfaceGroupForm(forms.ModelForm):
+    class Meta:
+        model = InterfaceGroup
+        fields = "__all__"
+        widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups", "members")}

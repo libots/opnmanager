@@ -209,3 +209,39 @@ A self-signed or private-CA certificate requires trust configuration on the **ma
 Check reachability from the Ubuntu container running OPNmanager, not just from your workstation. For example, `curl --connect-timeout 5 https://FIREWALL-HOST:PORT/api/firewall/filter/get` tests network and certificate trust without sending credentials; an HTTP 401 is expected when a reachable API requires authentication. Use the actual management hostname/port. Provide `--cacert /path/to/trusted-ca.pem` when checking a private CA. Do not include keys or secrets in shared command output. A working read on one endpoint does not establish permission to read the others.
 
 Deleting a firewall in administration also deletes its owned snapshots and source-rule associations after confirmation. Shared manager rules, logical interfaces and audit records are retained. Standalone snapshot/audit deletion remains disabled; the firewall deletion workflow still requires the normal firewall and other related-object permissions.
+
+## Firewall groups and automatic policy targeting
+
+**Settings → Firewall groups & memberships** manages groups of firewall devices (for example, Branches or Datacenters). These are distinct from interface groups inside OPNsense. Choose member devices in the group editor, or use the membership section in a firewall's editor. Membership selectors also support bulk text editing.
+
+Every rule, alias, category and interface-group definition has a Scope:
+
+- **All enabled firewalls** (the default) includes existing and future enabled firewalls. Device/group selection lists are ignored in this mode.
+- **Selected firewalls / firewall groups** targets the union of directly selected devices and members of the selected firewall groups. An empty combined selection targets no devices. Overlapping groups do not create duplicate policies.
+
+Assignments are evaluated dynamically. Adding a new firewall to a targeted group makes the existing policy appear in its desired state without copying policy records. Removing a membership removes that group's coverage, unless another group/direct assignment still targets it. Disabled firewalls are excluded. New devices still require the necessary interface mappings and a snapshot before a synchronization plan can be generated.
+
+This automatically assigns **desired state**, not unattended device changes. Definition synchronization still requires an explicit reviewed apply; rule deployment remains review-only. Existing device entries that fall out of scope are never automatically deleted. Give dependent aliases/categories/interface groups compatible targets too; importing new supporting definitions with a rule automatically gives them the same scope and selected firewall groups. Imports still reuse matching existing definitions and reject conflicts without overwriting shared policy.
+
+## Alias IP wildcard and range patterns
+
+Host and network aliases accept patterns as well as ordinary addresses, CIDRs and nested alias references. Save patterns in the manager; only compiled addresses/CIDRs are sent to OPNsense. The saved alias form shows a preview, and the definition-sync review shows the exact payload to apply.
+
+| Input | Meaning |
+| --- | --- |
+| `192.168.x.10` or `192.168.*.10` | 256 addresses: `192.168.0.10` through `192.168.255.10` |
+| `192.168.0-3.10` | Four addresses, varying the third octet |
+| `192.168.0-3.*` | A network alias compiles this to `192.168.0.0/22` |
+| `2001:db8::0-af` | 176 IPv6 addresses, with the final hextet from hexadecimal 0 through af |
+| `2001:db8:0-af:*:*:*:*:*` | A network alias compiles this to exact CIDRs, without enumerating every address |
+| `192.0.2.1-192.0.2.20` | An inclusive full-address range; same-family IPv6 endpoints also work |
+
+`x`/`X` or `*` replaces a **whole IPv4 octet or IPv6 hextet**. IPv4 component ranges are decimal (0–255); IPv6 component ranges are hexadecimal (0–ffff). Ranges are inclusive. Standard IPv6 `::` compression is supported and means zero hextets, not wildcard hextets. Partial-digit globs such as `1x` are not supported. CIDR suffixes may be used on literal networks, not on patterns. Port aliases retain OPNsense's `100:200` range syntax; IP globs are not port syntax.
+
+**Host aliases** expand patterns to individual addresses. **Network aliases** produce exact CIDR coverage where possible; sparse patterns produce multiple entries without including extra addresses. For example, `192.168.x.10` never includes `192.168.1.11`. Contiguous IPv6 wildcard suffixes can represent huge networks compactly. Each alias is limited to **4096 compiled entries**, with early rejection of patterns whose expansion would exceed that limit. Use a network alias for compact CIDRs or narrow the pattern. An invalid/oversized expansion blocks the entire synchronization plan. Existing known alias names take precedence over wildcard parsing (an alias named `x` is a reference, not an IP pattern).
+
+## Edit selection lists as text
+
+Searchable multi-option controls now offer **Edit as text**. Paste or type one item per line, then choose **Apply list**. This replaces the selection, removes duplicate selections and leaves the rest of the form untouched; an empty applied list clears that field. Cancel preserves the original selection. Apply or cancel all open text editors before saving the form.
+
+For fixed option/relation fields (interfaces, groups, firewalls, categories, protocols, ICMP types), enter existing option names or values. Unknown or ambiguous lines are shown as errors and do not partially modify the selection. For fields that allow custom entries (alias content and rule addresses/ports), new values can be entered; normal server-side validation still applies. Free-text entry does not bypass OPNsense restrictions: port fields still take a single port/range/port alias, and unknown categories/interfaces must be created using their normal editors first.

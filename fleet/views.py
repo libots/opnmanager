@@ -175,7 +175,7 @@ def adopt_rules(request, pk):
     if form.is_valid() and form.cleaned_data["snapshot_id"] == snapshot.pk:
         try:
             with transaction.atomic():
-                rules = import_rules(snapshot, form.cleaned_data["rule_indices"], form.cleaned_data["scope"], form.cleaned_data["firewalls"])
+                rules = import_rules(snapshot, form.cleaned_data["rule_indices"], form.cleaned_data["scope"], form.cleaned_data["firewalls"], form.cleaned_data["firewall_groups"])
                 AuditEvent.objects.create(actor=request.user.username, action="rules.imported", detail=f"{fw.name}: {len(rules)}")
             messages.success(request, f"Imported {len(rules)} rules into the manager. Device configuration was unchanged.")
         except (ValidationError, ValueError) as exc:

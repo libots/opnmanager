@@ -7,6 +7,13 @@ from django.conf import settings
 
 identifier = RegexValidator(r"^[A-Za-z_][A-Za-z0-9_]*$", "Use letters, digits and underscores; start with a letter or underscore.")
 
+class FirewallGroup(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=255, blank=True)
+    firewalls = models.ManyToManyField("Firewall", blank=True, related_name="groups")
+    def __str__(self): return self.name
+    class Meta: ordering = ["name"]
+
 class Firewall(models.Model):
     name = models.CharField(max_length=100, unique=True)
     base_url = models.URLField(help_text="HTTPS management URL, e.g. https://fw.example.net")
@@ -46,16 +53,17 @@ class InterfaceMapping(models.Model):
 class ScopedPolicy(models.Model):
     ALL = "all"
     SELECTED = "selected"
-    scope = models.CharField(max_length=10, choices=[(ALL, "All enabled firewalls"), (SELECTED, "Selected firewalls")], default=ALL)
-    firewalls = models.ManyToManyField(Firewall, blank=True, help_text="Only used for Selected firewalls; an empty selection targets none.")
+    scope = models.CharField(max_length=10, choices=[(ALL, "All enabled firewalls"), (SELECTED, "Selected firewalls / firewall groups")], default=ALL)
+    firewalls = models.ManyToManyField(Firewall, blank=True, help_text="Used for Selected firewalls / firewall groups. Direct selections and group memberships are combined; an empty combined selection targets none.")
+    firewall_groups = models.ManyToManyField(FirewallGroup, blank=True, help_text="Combined with directly selected firewalls. Membership changes apply automatically.")
     class Meta: abstract = True
     def applies_to(self, firewall):
-        return firewall.enabled and (self.scope == self.ALL or self.firewalls.filter(pk=firewall.pk).exists())
+        return firewall.enabled and (self.scope == self.ALL or self.firewalls.filter(pk=firewall.pk).exists() or self.firewall_groups.filter(firewalls=firewall).exists())
 
 class Alias(ScopedPolicy):
     name = models.CharField(max_length=32, unique=True, validators=[identifier])
     type = models.CharField(max_length=10, choices=[("host", "Hosts"), ("network", "Networks"), ("port", "Ports")], default="host")
-    content = models.TextField(help_text="One address, network, port, or nested alias per line. URL/GeoIP aliases are not managed in this version.")
+    content = models.TextField(help_text="One address, CIDR, wildcard/range pattern, port, or nested alias per line. URL/GeoIP aliases are not managed in this version.")
     description = models.CharField(max_length=255, blank=True)
     enabled = models.BooleanField(default=True)
     def __str__(self): return self.name

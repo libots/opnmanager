@@ -1,15 +1,21 @@
 from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
-from .models import Firewall, LogicalInterface, InterfaceMapping, Alias, Rule, Snapshot, AuditEvent, Category, InterfaceGroup
+from .models import Firewall, LogicalInterface, InterfaceMapping, Alias, Rule, Snapshot, AuditEvent, Category, InterfaceGroup, FirewallGroup
 
 class MappingInline(admin.TabularInline):
     model = InterfaceMapping
     extra = 0
+class FirewallGroupMembershipInline(admin.TabularInline):
+    model = FirewallGroup.firewalls.through
+    extra = 0
+    verbose_name = "Firewall group membership"
+    verbose_name_plural = "Firewall group memberships"
+
 @admin.register(Firewall)
 class FirewallAdmin(admin.ModelAdmin):
     list_display = ["name", "base_url", "enabled"]
-    inlines = [MappingInline]
+    inlines = [MappingInline, FirewallGroupMembershipInline]
     readonly_fields = ["credential_settings"]
 
     def get_deleted_objects(self, objs, request):
@@ -51,10 +57,19 @@ admin.site.site_title = "OPNmanager"
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
+    from .forms import CategoryForm
+    form = CategoryForm
     list_display = ["name", "color", "scope"]
-    filter_horizontal = ["firewalls"]
 
 @admin.register(InterfaceGroup)
 class InterfaceGroupAdmin(admin.ModelAdmin):
+    from .forms import InterfaceGroupForm
+    form = InterfaceGroupForm
     list_display = ["name", "description", "scope", "sequence"]
-    filter_horizontal = ["members", "firewalls"]
+
+@admin.register(FirewallGroup)
+class FirewallGroupAdmin(admin.ModelAdmin):
+    from .forms import FirewallGroupForm
+    form = FirewallGroupForm
+    list_display = ["name", "description"]
+    search_fields = ["name"]
