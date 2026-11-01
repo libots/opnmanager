@@ -11,6 +11,15 @@ class FirewallAdmin(admin.ModelAdmin):
     list_display = ["name", "base_url", "enabled"]
     inlines = [MappingInline]
     readonly_fields = ["credential_settings"]
+
+    def get_deleted_objects(self, objs, request):
+        deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
+        # Snapshots belong to their firewall. Permit their cascade here without
+        # opening standalone snapshot deletion or weakening other permissions.
+        if self.has_delete_permission(request):
+            permissions.discard(Snapshot._meta.verbose_name)
+        return deleted, counts, permissions, protected
+
     @admin.display(description="API credentials")
     def credential_settings(self, obj):
         if not obj or not obj.pk: return "Save this firewall first to configure its API credentials."
