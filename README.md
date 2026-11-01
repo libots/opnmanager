@@ -297,3 +297,6 @@ Rule deployment resolves supporting definitions **per rule**, including nested a
 
 
 Deployment preflight compares semantic configuration rather than raw API JSON. Known audit/UI annotations, collection order, multi-value selection order, alias line order and equivalent default-field representations do not count as edits. Unknown nonempty fields—including advanced rule settings—remain protected. Real additions/removals or configuration changes still stop the operation before rule writes; the error now names affected collections, identities and fields without exposing field values. Pull a fresh snapshot and review those actual changes rather than bypassing the guard. Alias/definition preflight uses the same normalization.
+
+
+Alias preflight also excludes known PF runtime counters (`eval_match`, `eval_nomatch`, and the incoming/outgoing pass/block packet/byte counters). Normal traffic must not look like a configuration edit. This exclusion applies only to alias records; actual alias content, type, enablement and unknown settings remain protected. Counter changes do not require repulling a snapshot before applying a reviewed rule plan.

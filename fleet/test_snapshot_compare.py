@@ -44,6 +44,33 @@ class SemanticSnapshotTests(SimpleTestCase):
         self.assertEqual(alias_fingerprint(before['aliases']),alias_fingerprint(after['aliases']))
         self.assertEqual(fingerprint(before),fingerprint(after))
 
+    def test_pf_alias_traffic_and_evaluation_counters_are_runtime_only(self):
+        counters=['eval_match','eval_nomatch','in_pass_b','in_pass_p','out_pass_b','out_pass_p','in_block_b','in_block_p','out_block_b','out_block_p']
+        before={**EMPTY,'aliases':[{'uuid':'41175fa7-ce66-46da-9498-1f87161f2cbb','name':'Managed','type':'host','content':'192.0.2.1',**{name:'0' for name in counters}},
+                                  {'name':'bogons','eval_nomatch':'1'},{'name':'bogonsv6','eval_nomatch':'2'}]}
+        after=deepcopy(before)
+        after['aliases'][0].update({name:str(index+100) for index,name in enumerate(counters)})
+        after['aliases'][1]['eval_nomatch']='1234';after['aliases'][2]['eval_nomatch']='5678'
+        self.assertEqual(configuration_changes(before,after),[])
+        from .alias_sync import alias_fingerprint
+        from .definition_sync import fingerprint
+        self.assertEqual(alias_fingerprint(before['aliases']),alias_fingerprint(after['aliases']))
+        self.assertEqual(fingerprint(before),fingerprint(after))
+        after['aliases'][0]['content']='192.0.2.2'
+        self.assertIn('content',' '.join(configuration_changes(before,after)))
+
+    def test_counter_appearance_does_not_mask_other_alias_settings(self):
+        before={**EMPTY,'aliases':[{'name':'A','type':'host','content':'192.0.2.1'}]}
+        after=deepcopy(before);after['aliases'][0].update(eval_match='9',out_pass_p='10')
+        self.assertEqual(configuration_changes(before,after),[])
+        after['aliases'][0]['enabled']='0'
+        self.assertIn('enabled',' '.join(configuration_changes(before,after)))
+        after['aliases'][0]['custom_setting']='new'
+        self.assertIn('custom_setting',' '.join(configuration_changes(before,after)))
+        # Counter names are ignored only in alias records, not globally.
+        self.assertTrue(configuration_changes({**EMPTY,'rules':[{'uuid':'r','eval_match':'1'}]},
+                                              {**EMPTY,'rules':[{'uuid':'r','eval_match':'2'}]}))
+
 class PreflightTests(TestCase):
     def setUp(self):
         self.fw=Firewall.objects.create(name='Test',base_url='https://test.example')
@@ -65,3 +92,14 @@ class PreflightTests(TestCase):
         with self.assertRaisesMessage(DeviceError,'fields action'):
             execute_deployment(self.fw,plan['approval_sha256'],[str(self.rule.pk)],client,'test')
         client.save_rule.assert_not_called();client.apply_rules.assert_not_called()
+
+    def test_live_alias_counters_do_not_prevent_rule_deployment(self):
+        snapshot=self.fw.snapshots.first()
+        snapshot.data={**self.data,'aliases':[{'uuid':'a','name':'LocalAlias','type':'host','content':'192.0.2.1','eval_match':'1','in_pass_b':'100'}]}
+        snapshot.save()
+        plan=deployment_plan(self.fw);payload=plan['rows'][0]['operation']['payload']
+        live=deepcopy(snapshot.data);live['aliases'][0].update(eval_match='2',in_pass_b='200',out_pass_p='3')
+        observed=deepcopy(live);observed['rules'].append({**payload,'uuid':'managed'})
+        client=Mock();client.snapshot.side_effect=[live,observed]
+        self.assertEqual(execute_deployment(self.fw,plan['approval_sha256'],[str(self.rule.pk)],client,'test'),1)
+        client.save_rule.assert_called_once();client.apply_rules.assert_called_once()

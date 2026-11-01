@@ -5,6 +5,12 @@ COLLECTIONS={'rules':'rule','aliases':'alias','groups':'group','categories':'cat
 # These are model/UI annotations, not packet-filter configuration. Never ignore
 # arbitrary unknown fields: gateways, schedules, state tuning, etc. must still block.
 ANNOTATIONS={'audit','sort_order','prio_group','created','updated','category_colors'}
+# PF table evaluation and traffic statistics change while packets are processed.
+# Scope this explicit list to aliases: do not ignore unknown *_p/*_b fields or
+# other numeric fields that could be actual configuration.
+RUNTIME_FIELDS={'alias':{'eval_match','eval_nomatch','in_pass_b','in_pass_p',
+                         'out_pass_b','out_pass_p','in_block_b','in_block_p',
+                         'out_block_b','out_block_p'}}
 DEFAULTS={
     'rule':{**RULE_DEFAULTS,'statetype':'keep','allowopts':'0','tcpflags_any':'0'},
     'alias':{'enabled':'1','description':''},
@@ -15,7 +21,7 @@ DEFAULTS={
 
 
 def normalize_row(row,kind):
-    cleaned={key:value for key,value in row.items() if key not in ANNOTATIONS and not key.startswith('alias_meta_')}
+    cleaned={key:value for key,value in row.items() if key not in ANNOTATIONS and key not in RUNTIME_FIELDS.get(kind,set()) and not key.startswith('alias_meta_')}
     fields={**DEFAULTS[kind],**cleaned}
     normalized=canonical({**DEFAULTS[kind],**cleaned},fields,kind)
     for key in ('sequence',):
