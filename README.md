@@ -79,7 +79,7 @@ The demo uses `.invalid` hostnames and invented snapshots, not real device obser
 5. Use `@VL10:net` or `@VL10:ip` in source/destination to resolve an interface network or address on each firewall. Ordinary network/alias values pass through unchanged.
 6. Pull current configuration or import a normalized snapshot, then review field differences and export a plan.
 
-Rule sequence is significant. Duplicate sequence values on the same logical interface block planning. Stable `[opnmanager:<UUID>]` description prefixes identify managed rules across devices; a local rule with the same name is **not** silently adopted. Existing rules can be reviewed as local-only, then modeled explicitly in the ideal set. Rules whose markers are no longer targeted are reported as out-of-scope for manual review, never deleted automatically.
+Rule sequence is significant. Duplicate sequence values on the same logical interface block planning. Compact stable `[om:<12 hexadecimal digits>]` description prefixes identify managed rules across devices; a local rule with the same name is **not** silently adopted. Existing rules can be reviewed as local-only, then modeled explicitly in the ideal set. Rules whose markers are no longer targeted are reported as out-of-scope for manual review, never deleted automatically.
 
 Statuses distinguish missing, changed, in-sync managed fields, local-only objects, out-of-scope rules, and conflicting identities. Missing mappings, alias cycles, excluded alias references and duplicate managed identities block exportable operations. Reports use the last captured snapshot and show its timestamp; they are not live compliance guarantees.
 
@@ -300,3 +300,6 @@ Deployment preflight compares semantic configuration rather than raw API JSON. K
 
 
 Alias preflight also excludes known PF runtime counters (`eval_match`, `eval_nomatch`, and the incoming/outgoing pass/block packet/byte counters). Normal traffic must not look like a configuration edit. This exclusion applies only to alias records; actual alias content, type, enablement and unknown settings remain protected. Counter changes do not require repulling a snapshot before applying a reviewed rule plan.
+
+
+Rule descriptions now use a short stable marker such as `[om:6dd1349ef6bd] Allow DNS` instead of the full UUID prefix. The human rule name stays unchanged. The token comes from the immutable manager rule UUID, and collisions are checked against all manager rules before deployment (a collision blocks writes rather than guessing ownership). Legacy `[opnmanager:<UUID>]` markers remain recognized. Existing deployed rules appear as description-only updates and can be shortened through the normal reviewed push; they are updated by their existing remote UUID, not recreated. Both marker formats remain protected from duplicate import and are recognized for out-of-scope reporting. Preserve the marker when editing a managed rule on-device; changing only the human description does not change its identity. This change applies to rules, not VIP markers.

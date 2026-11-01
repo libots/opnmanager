@@ -3,7 +3,8 @@ import re
 from .models import Alias, Rule, InterfaceGroup, Category
 from .alias_patterns import compile_content
 
-PREFIX = "[opnmanager:"
+from .rule_identity import short_marker, matches as matches_rule, is_managed
+from collections import Counter
 RULE_DEFAULTS = {"enabled": "1", "action": "pass", "direction": "in", "ipprotocol": "inet",
     "protocol": "any", "source_net": "any", "destination_net": "any", "source_port": "", "destination_port": "",
     "received-on": "", "received-on-not": "0", "icmptype": "", "icmp6type": "", "categories": "", "log": "0", "quick": "1", "interfacenot": "0", "source_not": "0", "destination_not": "0"}
@@ -106,13 +107,16 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
             "members": ",".join(mappings[i.name] for i in members), "descr": group.description,
             "sequence": str(group.sequence), "nogroup": "0"}))
     category_ids = {row["name"]: row.get("uuid", "") for row in data.get("categories", [])}
+    marker_counts=Counter(short_marker(pk) for pk in Rule.objects.values_list("pk",flat=True))
     seen_sequences = set()
     for rule in Rule.objects.select_related("interface").prefetch_related("interfaces", "interface_groups", "categories", "origins").all():
         if rule_ids is not None and str(rule.pk) not in rule_ids: continue
         if not rule.applies_to(firewall): continue
         identity = str(rule.pk)
-        marker = f"{PREFIX}{identity}]"
+        marker = short_marker(rule.pk)
         try:
+            if marker_counts[marker]>1:
+                raise ValueError(f"Short rule identity collision for {marker}. Resolve the duplicate UUID prefix before deployment.")
             bound = rule.bound_interfaces()
             missing = [i.name for i in bound if i.name not in mappings]
             if missing: raise ValueError(f"Rule {rule.name}: missing interface mapping for {', '.join(missing)}.")
@@ -149,7 +153,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
                         raise ValueError(f"Rule {rule.name}: group {value} is excluded from this firewall.")
                     if value in alias_names and value not in available:
                         raise ValueError(f"Rule {rule.name}: alias {value} is excluded from this firewall.")
-            expected.append(("rule", marker, rule.name, fields))
+            expected.append(("rule", identity, rule.name, fields))
         except ValueError as exc:
             plan["errors"].append(str(exc))
     origin_uuids = {str(origin.rule_id): origin.remote_uuid for origin in firewall.ruleorigin_set.all()}
@@ -160,8 +164,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
         def matches_identity(row):
             if kind != "rule": return row.get("ifname" if kind == "group" else "name") == identity
             description = row.get("description", "")
-            rule_id = identity[len(PREFIX):-1]
-            return description == identity or description.startswith(identity + " ") or (bool(row.get("uuid")) and row["uuid"] == origin_uuids.get(rule_id))
+            return matches_rule(description,identity) or (bool(row.get("uuid")) and row["uuid"] == origin_uuids.get(identity))
         matches = [(i, row) for i, row in enumerate(rows) if matches_identity(row)]
         item = {"kind": kind, "name": label, "status": "missing", "changes": [], "desired": desired, "actual": None}
         actual = None
@@ -185,7 +188,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
         rows = data.get(list_name, [])
         for index, row in enumerate(rows):
             if index in matched[kind]: continue
-            managed = kind == "rule" and row.get("description", "").startswith(PREFIX)
+            managed = kind == "rule" and is_managed(row.get("description", ""))
             plan["items"].append({"kind": kind, "name": row.get("name", row.get("ifname", row.get("description", "Unnamed"))),
                 "status": "out_of_scope" if managed else "local_only", "changes": [], "actual": row, "desired": None})
     # Never offer a partial plan when prerequisites fail.

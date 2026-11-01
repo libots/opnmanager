@@ -2,7 +2,8 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from .models import Rule, RuleOrigin, Alias, Category, InterfaceGroup
-from .reconcile import RULE_DEFAULTS, PREFIX, canonical
+from .reconcile import RULE_DEFAULTS, canonical
+from .rule_identity import is_managed
 from .choices import ICMP_TYPES, ICMP6_TYPES
 from .alias_patterns import compile_content
 
@@ -64,7 +65,7 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
         if origin:
             imported.append(origin.rule)
             continue
-        if row.get("description", "").startswith(PREFIX):
+        if is_managed(row.get("description", "")):
             raise ValidationError("This rule already carries a manager identity; edit the existing manager rule instead.")
         unsupported = [k for k, v in row.items() if k not in SUPPORTED | IGNORED and not k.startswith("alias_meta_") and v not in ("", "0", SAFE_DEFAULTS.get(k, ""))]
         if unsupported: raise ValidationError("Cannot import without losing behavior: " + ", ".join(sorted(unsupported)))
