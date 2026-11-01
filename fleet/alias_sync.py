@@ -4,6 +4,7 @@ import json
 from .models import Snapshot, AuditEvent
 from .opnsense import DeviceError
 from .reconcile import plan_for, canonical
+from .snapshot_compare import rows_by_identity
 
 
 def digest(value):
@@ -11,7 +12,7 @@ def digest(value):
 
 
 def alias_fingerprint(rows):
-    return digest(sorted(rows, key=lambda row: (row.get("name", ""), row.get("uuid", ""))))
+    return digest(rows_by_identity({"aliases":rows},"aliases"))
 
 
 def alias_plan(firewall):

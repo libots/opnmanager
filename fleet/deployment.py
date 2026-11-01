@@ -6,6 +6,7 @@ from .models import Rule, Snapshot, AuditEvent
 from .opnsense import DeviceError
 from .reconcile import plan_for, canonical
 from .dependencies import rule_definitions
+from .snapshot_compare import configuration_changes
 
 
 def fingerprint(data):
@@ -53,7 +54,11 @@ def _execute_deployment(firewall, approved, selected, client, actor):
             occupied.add(position)
     baseline=firewall.snapshots.get(pk=plan['snapshot_id'])
     current=client.snapshot()
-    if fingerprint(current)!=fingerprint(baseline.data): raise DeviceError('Device configuration changed. Pull a new snapshot and review again.')
+    changes=configuration_changes(baseline.data,current)
+    if changes:
+        summary='; '.join(changes[:5])
+        if len(changes)>5:summary+=f'; and {len(changes)-5} more changes'
+        raise DeviceError('Device configuration changed: '+summary+'. Pull a new snapshot and review again. No rule writes were made.')
     if deployment_plan(firewall)['approval_sha256']!=approved: raise DeviceError('Manager policy changed during preflight. Review again.')
     AuditEvent.objects.create(actor=actor,action='rules.deploy.started',detail=firewall.name+' '+approved+' '+','.join(sorted(selected)))
     try:

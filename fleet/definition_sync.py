@@ -1,8 +1,9 @@
 """Reviewed, additive synchronization of supporting definitions, never rules."""
-from .alias_sync import digest, alias_fingerprint
+from .alias_sync import digest
 from .models import AuditEvent, Snapshot
 from .reconcile import plan_for, canonical
 from .dependencies import rule_definitions
+from .snapshot_compare import rows_by_identity
 from .opnsense import DeviceError
 
 COLLECTIONS = {"alias": "aliases", "group": "groups", "category": "categories"}
@@ -26,7 +27,7 @@ def definition_plan(firewall,rule=None):
 
 
 def fingerprint(data):
-    return digest({kind: alias_fingerprint(data.get(collection, [])) for kind, collection in COLLECTIONS.items()})
+    return digest({kind: rows_by_identity(data,collection) for kind, collection in COLLECTIONS.items()})
 
 
 def execute_definition_plan(firewall, approved_sha, client, actor, rule=None):
