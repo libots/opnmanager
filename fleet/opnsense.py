@@ -19,14 +19,40 @@ class OPNsenseClient:
         self.session.auth = (key, secret)
         self.session.verify = firewall.ca_bundle or True
     def get(self, path):
+        endpoint = f"API endpoint {path}"
         try:
             response = self.session.get(self.firewall.base_url.rstrip("/") + path, timeout=(5, 30), allow_redirects=False)
-            if response.status_code != 200:
-                raise DeviceError(f"Device API returned HTTP {response.status_code}. Check URL, API access and permissions.")
+        except requests.exceptions.SSLError as exc:
+            raise DeviceError(f"{endpoint}: TLS handshake or certificate verification failed. If OPNsense uses a private CA or self-signed certificate, install its trusted PEM certificate on the manager server and set this firewall's CA bundle path. Also use a management hostname matching the certificate.") from exc
+        except requests.exceptions.ProxyError as exc:
+            raise DeviceError(f"{endpoint}: proxy connection failed. Check the manager server's proxy configuration and whether it permits access to the firewall.") from exc
+        except requests.exceptions.ConnectTimeout as exc:
+            raise DeviceError(f"{endpoint}: connection timed out. Check the management address and port, routing from the manager server, and firewall access rules.") from exc
+        except requests.exceptions.ReadTimeout as exc:
+            raise DeviceError(f"{endpoint}: connected but the firewall did not respond within 30 seconds. Check device load and API availability.") from exc
+        except requests.exceptions.Timeout as exc:
+            raise DeviceError(f"{endpoint}: API request timed out. Check device reachability and API availability.") from exc
+        except requests.exceptions.ConnectionError as exc:
+            raise DeviceError(f"{endpoint}: connection failed. Check DNS, management address/port, routing from the manager server and firewall access rules.") from exc
+        except OSError as exc:
+            raise DeviceError(f"{endpoint}: unable to read the configured CA bundle. Set a readable PEM file path on the manager server.") from exc
+        except requests.RequestException as exc:
+            raise DeviceError(f"{endpoint}: request failed. Check the management address and server networking.") from exc
+        explanations = {
+            401: "Authentication rejected. Use an OPNsense API key and secret, not the account login password.",
+            403: "Access denied. Check the API user's effective privileges and any source-address restrictions.",
+            404: "Endpoint not found. Check the management URL/port and whether this OPNsense version supports this API.",
+        }
+        if response.status_code != 200:
+            detail = explanations.get(response.status_code, "Check device/API availability.")
+            if 300 <= response.status_code < 400:
+                detail = "The device redirected the request. Use the final HTTPS management origin and correct port; API redirects are not followed."
+            raise DeviceError(f"{endpoint}: HTTP {response.status_code}. {detail}")
+        try:
             return response.json()
-        except (requests.RequestException, ValueError) as exc:
-            # Don't leak device response bodies, Basic auth, or credentials to users/logs.
-            raise DeviceError("Unable to read device API. Check connectivity, TLS trust and API credentials.") from exc
+        except ValueError as exc:
+            raise DeviceError(f"{endpoint}: the server returned HTTP 200 but not valid JSON. Check that the URL/port reaches the OPNsense API rather than a login page or another web service.") from exc
+
     def snapshot(self):
         raw = self.get("/api/firewall/filter/get")
         try:

@@ -199,3 +199,11 @@ git pull --ff-only
 ```
 
 Setup applies additive schema/data migrations, refreshes static assets and preserves existing administrators, passwords, mappings and rules. The migration copies existing single-interface bindings into the multiselect field. Pull fresh snapshots for the new interface/group/category inventory; old normalized snapshots still load but cannot safely plan group/category synchronization until that inventory is known. Do not delete the database or key files when upgrading.
+
+### Troubleshooting firewall pulls
+
+Pull errors identify the failing endpoint and distinguish TLS failures, proxy/connectivity failures, timeouts, API authentication (401), authorization (403), unsupported endpoints (404), redirects and non-JSON responses. Raw exception messages and response bodies are not shown because they can contain credentials or device details.
+
+A self-signed or private-CA certificate requires trust configuration on the **manager server**. Export the trusted CA certificate (or the self-signed server certificate) as PEM, copy it to a file readable by the manager process, and set the firewall's **CA bundle** field to that absolute file path. The management hostname must match the certificate. Browser acceptance of a certificate does not configure Python's certificate trust. Do not disable certificate verification.
+
+Check reachability from the Ubuntu container running OPNmanager, not just from your workstation. For example, `curl --connect-timeout 5 https://FIREWALL-HOST:PORT/api/firewall/filter/get` tests network and certificate trust without sending credentials; an HTTP 401 is expected when a reachable API requires authentication. Use the actual management hostname/port. Provide `--cacert /path/to/trusted-ca.pem` when checking a private CA. Do not include keys or secrets in shared command output. A working read on one endpoint does not establish permission to read the others.
