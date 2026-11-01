@@ -110,14 +110,25 @@ def firewall_credentials(request, pk):
 @permission_required(("fleet.view_firewall", "fleet.sync_definitions"), raise_exception=True)
 def sync_definitions(request, pk):
     fw = get_object_or_404(Firewall, pk=pk)
+    rule_id=request.POST.get('rule_id') if request.method=='POST' else request.GET.get('rule')
+    if rule_id:
+        import uuid
+        try:rule_id=uuid.UUID(rule_id)
+        except ValueError:
+            from django.http import Http404
+            raise Http404('Invalid rule identifier')
+    rule=get_object_or_404(Rule,pk=rule_id) if rule_id else None
+    if rule and not rule.applies_to(fw):
+        from django.http import Http404
+        raise Http404('Rule does not target this firewall')
     if request.method == "POST":
         try:
-            count = execute_definition_plan(fw, request.POST.get("approval_sha256"), OPNsenseClient(fw), request.user.username)
+            count = execute_definition_plan(fw, request.POST.get("approval_sha256"), OPNsenseClient(fw), request.user.username, rule=rule)
             messages.success(request, f"Verified {count} supporting-definition changes. No manager rules were deployed.")
         except DeviceError as exc:
             messages.error(request, str(exc))
-        return redirect("firewall", pk=pk)
-    return render(request, "fleet/sync.html", {"firewall": fw, "plan": definition_plan(fw)})
+        return redirect("deploy_rules" if rule else "firewall", pk=pk)
+    return render(request, "fleet/sync.html", {"firewall": fw, "plan": definition_plan(fw,rule=rule), "rule":rule})
 
 
 @login_required

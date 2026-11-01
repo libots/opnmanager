@@ -49,7 +49,7 @@ def resolve_address(value, mappings):
         raise ValueError(f"Unmapped or invalid logical address {value}.")
     return mappings[match[1]] + ("ip" if match[2] == "ip" else "")
 
-def plan_for(firewall, snapshot=None, *, rule_ids=None):
+def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
     snapshot = snapshot or firewall.snapshots.first()
     plan = {"firewall": firewall.name, "snapshot_id": snapshot.pk if snapshot else None,
             "observed_at": snapshot.created_at.isoformat() if snapshot else None,
@@ -64,7 +64,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None):
     mappings = {m.logical_interface.name: m.device_interface for m in firewall.interface_mappings.select_related("logical_interface")}
     aliases = list(Alias.objects.all())
     alias_names = {a.name for a in aliases}
-    desired_aliases = [a for a in aliases if a.applies_to(firewall)]
+    desired_aliases = [a for a in aliases if a.applies_to(firewall) and (definition_names is None or a.name in definition_names["alias"])]
     available = {a.name for a in desired_aliases} | {a["name"] for a in data["aliases"] if a["name"] not in alias_names}
     expected = []
     for alias in desired_aliases:
@@ -85,12 +85,14 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None):
     if any(visit(name, set()) for name in graph):
         plan["errors"].append("Alias dependency cycle detected.")
     for category in Category.objects.all():
+        if definition_names is not None and category.name not in definition_names["category"]: continue
         if not category.applies_to(firewall): continue
         if "categories" not in data:
             plan["errors"].append("Snapshot lacks categories. Pull a new snapshot before synchronization.")
         expected.append(("category", category.name, category.name, {"name": category.name, "color": category.color.lower()}))
     groups = {group.name: group for group in InterfaceGroup.objects.prefetch_related("members").all()}
     for group in groups.values():
+        if definition_names is not None and group.name not in definition_names["group"]: continue
         if not group.applies_to(firewall): continue
         if "groups" not in data: plan["errors"].append("Snapshot lacks interface groups. Pull a new snapshot before synchronization.")
         members = list(group.members.all())

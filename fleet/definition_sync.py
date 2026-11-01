@@ -1,19 +1,27 @@
 """Reviewed, additive synchronization of supporting definitions, never rules."""
-from .alias_sync import digest, alias_plan, alias_fingerprint
+from .alias_sync import digest, alias_fingerprint
 from .models import AuditEvent, Snapshot
 from .reconcile import plan_for, canonical
+from .dependencies import rule_definitions
 from .opnsense import DeviceError
 
 COLLECTIONS = {"alias": "aliases", "group": "groups", "category": "categories"}
 
 
-def definition_plan(firewall):
-    all_objects = plan_for(firewall)
-    aliases = alias_plan(firewall)
-    operations = [op for kind in ("group", "category") for op in all_objects["operations"] if op["kind"] == kind]
-    operations += aliases["operations"]
-    result = {"firewall": firewall.name, "snapshot_id": all_objects["snapshot_id"], "errors": all_objects["errors"], "operations": operations}
-    result["approval_sha256"] = digest(result)
+def definition_plan(firewall,rule=None):
+    all_objects = plan_for(firewall,rule_ids={str(rule.pk)} if rule else None,
+                           definition_names=rule_definitions(rule) if rule else None)
+    pending={op['payload']['name']:op for op in all_objects['operations'] if op['kind']=='alias'}
+    aliases=[]
+    while pending:
+        ready=[name for name,op in pending.items() if not (set(op['payload']['content'].splitlines()) & set(pending))]
+        if not ready:
+            all_objects['errors'].append('Alias dependency cycle; synchronization blocked.');aliases=[];break
+        for name in sorted(ready):aliases.append(pending.pop(name))
+    operations = [op for kind in ('group','category') for op in all_objects['operations'] if op['kind']==kind]+aliases
+    result = {'firewall':firewall.name,'snapshot_id':all_objects['snapshot_id'],
+              'rule_id':str(rule.pk) if rule else None,'errors':all_objects['errors'],'operations':operations}
+    result['approval_sha256']=digest(result)
     return result
 
 
@@ -21,15 +29,15 @@ def fingerprint(data):
     return digest({kind: alias_fingerprint(data.get(collection, [])) for kind, collection in COLLECTIONS.items()})
 
 
-def execute_definition_plan(firewall, approved_sha, client, actor):
-    plan = definition_plan(firewall)
+def execute_definition_plan(firewall, approved_sha, client, actor, rule=None):
+    plan = definition_plan(firewall,rule=rule)
     if plan["errors"] or plan["approval_sha256"] != approved_sha:
         raise DeviceError("Plan changed or is blocked. Review a fresh synchronization plan.")
     baseline = firewall.snapshots.get(pk=plan["snapshot_id"])
     current = client.snapshot()
     if fingerprint(current) != fingerprint(baseline.data):
         raise DeviceError("Device definitions changed since this snapshot. Pull again and review a new plan.")
-    if definition_plan(firewall)["approval_sha256"] != approved_sha:
+    if definition_plan(firewall,rule=rule)["approval_sha256"] != approved_sha:
         raise DeviceError("Manager policy changed during preflight. Review a new plan.")
     operations = plan["operations"]
     if any(op["action"] == "update" and not op.get("remote_uuid") for op in operations):

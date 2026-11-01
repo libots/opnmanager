@@ -48,7 +48,10 @@ class DeploymentTests(TestCase):
         self.assertFalse(AuditEvent.objects.filter(action='rules.deploy.completed').exists())
     def test_missing_definitions_block_rules(self):
         Alias.objects.create(name='Required',content='10.0.0.1')
-        self.assertTrue(deployment_plan(self.fw)['rows'][0]['errors'])
+        self.first.source='Required';self.first.save()
+        rows=deployment_plan(self.fw)['rows']
+        self.assertTrue(rows[0]['errors'])
+        self.assertFalse(rows[1]['errors'])
     def test_gui_permission_confirmation_and_shared_navigation(self):
         user=get_user_model().objects.create_superuser('admin-test',password='Test-only-password')
         self.client.force_login(user)

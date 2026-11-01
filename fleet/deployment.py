@@ -5,6 +5,7 @@ from .alias_sync import digest
 from .models import Rule, Snapshot, AuditEvent
 from .opnsense import DeviceError
 from .reconcile import plan_for, canonical
+from .dependencies import rule_definitions
 
 
 def fingerprint(data):
@@ -16,18 +17,22 @@ def deployment_plan(firewall):
     result={'firewall':firewall.name,'snapshot_id':snapshot.pk if snapshot else None,'rows':[]}
     for rule in Rule.objects.all():
         if not rule.applies_to(firewall): continue
-        plan=plan_for(firewall,rule_ids={str(rule.pk)})
+        plan=plan_for(firewall,rule_ids={str(rule.pk)},definition_names=rule_definitions(rule))
         errors=list(plan['errors'])
-        if any(op['kind'] != 'rule' for op in plan['operations']):
-            errors.append('Synchronize supporting definitions first, then review a fresh rule plan.')
+        dependencies=[op for op in plan['operations'] if op['kind']!='rule']
+        if dependencies:
+            names=', '.join(op['kind']+' '+op['payload'].get('name',op['payload'].get('ifname','')) for op in dependencies)
+            errors.append('Required definitions need synchronization: '+names+'. Review them using the link below, then return to this rule plan.')
         item=next((i for i in plan['items'] if i['kind']=='rule' and i.get('desired')),None)
         operation=next((op for op in plan['operations'] if op['kind']=='rule'),None)
+        if operation and not dependencies and any(value.startswith('@category:') for value in operation['payload'].get('categories','').split(',')):
+            errors.append('Required category UUIDs are missing. Pull a live snapshot before pushing this rule.')
         if operation and operation['action']=='update' and not operation.get('remote_uuid'):
             errors.append('Pull a live snapshot with remote rule UUIDs before updating.')
         before=canonical(item['actual'] or {},item['desired'],'rule') if item and item['actual'] else {}
         after=canonical(item['desired'],item['desired'],'rule') if item else {}
         lines=list(difflib.unified_diff(json.dumps(before,indent=2,sort_keys=True).splitlines(),json.dumps(after,indent=2,sort_keys=True).splitlines(),fromfile='firewall/current',tofile='manager/desired',lineterm='')) if operation else []
-        result['rows'].append({'id':str(rule.pk),'name':rule.name,'operation':operation,'errors':errors,
+        result['rows'].append({'id':str(rule.pk),'name':rule.name,'operation':operation,'errors':errors,'dependencies':dependencies,
             'diff':[{'text':line,'kind':'added' if line.startswith('+') else 'removed' if line.startswith('-') else ''} for line in lines]})
     result['approval_sha256']=digest(result)
     return result
