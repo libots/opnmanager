@@ -49,7 +49,7 @@ def resolve_address(value, mappings):
         raise ValueError(f"Unmapped or invalid logical address {value}.")
     return mappings[match[1]] + ("ip" if match[2] == "ip" else "")
 
-def plan_for(firewall, snapshot=None):
+def plan_for(firewall, snapshot=None, *, rule_ids=None):
     snapshot = snapshot or firewall.snapshots.first()
     plan = {"firewall": firewall.name, "snapshot_id": snapshot.pk if snapshot else None,
             "observed_at": snapshot.created_at.isoformat() if snapshot else None,
@@ -106,6 +106,7 @@ def plan_for(firewall, snapshot=None):
     category_ids = {row["name"]: row.get("uuid", "") for row in data.get("categories", [])}
     seen_sequences = set()
     for rule in Rule.objects.select_related("interface").prefetch_related("interfaces", "interface_groups", "categories", "origins").all():
+        if rule_ids is not None and str(rule.pk) not in rule_ids: continue
         if not rule.applies_to(firewall): continue
         identity = str(rule.pk)
         marker = f"{PREFIX}{identity}]"

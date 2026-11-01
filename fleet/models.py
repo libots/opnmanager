@@ -33,7 +33,8 @@ class Firewall(models.Model):
         ordering = ["name"]
         permissions = [("refresh_firewall", "Can import and refresh firewall snapshots"),
                        ("manage_credentials", "Can manage firewall API credentials"),
-                       ("sync_definitions", "Can synchronize aliases, categories and interface groups")]
+                       ("sync_definitions", "Can synchronize aliases, categories and interface groups"),
+                       ("deploy_rules", "Can deploy selected firewall rules")]
 
 class LogicalInterface(models.Model):
     name = models.CharField(max_length=50, unique=True, validators=[identifier])

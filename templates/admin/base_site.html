@@ -1,0 +1,4 @@
+{% extends "admin/base.html" %}{% load static %}
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static 'app.css' %}"><link rel="stylesheet" href="{% static 'admin-shell.css' %}"><script defer src="{% static 'ui.js' %}"></script>{% endblock %}
+{% block header %}{% include 'sidebar.html' %}<div class="opn-admin-header"><span>NETWORK OPERATIONS / CONFIGURATION</span><div>{{ user.get_username }} · <a href="{% url 'password_change' %}">Change password</a> · <a href="/">Fleet overview</a><form method="post" action="{% url 'logout' %}" style="display:inline">{% csrf_token %}<button class="text-button">Sign out ↗</button></form></div></div>{% endblock %}
+{% block nav-sidebar %}{% endblock %}

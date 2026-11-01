@@ -22,7 +22,7 @@ def _format_network(network):
     return str(network.network_address) if network.prefixlen == network.max_prefixlen else str(network)
 
 
-def expand_entry(entry, alias_type, limit=MAX_ALIAS_ENTRIES):
+def _expand_basic(entry, alias_type, limit=MAX_ALIAS_ENTRIES):
     """Return addresses for host patterns; compact CIDRs for network patterns."""
     try:
         ipaddress.ip_network(entry, strict=False)
@@ -81,6 +81,69 @@ def expand_entry(entry, alias_type, limit=MAX_ALIAS_ENTRIES):
         for network in ipaddress.summarize_address_range(address(low), address(high)):
             output.append(_format_network(network))
             if len(output) > limit: raise ValueError(f"Pattern expansion exceeds {limit} CIDR entries.")
+    return output
+
+
+def _component_values(component, base, maximum):
+    if '[' not in component and not ('x' in component.lower() and component.lower() != 'x'):
+        low, high = _interval(component, base, maximum)
+        return range(low, high + 1)
+    if base != 16: raise ValueError("Bracketed digit ranges are supported inside IPv6 hextets only.")
+    atoms = re.findall(r"\[[0-9a-fA-F]+-[0-9a-fA-F]+\]|[0-9a-fA-F]+|[xX*]", component)
+    if ''.join(atoms) != component: raise ValueError("Invalid bracketed IPv6 component.")
+    width = sum(max(map(len, atom[1:-1].split('-'))) if atom.startswith('[') else 1 if atom in ('x','X','*') else len(atom) for atom in atoms)
+    if width > 4: raise ValueError('An expanded IPv6 hextet cannot exceed four digits.')
+    choices = []
+    for atom in atoms:
+        if atom in ('x', 'X', '*'): choices.append('0123456789abcdef')
+        elif atom.startswith('['):
+            start, end = atom[1:-1].split('-'); width = max(len(start), len(end))
+            low, high = int(start, 16), int(end, 16)
+            if width > 4 or low > high: raise ValueError("Invalid hexadecimal digit range.")
+            choices.append([format(value, f'0{width}x') for value in range(low, high + 1)])
+        else: choices.append([atom])
+    if sum(len(values[0]) for values in choices) > 4: raise ValueError("An expanded IPv6 hextet cannot exceed four digits.")
+    return sorted({int(''.join(parts), 16) for parts in itertools.product(*choices)})
+
+
+def expand_entry(entry, alias_type, limit=MAX_ALIAS_ENTRIES):
+    try:
+        ipaddress.ip_network(entry, strict=False)
+        return [entry]
+    except ValueError: pass
+    partial = ':' in entry and any('x' in c.lower() and c.lower() != 'x' for c in entry.split(':'))
+    if '[' not in entry and '/' not in entry and not partial:
+        return _expand_basic(entry, alias_type, limit)
+    body, separator, prefix_text = entry.partition('/')
+    version = 6 if ':' in body else 4
+    bits, count, base, maximum = (16, 8, 16, 65535) if version == 6 else (8, 4, 10, 255)
+    prefix = bits * count
+    if separator:
+        if not prefix_text.isdigit() or not 0 <= int(prefix_text) <= prefix: raise ValueError("Invalid CIDR prefix.")
+        prefix = int(prefix_text)
+        if alias_type == 'host' and prefix != bits * count: raise ValueError("Pattern CIDRs require a network alias.")
+    if version == 6 and '::' in body:
+        if body.count('::') != 1: raise ValueError("Invalid IPv6 compression.")
+        left, right = body.split('::'); left = left.split(':') if left else []; right = right.split(':') if right else []
+        missing = count - len(left) - len(right)
+        if missing < 1: raise ValueError("Invalid IPv6 compression.")
+        components = left + ['0'] * missing + right
+    else: components = body.split(':' if version == 6 else '.')
+    if len(components) != count: raise ValueError("Invalid IP component count.")
+    options = []
+    for index, component in enumerate(components):
+        values = _component_values(component, base, maximum)
+        keep = max(0, min(bits, prefix - index * bits))
+        mask = ((1 << keep) - 1) << (bits - keep)
+        options.append(sorted({value & mask for value in values}))
+    if math.prod(len(values) for values in options) > limit: raise ValueError(f"Pattern expansion exceeds {limit} entries; narrow the pattern.")
+    address = ipaddress.IPv6Address if version == 6 else ipaddress.IPv4Address
+    output = []
+    for parts in itertools.product(*options):
+        value = 0
+        for part in parts: value = (value << bits) | part
+        network = ipaddress.ip_network(f"{address(value)}/{prefix}")
+        output.append(_format_network(network))
     return output
 
 

@@ -120,3 +120,17 @@ class OPNsenseClient:
         if "group" in kinds and self.post("/api/firewall/group/reconfigure", {}).get("status") != "ok":
             raise DeviceError("Groups saved but reconfiguration failed. Inspect device state.")
         if "alias" in kinds: self.reconfigure_aliases()
+
+    def save_rule(self, operation):
+        from urllib.parse import quote
+        if operation['action']=='update':
+            if not operation.get('remote_uuid'): raise DeviceError('Missing remote rule UUID.')
+            endpoint='set_rule/'+quote(operation['remote_uuid'],safe='')
+        else: endpoint='add_rule'
+        result=self.post('/api/firewall/filter/'+endpoint,{'rule':operation['payload']})
+        if not isinstance(result,dict) or result.get('result')!='saved': raise DeviceError('OPNsense rejected a rule. Inspect device validation errors; partial changes may remain.')
+
+    def apply_rules(self):
+        result=self.post('/api/firewall/filter/apply',{})
+        if not isinstance(result,dict) or str(result.get('status','')).strip().lower()!='ok':
+            raise DeviceError('Rule apply failed. Inspect the device; saved configuration may differ from active rules.')

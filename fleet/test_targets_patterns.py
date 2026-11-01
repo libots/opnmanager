@@ -47,7 +47,7 @@ class PatternTests(SimpleTestCase):
         self.assertEqual(expand_entry('::1-::3','host'),['::1','::2','::3'])
 
     def test_expansion_limits_and_malformed_input(self):
-        for pattern,kind in [('x.x.x.x','host'),('2001:db8:x::10','network'),('192.168.0-999.1','network'),('192.168.3-0.1','host'),('2001:db8::0-gg','network'),('192.168.x.1/24','network'),('2001::db8::x','network')]:
+        for pattern,kind in [('x.x.x.x','host'),('2001:db8:x::10','network'),('192.168.0-999.1','network'),('192.168.3-0.1','host'),('2001:db8::0-gg','network'),('192.168.x.1/33','network'),('2001::db8::x','network')]:
             with self.subTest(pattern=pattern),self.assertRaises(ValueError): expand_entry(pattern,kind)
         with self.assertRaises(ValueError): compile_content('10.0.0.x\n10.0.1.x','host',limit=300)
         with self.assertRaises(ValueError): compile_content('10.0.0-4.1-4','network',limit=5)

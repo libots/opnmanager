@@ -11,3 +11,4 @@ data/
 *.sqlite3-wal
 *.sqlite3-shm
 .credentials-key
+.rules-deploy-*.lock

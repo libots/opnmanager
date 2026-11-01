@@ -183,3 +183,18 @@ def adopt_rules(request, pk):
     else:
         messages.error(request, "Invalid selection or stale snapshot. Select rules and target firewalls again.")
     return redirect("/rules/?firewall=" + str(fw.pk))
+
+from .deployment import deployment_plan, execute_deployment
+
+@login_required
+@permission_required(('fleet.view_firewall','fleet.deploy_rules'),raise_exception=True)
+def deploy_rules(request,pk):
+    fw=get_object_or_404(Firewall,pk=pk)
+    if request.method=='POST':
+        try:
+            if request.POST.get('acknowledge')!='yes': raise DeviceError('Confirm the apply warning before deploying.')
+            count=execute_deployment(fw,request.POST.get('approval_sha256'),request.POST.getlist('selected_rules'),OPNsenseClient(fw),request.user.username)
+            messages.success(request,f'Applied and verified {count} selected rule changes.')
+        except DeviceError as exc: messages.error(request,str(exc))
+        return redirect('deploy_rules',pk=pk)
+    return render(request,'fleet/deploy.html',{'firewall':fw,'plan':deployment_plan(fw)})
