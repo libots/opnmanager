@@ -106,6 +106,11 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
             if created:
                 category.full_clean(); category.firewalls.set(targets); category.firewall_groups.set(firewall_groups)
             rule.categories.add(category)
+        for local in tokens(row.get('received-on','')):
+            if local in mappings: rule.origin_interfaces.add(mappings[local])
+            elif local in source_groups: rule.origin_interface_groups.add(ensure_group(local))
+            else: raise ValidationError(f'Map origin interface {local} before importing.')
+        if row.get('received-on-not','0') not in ('','0'): raise ValidationError('Inverted origin interfaces are not supported.')
         RuleOrigin.objects.create(firewall=firewall, rule=rule, remote_uuid=uid)
         imported.append(rule)
     return imported

@@ -34,6 +34,9 @@ class FirewallAdmin(admin.ModelAdmin):
 class RuleAdmin(admin.ModelAdmin):
     from .forms import RuleForm
     form = RuleForm
+    fieldsets=[('Organization',{'fields':('categories','name','scope','firewalls','firewall_groups','sequence','enabled')}),
+               ('Interface',{'fields':('interfaces','interface_groups','origin_interfaces','origin_interface_groups','floating','interface_not')}),
+               ('Filter',{'fields':('quick','action','direction','ip_version','protocol','icmp_types','icmp6_types','source_not','source','source_port','destination_not','destination','destination_port','log')})]
     list_display = ["name", "sequence", "bindings", "action", "protocol", "scope", "enabled"]
     list_filter = ["scope", "interfaces", "interface_groups", "categories", "floating", "action", "enabled"]
     search_fields = ["name", "source", "destination"]
@@ -73,3 +76,35 @@ class FirewallGroupAdmin(admin.ModelAdmin):
     form = FirewallGroupForm
     list_display = ["name", "description"]
     search_fields = ["name"]
+
+from .models import AuthenticationServer, FirewallAdministration, DNSProfile, VirtualIP
+from .forms import AuthenticationServerForm, AdministrationForm, DNSProfileForm, VirtualIPForm
+
+class DesiredProfileAdmin(admin.ModelAdmin):
+    def changeform_view(self,request,*args,**kwargs):
+        from django.contrib import messages
+        messages.info(request,'Desired configuration only: the inspected OPNsense core does not expose a supported write API for authentication servers or ordered system search domains. Saving here does not change device authentication or DNS.')
+        return super().changeform_view(request,*args,**kwargs)
+
+@admin.register(AuthenticationServer)
+class AuthenticationServerAdmin(DesiredProfileAdmin):
+    form=AuthenticationServerForm
+    list_display=['name','kind','host','port','scope']
+    def changeform_view(self,request,*args,**kwargs):
+        request.sensitive_post_parameters=('secret',)
+        return super().changeform_view(request,*args,**kwargs)
+
+@admin.register(FirewallAdministration)
+class FirewallAdministrationAdmin(DesiredProfileAdmin):
+    form=AdministrationForm
+    list_display=['name','scope','retain_local_access']
+
+@admin.register(DNSProfile)
+class DNSProfileAdmin(DesiredProfileAdmin):
+    form=DNSProfileForm
+    list_display=['name','scope']
+
+@admin.register(VirtualIP)
+class VirtualIPAdmin(admin.ModelAdmin):
+    form=VirtualIPForm
+    list_display=['name','interface','network','mode','scope']

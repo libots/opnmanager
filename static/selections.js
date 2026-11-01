@@ -51,9 +51,22 @@
       if (this.dataset.opnInitialized) return;
       this.dataset.opnInitialized = 'true';
       if (!$(this).hasClass('select2-hidden-accessible')) $(this).select2({tags: this.dataset.tags === 'true', width: 'resolve', placeholder: 'Type to search…', tokenSeparators: [','], allowClear: true});
-      addTextEditor(this, $);
+      if (this.multiple) addTextEditor(this, $);
     });
   }
-  document.addEventListener('DOMContentLoaded', function () { initialize(document); });
+  document.addEventListener('DOMContentLoaded', function () {
+    initialize(document);
+    const protocol=document.getElementById('id_protocol');
+    if (protocol) {
+      function updateICMP() {
+        const values=Array.from(protocol.selectedOptions, option=>option.value.toLowerCase());
+        for (const [id,needle] of [['id_icmp_types','icmp'],['id_icmp6_types','ipv6-icmp']]) {
+          const field=document.getElementById(id),row=field?.closest('.form-row');
+          if (row) row.hidden=!values.includes(needle);
+        }
+      }
+      window.django.jQuery(protocol).on('change',updateICMP);updateICMP();
+    }
+  });
   document.addEventListener('formset:added', function (event) { initialize(event.target); });
 })();

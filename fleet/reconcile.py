@@ -6,7 +6,7 @@ from .alias_patterns import compile_content
 PREFIX = "[opnmanager:"
 RULE_DEFAULTS = {"enabled": "1", "action": "pass", "direction": "in", "ipprotocol": "inet",
     "protocol": "any", "source_net": "any", "destination_net": "any", "source_port": "", "destination_port": "",
-    "icmptype": "", "icmp6type": "", "categories": "", "log": "0", "quick": "1", "interfacenot": "0", "source_not": "0", "destination_not": "0"}
+    "received-on": "", "received-on-not": "0", "icmptype": "", "icmp6type": "", "categories": "", "log": "0", "quick": "1", "interfacenot": "0", "source_not": "0", "destination_not": "0"}
 
 def validate_snapshot(data):
     if not isinstance(data, dict) or (type(data.get("schema_version")) is not int or data.get("schema_version") != 1):
@@ -126,7 +126,12 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None):
             selected_categories = list(rule.categories.all())
             if any(not c.applies_to(firewall) for c in selected_categories):
                 raise ValueError(f"Rule {rule.name}: a category is excluded from this firewall.")
-            fields = {**RULE_DEFAULTS, "description": marker + " " + rule.name,
+            origins=list(rule.origin_interfaces.all())
+            if any(i.name not in mappings for i in origins): raise ValueError(f"Rule {rule.name}: missing origin interface mapping.")
+            origin_groups=list(rule.origin_interface_groups.all())
+            if any(not g.applies_to(firewall) for g in origin_groups): raise ValueError(f"Rule {rule.name}: origin group excluded from this firewall.")
+            origin_binding=",".join(sorted([mappings[i.name] for i in origins]+[g.name for g in origin_groups]))
+            fields = {**RULE_DEFAULTS, "received-on": origin_binding, "description": marker + " " + rule.name,
                 "sequence": str(rule.sequence), "interface": ",".join(bindings),
                 "enabled": str(int(rule.enabled)), "action": rule.action, "direction": rule.direction,
                 "ipprotocol": rule.ip_version, "protocol": rule.protocol,

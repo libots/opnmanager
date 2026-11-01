@@ -97,6 +97,8 @@ class Rule(ScopedPolicy):
     interface_groups = models.ManyToManyField(InterfaceGroup, blank=True, related_name="rules")
     floating = models.BooleanField(default=False, help_text="With no bindings, applies globally. Multiple bindings are floating in OPNsense.")
     categories = models.ManyToManyField(Category, blank=True, related_name="rules")
+    origin_interfaces = models.ManyToManyField(LogicalInterface,blank=True,related_name="origin_rules")
+    origin_interface_groups = models.ManyToManyField(InterfaceGroup,blank=True,related_name="origin_rules")
     action = models.CharField(max_length=10, choices=[("pass", "Pass"), ("block", "Block"), ("reject", "Reject")], default="pass")
     direction = models.CharField(max_length=4, choices=[("in", "In"), ("out", "Out"), ("any", "Both")], default="in")
     ip_version = models.CharField(max_length=6, choices=[("inet", "IPv4"), ("inet6", "IPv6"), ("inet46", "Both")], default="inet")
@@ -114,9 +116,9 @@ class Rule(ScopedPolicy):
     log = models.BooleanField(default=False)
     enabled = models.BooleanField(default=True)
     def clean(self):
-        from .choices import PROTOCOLS
+        from .choices import protocol_choices
         protocols = {p.strip() for p in self.protocol.split(",") if p.strip()}
-        if not protocols or not protocols <= dict(PROTOCOLS).keys() or ("any" in protocols and len(protocols) > 1):
+        if not protocols or not protocols <= dict(protocol_choices()).keys() or ("any" in protocols and len(protocols) > 1):
             raise ValidationError("Choose supported protocols; Any cannot be combined with other protocols.")
         if (self.source_port or self.destination_port) and not protocols <= {"TCP", "UDP", "TCP/UDP", "SCTP"}:
             raise ValidationError("Port matching requires TCP, UDP, or TCP/UDP.")
@@ -162,3 +164,68 @@ class AuditEvent(models.Model):
 class LocalAccountState(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="local_account_state")
     must_change_password = models.BooleanField(default=True)
+
+class AuthenticationServer(ScopedPolicy):
+    name = models.CharField(max_length=100,unique=True)
+    kind = models.CharField(max_length=10,choices=[('ldap','LDAP'),('radius','RADIUS')],default='ldap')
+    host = models.CharField(max_length=255)
+    port = models.PositiveIntegerField(default=636,validators=[MinValueValidator(1),MaxValueValidator(65535)])
+    use_tls = models.BooleanField(default=True)
+    base_dn = models.CharField(max_length=500,blank=True)
+    bind_dn = models.CharField(max_length=500,blank=True)
+    encrypted_secret = models.TextField(blank=True,editable=False)
+    def __str__(self): return self.name
+
+class FirewallAdministration(ScopedPolicy):
+    name = models.CharField(max_length=100,unique=True)
+    authentication_servers = models.ManyToManyField(AuthenticationServer,blank=True)
+    retain_local_access = models.BooleanField(default=True)
+    def __str__(self): return self.name
+
+class DNSProfile(ScopedPolicy):
+    name = models.CharField(max_length=100,unique=True)
+    search_domains = models.TextField(help_text='One DNS search domain per line, in lookup order. Order is preserved.')
+    def clean(self):
+        import re
+        values=[line.strip().rstrip('.') for line in self.search_domains.splitlines() if line.strip()]
+        if not values or any(len(v)>253 or any(not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?',label) for label in v.split('.')) for v in values):
+            raise ValidationError('Enter valid DNS domains, one per line.')
+        if len(set(v.lower() for v in values))!=len(values): raise ValidationError('Duplicate search domains are not allowed.')
+        self.search_domains='\n'.join(values)
+    def __str__(self): return self.name
+
+class DeviceInventory(models.Model):
+    firewall = models.OneToOneField(Firewall,on_delete=models.CASCADE,related_name='inventory')
+    data = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+class FirmwareJob(models.Model):
+    firewall = models.ForeignKey(Firewall,on_delete=models.CASCADE)
+    action = models.CharField(max_length=12)
+    status = models.CharField(max_length=24,default='queued')
+    message = models.TextField(blank=True)
+    remote_id = models.CharField(max_length=100,blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        ordering=['-created_at','-pk']
+        permissions=[('install_firmware','Can initiate firmware updates')]
+
+class VirtualIP(ScopedPolicy):
+    name = models.CharField(max_length=100,unique=True)
+    interface = models.ForeignKey(LogicalInterface,on_delete=models.PROTECT)
+    network = models.CharField(max_length=100,help_text='Address with prefix length, e.g. 192.0.2.5/24 (host address is retained).')
+    mode = models.CharField(max_length=12,choices=[('ipalias','IP Alias'),('proxyarp','Proxy ARP')],default='ipalias')
+    def clean(self):
+        import ipaddress
+        if '/' not in self.network:raise ValidationError('Include an explicit prefix length.')
+        try: interface=ipaddress.ip_interface(self.network)
+        except ValueError: raise ValidationError('Enter an IP address with a valid prefix length.')
+        if self.mode=='proxyarp' and interface.version!=4:raise ValidationError('Proxy ARP requires IPv4.')
+    def __str__(self): return self.name
+
+class VirtualIPOrigin(models.Model):
+    firewall=models.ForeignKey(Firewall,on_delete=models.CASCADE)
+    virtual_ip=models.ForeignKey(VirtualIP,on_delete=models.CASCADE)
+    remote_uuid=models.CharField(max_length=100)
+    class Meta:
+        constraints=[models.UniqueConstraint(fields=['firewall','remote_uuid'],name='one_virtual_ip_origin')]

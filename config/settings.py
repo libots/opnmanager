@@ -61,13 +61,16 @@ if os.getenv("DJANGO_TRUST_PROXY", "0") == "1":
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
-OIDC_ENABLED = os.getenv("OIDC_ENABLED", "0") == "1"
+from fleet.oidc_storage import load as load_oidc_configuration
+try: _oidc_ui = load_oidc_configuration(DATA_DIR)
+except (ValueError,OSError) as exc: raise ImproperlyConfigured('Saved OIDC settings cannot be loaded; restore their configuration/encryption key.') from exc
+OIDC_ENABLED = _oidc_ui.get('OIDC_ENABLED', os.getenv("OIDC_ENABLED", "0") == "1")
 AUTHENTICATION_BACKENDS = ["django.contrib.auth.backends.ModelBackend"]
 if OIDC_ENABLED:
     AUTHENTICATION_BACKENDS.insert(0, "fleet.auth.SubjectOIDCBackend")
     for name in ["OIDC_RP_CLIENT_ID", "OIDC_RP_CLIENT_SECRET", "OIDC_OP_AUTHORIZATION_ENDPOINT",
                  "OIDC_OP_TOKEN_ENDPOINT", "OIDC_OP_USER_ENDPOINT", "OIDC_OP_JWKS_ENDPOINT", "OIDC_ISSUER"]:
-        globals()[name] = os.environ[name]
+        globals()[name] = _oidc_ui.get(name) or os.environ[name]
     OIDC_RP_SIGN_ALGO = "RS256"
     OIDC_RP_SCOPES = "openid email profile"
     OIDC_TIMEOUT = 15

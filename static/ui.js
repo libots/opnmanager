@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', function () {
   // get a master toggle scoped to their table or explicit selection container.
   const roots = new Set();
   document.querySelectorAll('input[type=checkbox][name]').forEach(box => {
-    if (box.name === '_selected_action' || !['rule_indices','operations','selected_rules'].includes(box.name)) return;
+    if (box.name === '_selected_action' || !['rule_indices','operations','selected_rules','firewalls','selected_firewalls'].includes(box.name)) return;
     roots.add(box.closest('table') || box.closest('[data-selection-list]') || box.parentElement.parentElement);
   });
   roots.forEach(root => {
