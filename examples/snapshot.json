@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "uuid": "replace-with-device-rule-uuid",
+      "description": "Existing local DNS rule (not adopted automatically)",
+      "interface": "opt2",
+      "sequence": "100",
+      "enabled": "1",
+      "action": "pass",
+      "protocol": "UDP",
+      "source_net": "any",
+      "destination_net": "CorporateDNS",
+      "destination_port": "53"
+    }
+  ],
+  "aliases": [
+    {
+      "uuid": "replace-with-device-alias-uuid",
+      "name": "CorporateDNS",
+      "type": "host",
+      "content": "10.20.0.53\n10.20.0.54",
+      "enabled": "1",
+      "description": "Shared recursive resolvers"
+    }
+  ]
+}

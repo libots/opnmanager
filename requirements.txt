@@ -1,0 +1,16 @@
+asgiref==3.13.0
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+cryptography==50.0.2
+Django==5.2.18
+gunicorn==23.0.0
+idna==3.20
+josepy==2.2.0
+mozilla-django-oidc==4.0.1
+packaging==26.3
+pycparser==3.12
+requests==2.34.2
+sqlparse==0.6.0
+urllib3==2.8.0
+whitenoise==6.12.0
