@@ -19,7 +19,7 @@ class CompactIdentityTests(TestCase):
         return next(op['payload'] for op in plan_for(self.firewall)['operations'] if op['kind']=='rule')
     def test_compact_description_and_legacy_update_preserves_remote_uuid(self):
         payload=self.payload()
-        self.assertEqual(payload['description'],'[om:6dd1349ef6bd] Allow DNS')
+        self.assertEqual(payload['description'],'Allow DNS [om:6dd1349ef6bd]')
         old={**payload,'uuid':'existing-remote','description':f'[opnmanager:{self.rule.pk}] Allow DNS'}
         self.snapshot.data={**EMPTY,'rules':[old]};self.snapshot.save()
         plan=plan_for(self.firewall)
@@ -35,7 +35,7 @@ class CompactIdentityTests(TestCase):
         self.rule.name='New description';self.rule.save()
         op=plan_for(self.firewall)['operations'][0]
         self.assertEqual(op['remote_uuid'],'existing')
-        self.assertTrue(op['payload']['description'].startswith('[om:6dd1349ef6bd] '))
+        self.assertTrue(op['payload']['description'].endswith(' [om:6dd1349ef6bd]'))
     def test_duplicate_short_and_legacy_remote_markers_block_writes(self):
         payload=self.payload()
         self.snapshot.data={**EMPTY,'rules':[{**payload,'uuid':'one'},{**payload,'uuid':'two','description':f'[opnmanager:{self.rule.pk}] Allow DNS'}]};self.snapshot.save()
@@ -59,3 +59,13 @@ class CompactIdentityTests(TestCase):
         plan=plan_for(self.firewall)
         self.assertEqual(plan['operations'][0]['action'],'create')
         self.assertIn('local_only',[item['status'] for item in plan['items']])
+
+    def test_previous_short_prefix_is_updated_in_place_to_suffix(self):
+        payload=self.payload()
+        self.snapshot.data={**EMPTY,'rules':[{**payload,'uuid':'old-short','description':'[om:6dd1349ef6bd] Allow DNS'}]};self.snapshot.save()
+        plan=plan_for(self.firewall)
+        self.assertEqual(plan['operations'][0]['remote_uuid'],'old-short')
+        self.assertEqual(plan['operations'][0]['action'],'update')
+        self.assertEqual(plan['operations'][0]['payload']['description'],'Allow DNS [om:6dd1349ef6bd]')
+        item=next(i for i in plan['items'] if i['kind']=='rule')
+        self.assertEqual([change['field'] for change in item['changes']],['description'])

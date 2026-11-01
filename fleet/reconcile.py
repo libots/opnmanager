@@ -137,7 +137,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
             origin_groups=list(rule.origin_interface_groups.all())
             if any(not g.applies_to(firewall) for g in origin_groups): raise ValueError(f"Rule {rule.name}: origin group excluded from this firewall.")
             origin_binding=",".join(sorted([mappings[i.name] for i in origins]+[g.name for g in origin_groups]))
-            fields = {**RULE_DEFAULTS, "received-on": origin_binding, "description": marker + " " + rule.name,
+            fields = {**RULE_DEFAULTS, "received-on": origin_binding, "description": rule.name + " " + marker,
                 "sequence": str(rule.sequence), "interface": ",".join(bindings),
                 "enabled": str(int(rule.enabled)), "action": rule.action, "direction": rule.direction,
                 "ipprotocol": rule.ip_version, "protocol": rule.protocol,
