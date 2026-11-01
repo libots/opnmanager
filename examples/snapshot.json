@@ -23,5 +23,13 @@
       "enabled": "1",
       "description": "Shared recursive resolvers"
     }
-  ]
+  ],
+  "interfaces": [
+    {
+      "name": "opt2",
+      "label": "VL10"
+    }
+  ],
+  "groups": [],
+  "categories": []
 }

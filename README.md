@@ -2,6 +2,8 @@
 
 Manage the intended firewall policy for a fleet of OPNsense devices. This initial application provides an inventory, logical interface mappings, shared aliases, scoped rules, snapshot imports, drift reports, and explicit alias synchronization.
 
+The GUI supports searchable multiselects, interface groups, rule categories, adoption of existing MVC rules, and UI-managed API credentials.
+
 Built on **Django** for users, groups, sessions, CSRF protection, administration and database migrations; **Mozilla django-oidc** handles the OIDC authorization flow. See [THIRD_PARTY.md](THIRD_PARTY.md) for upstream projects and licenses. We depend on maintained packages rather than copying their authentication code.
 
 ## Run on a local server
@@ -81,11 +83,44 @@ Rule sequence is significant. Duplicate sequence values on the same logical inte
 
 Statuses distinguish missing, changed, in-sync managed fields, local-only objects, out-of-scope rules, and conflicting identities. Missing mappings, alias cycles, excluded alias references and duplicate managed identities block exportable operations. Reports use the last captured snapshot and show its timestamp; they are not live compliance guarantees.
 
+## Rule import, interface groups and richer rule editing
+
+Use **Settings → Interface groups** to create groups of logical interfaces. Group members resolve separately on each firewall (`VL10` can be `opt2` on one and `opt4` on another). Categories are managed under **Settings → Rule categories**, with a name, color and firewall scope. Both support All or Selected firewall targeting.
+
+In the rule editor, interfaces, groups, categories and protocols support searchable multiple selections. Source and destination allow multiple addresses, networks, aliases and mapped interface references; type a literal address and press Enter to add it. Port fields accept one port, range or port alias, as OPNsense does; put multiple ports in a port alias. Alias content also supports searchable nested aliases and multiple typed entries. ICMP and ICMPv6 have separate type selectors, each supporting multiple types. Empty ICMP type selections mean any type.
+
+Rules with no bindings are floating/global and require the Floating checkbox. In the current OPNsense MVC API, multiple bindings also use floating placement, while a single binding is an interface/group rule. A single-bound rule cannot be forced into floating placement by a separate API flag. The manager derives filters using this same rule.
+
+### Adopt existing OPNsense rules
+
+1. Open a firewall's page and **Pull from firewall**. The enriched snapshot reads MVC rules, aliases, interface inventory, groups and categories.
+2. Unique interface display names (such as `VL10`) create missing default mappings automatically. This is controlled by **Auto map interfaces** in the firewall editor. Existing/manual mappings are never overwritten. Duplicate labels, invalid logical names and conflicting mappings are skipped; review the mapping table before sharing rules. The **Add defaults from interface names** button can also apply them explicitly to an existing enriched snapshot.
+3. Click **Browse & import rules**. Filter by interface/group, floating placement, category, enabled state or text.
+4. Select rules, choose All or Selected target firewalls, and click **Import into manager**. The initial selection targets the source firewall only. Imported rules can then be edited and assigned to any enabled firewalls.
+
+Imports do not write to the source device. They translate local interface-network/address references to logical references, retain ICMP and supported rule flags, and bring in missing alias dependencies, groups and categories. A source firewall/UUID association prevents duplicate imports and identifies the original source rule in drift comparisons before it has a manager marker. Re-importing an adopted UUID preserves the existing manager policy; edit its targets in the manager instead of importing it again. Existing shared definitions are preserved; conflicting alias content or group membership blocks import until reconciled. When expanding a rule to more firewalls later, give its referenced aliases/groups/categories a compatible scope too; the planner flags excluded dependencies.
+
+Imports are atomic: a rule using unsupported active behavior (such as a device-specific gateway or schedule), an unknown protocol/ICMP type, a missing mapping, or a missing category inventory causes the whole selection to fail. This avoids silently changing rule behavior. Only the **MVC** rule inventory is supported; classic XML rules, automatic rules and NAT are not adopted by this connector. Device snapshots are immutable historical observations; stale selections are rejected after a newer pull.
+
+**Ideal rules** in the sidebar now opens the filterable manager policy view. Choose a firewall in its Source dropdown to browse that device's snapshot instead. Interface filters also include global floating rules and rules attached to groups containing that interface; inverted bindings are respected. Filters change the view, not policy targeting.
+
+### Synchronize supporting definitions from the GUI
+
+On a firewall page, choose **Review definition sync**. This previews alias, category and interface-group upserts. Apply only after reviewing the exact fields shown. The server checks the approval digest and re-reads the device before writing, rejecting stale snapshots or changed manager policy. Groups/categories are saved before aliases; nested aliases follow dependency order. It then reconfigures groups/aliases, reads back all changes, saves a fresh snapshot and records the attempt/result in the audit log. Existing unrelated definitions are preserved, and nothing is automatically deleted.
+
+Categories are matched by name and translated to each device's category UUID in desired rule payloads. If a category must first be created, the rule review shows `@category:Name` as an unresolved dependency; sync definitions and refresh before using its device payload. Category assignments are part of the rule comparison; rule deployment itself remains review-only.
+
+Group and alias reconfiguration can reload the filter and activate other pending device edits. These operations are not transactional and have no automatic rollback. Inspect a device after failure and pull a new snapshot before retrying. The permissions `fleet.sync_definitions`, `fleet.manage_credentials`, and existing model permissions allow administrators to delegate individual actions; new permissions are available to superusers automatically.
+
 ## Read an OPNsense device
 
 Configure a least-privilege API account on each device. The initial connector targets the **MVC firewall/filter and firewall/alias APIs**. Legacy XML rules, automatic rules, NAT and plugins are outside its snapshot. Older versions without these APIs are unsupported. We inspected upstream core controllers during development; a real device/version compatibility check is still needed.
 
-For a firewall with credential prefix `BRANCH1`, set `BRANCH1_API_KEY` and `BRANCH1_API_SECRET` in the application server environment. Values are never saved in the inventory or exported plans. Local runtime credentials must be usable by Requests' HTTPS Basic authentication; configure your execution platform's supported authentication route if credentials are proxy-injected. Grant read API access for pulls; add alias-edit/reconfigure privileges only if you intend to synchronize.
+The preferred setup is **firewall detail → API credentials**. Enter an API key and secret previously generated in OPNsense. This UI stores/replaces/removes connection credentials; it does not create or revoke keys on the firewall. Fields are write-only, empty fields retain saved values, and explicit removal switches back to environment credentials. The credential page requires `fleet.manage_credentials`, `fleet.change_firewall` and `fleet.view_firewall`.
+
+Credentials are encrypted with Fernet before they reach the database. The server creates a separate owner-readable `.credentials-key` in `OPNMANAGER_DATA_DIR`, or uses `OPNMANAGER_CREDENTIAL_KEY` if configured. **Back up this key separately from the database** and keep it stable across restarts/containers. Losing it makes saved credentials unreadable; restore it or re-enter credentials. Encryption protects a database-only backup, not a compromised server with access to both files. Credential values never appear in saved snapshots, plans, admin change messages or audit details. Use HTTPS for the manager when entering credentials over a network.
+
+Environment credentials remain supported. For a firewall with prefix `BRANCH1`, provide `BRANCH1_API_KEY` and `BRANCH1_API_SECRET` to the server. UI credentials take precedence. Local values must be usable by Requests' HTTPS Basic authentication; use your platform's supported credential route for proxy-injected authentication. Grant read access to all five inventory endpoints below, plus edit/reconfigure privileges only when synchronizing definitions.
 
 TLS verification is always enabled. For a private CA, set the firewall's **CA bundle** to a readable PEM file path. API redirects are rejected. Network access to device hostnames must be configured separately in your hosting environment. Never expose firewall APIs directly to the public Internet just for this app.
 
@@ -93,6 +128,9 @@ Pulls use:
 
 - `GET /api/firewall/filter/get`
 - `GET /api/firewall/alias/export`
+- `GET /api/firewall/filter/get_interface_list`
+- `GET /api/firewall/group/get`
+- `GET /api/firewall/category/get`
 
 The UI's pull/import controls require `fleet.refresh_firewall` plus `fleet.view_firewall`. Pulls and imports preserve historical snapshots and create audit events. There is no automatic polling yet. [examples/snapshot.json](examples/snapshot.json) shows the normalized import format; an OPNsense XML backup is not accepted as that format. Option-field maps returned by live APIs are normalized into their selected raw identifiers.
 
@@ -114,7 +152,7 @@ DJANGO_DEBUG=1 .venv/bin/python manage.py sync_aliases Amsterdam --execute --app
 
 OPNsense's alias reconfigure endpoint reloads the filter as well as refreshing aliases: unrelated pending changes on the device may become active. Use a maintenance window and review pending device changes first. Operations are sequential and **not transactional**, within or across devices. Concurrent device edits after preflight can race with writes. A timeout or failure may leave partial changes; audit records identify attempts, completion and failure. Inspect the device and pull a new snapshot before retrying. There is no automatic rollback or unattended fleet-wide apply in this version.
 
-Rules can be compared and exported with translated device payloads, but **rule deployment is intentionally unimplemented** pending real-device testing of apply/rollback and ordering behavior. The rule model covers basic interface rules, address family, direction, protocol, addresses, ports, logging and enablement. Advanced settings such as gateways, schedules, state tuning and floating-rule precedence are not fully compared: an in-sync status means the displayed managed fields match, not complete behavioral equivalence of the firewall.
+Rules can be compared and exported with translated device payloads, but **rule deployment is intentionally unimplemented** pending real-device testing of apply/rollback and ordering behavior. The rule model covers basic interface rules, address family, direction, protocol, addresses, ports, logging and enablement. Advanced settings such as gateways, schedules and state tuning are not fully compared: an in-sync status means the displayed managed fields match, not complete behavioral equivalence of the firewall.
 
 ## Authentication and permissions
 
@@ -148,4 +186,16 @@ DJANGO_DEBUG=1 .venv/bin/python manage.py plan Amsterdam
 
 The tests exercise interface resolution, all/selected targeting, drift, conflicts, alias ordering, stale-plan rejection, synchronization/readback/failure, permissions, import validation, API request behavior and OIDC identity boundaries. API operations are mocked in tests; this does not establish live OPNsense compatibility.
 
-For deployment set `DJANGO_DEBUG=0`, a strong `DJANGO_SECRET_KEY`, and explicit `DJANGO_ALLOWED_HOSTS`. HTTPS redirects and secure cookies are enabled by default. The local launcher already runs Gunicorn and serves collected static files with WhiteNoise. For production, use an HTTPS ingress, protect API credentials and CA files, and back up the database and signing key. Production database configuration, rate limiting, task scheduling, high availability and container packaging remain deployment work; Django's development server is not a production server. Don't enable forwarded-host/proto trust unless your ingress strips untrusted forwarding headers.
+For deployment set `DJANGO_DEBUG=0`, a strong `DJANGO_SECRET_KEY`, and explicit `DJANGO_ALLOWED_HOSTS`. HTTPS redirects and secure cookies are enabled by default. The local launcher already runs Gunicorn and serves collected static files with WhiteNoise. For production, use an HTTPS ingress, protect API credentials and CA files, and back up the database, signing key and credential encryption key. Production database configuration, rate limiting, task scheduling, high availability and container packaging remain deployment work; Django's development server is not a production server. Don't enable forwarded-host/proto trust unless your ingress strips untrusted forwarding headers.
+
+## Upgrade an existing local installation
+
+Stop the server with Ctrl+C, keep your existing data-directory and host environment settings, then run:
+
+```sh
+git pull --ff-only
+./scripts/setup-local.sh
+./scripts/run-local.sh
+```
+
+Setup applies additive schema/data migrations, refreshes static assets and preserves existing administrators, passwords, mappings and rules. The migration copies existing single-interface bindings into the multiselect field. Pull fresh snapshots for the new interface/group/category inventory; old normalized snapshots still load but cannot safely plan group/category synchronization until that inventory is known. Do not delete the database or key files when upgrading.

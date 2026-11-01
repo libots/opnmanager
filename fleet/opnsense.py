@@ -1,9 +1,9 @@
-"""OPNsense MVC adapter: configuration reads and explicit alias upserts only."""
-import os
+"""OPNsense MVC adapter: configuration reads and explicit supporting-definition upserts."""
 import requests
 from .reconcile import validate_snapshot
 
-class DeviceError(Exception): pass
+from .opnsense_errors import DeviceError
+from .credentials import get_credentials
 
 def flatten(value):
     """OPNsense get endpoints expose OptionFields as selected-value maps."""
@@ -14,10 +14,7 @@ class OPNsenseClient:
     def __init__(self, firewall):
         firewall.full_clean()
         self.firewall = firewall
-        prefix = firewall.credential_prefix
-        key, secret = os.getenv(prefix + "_API_KEY"), os.getenv(prefix + "_API_SECRET")
-        if not key or not secret:
-            raise DeviceError(f"Set {prefix}_API_KEY and {prefix}_API_SECRET in the server environment.")
+        key, secret = get_credentials(firewall)
         self.session = requests.Session()
         self.session.auth = (key, secret)
         self.session.verify = firewall.ca_bundle or True
@@ -40,10 +37,16 @@ class OPNsenseClient:
                 if nodes == []: return []
                 if not isinstance(nodes, dict): raise ValueError()
                 return [{**{k: flatten(v) for k, v in fields.items()}, "uuid": uid} for uid, fields in nodes.items()]
-            data = {"schema_version": 1, "rules": rows(rules), "aliases": rows(aliases)}
+            inventory = self.get("/api/firewall/filter/get_interface_list")
+            groups = self.get("/api/firewall/group/get")["group"].get("ifgroupentry", {})
+            categories = self.get("/api/firewall/category/get")["category"].get("categories", {}).get("category", {})
+            interfaces = [{"name": item["value"], "label": item["label"]}
+                          for item in inventory["interfaces"]["items"]]
+            data = {"schema_version": 1, "rules": rows(rules), "aliases": rows(aliases),
+                    "interfaces": interfaces, "groups": rows(groups), "categories": rows(categories)}
             return validate_snapshot(data)
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
-            raise DeviceError("Unsupported OPNsense response. This connector requires MVC firewall/filter and alias APIs.") from exc
+            raise DeviceError("Unsupported OPNsense response. This connector requires MVC filter, alias, interface inventory, group and category APIs.") from exc
 
     def post(self, path, payload):
         try:
@@ -70,3 +73,24 @@ class OPNsenseClient:
     def reconfigure_aliases(self):
         if self.post("/api/firewall/alias/reconfigure", {}).get("status") != "ok":
             raise DeviceError("Aliases saved but device reconfiguration failed. Inspect the device before retrying.")
+
+
+    def save_definition(self, operation):
+        if operation["kind"] == "alias":
+            return self.save_alias(operation)
+        from urllib.parse import quote
+        kind = operation["kind"]
+        controller = {"group": "group", "category": "category"}[kind]
+        if operation["action"] == "update":
+            if not operation.get("remote_uuid"): raise DeviceError("Missing remote UUID; pull a live snapshot first.")
+            endpoint = "set_item/" + quote(operation["remote_uuid"], safe="")
+        else:
+            endpoint = "add_item"
+        result = self.post(f"/api/firewall/{controller}/{endpoint}", {kind: operation["payload"]})
+        if result.get("result") != "saved":
+            raise DeviceError(f"OPNsense rejected the {kind}. Inspect device validation errors.")
+
+    def reconfigure_definitions(self, kinds):
+        if "group" in kinds and self.post("/api/firewall/group/reconfigure", {}).get("status") != "ok":
+            raise DeviceError("Groups saved but reconfiguration failed. Inspect device state.")
+        if "alias" in kinds: self.reconfigure_aliases()

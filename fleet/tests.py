@@ -186,7 +186,10 @@ class FleetTests(TestCase):
     def test_real_adapter_paths_tls_and_option_normalization(self, session):
         session.return_value.get.side_effect = [Mock(status_code=200, json=lambda: {"filter": {"rules": {"rule": {"abc": {
             "description": "Rule", "interface": {"opt2": {"selected": 1}, "opt3": {"selected": 0}}, "sequence": "100"}}}}}),
-            Mock(status_code=200, json=lambda: {"aliases": {"alias": []}})]
+            Mock(status_code=200, json=lambda: {"aliases": {"alias": []}}),
+            Mock(status_code=200, json=lambda: {"interfaces": {"items": [{"value": "opt2", "label": "VL10"}]}}),
+            Mock(status_code=200, json=lambda: {"group": {"ifgroupentry": {}}}),
+            Mock(status_code=200, json=lambda: {"category": {"categories": {"category": {}}}})]
         client = OPNsenseClient(self.fw)
         data = client.snapshot()
         self.assertEqual(data["rules"][0]["interface"], "opt2")

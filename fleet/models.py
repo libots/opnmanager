@@ -11,9 +11,12 @@ class Firewall(models.Model):
     name = models.CharField(max_length=100, unique=True)
     base_url = models.URLField(help_text="HTTPS management URL, e.g. https://fw.example.net")
     enabled = models.BooleanField(default=True)
-    credential_prefix = models.CharField(max_length=80, validators=[identifier], help_text="Environment variable prefix, e.g. BRANCH1; reads BRANCH1_API_KEY and BRANCH1_API_SECRET")
+    credential_prefix = models.CharField(max_length=80, blank=True, validators=[identifier], help_text="Environment variable prefix, e.g. BRANCH1; reads BRANCH1_API_KEY and BRANCH1_API_SECRET")
     ca_bundle = models.CharField(max_length=500, blank=True, help_text="Optional PEM CA file path; TLS verification is always enabled.")
     notes = models.TextField(blank=True)
+    auto_map_interfaces = models.BooleanField(default=True, help_text="Add missing mappings using unique interface display names when pulling a snapshot; preserve manual mappings.")
+    encrypted_api_key = models.TextField(blank=True, editable=False)
+    encrypted_api_secret = models.TextField(blank=True, editable=False)
     def clean(self):
         url = urlsplit(self.base_url)
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
@@ -21,7 +24,9 @@ class Firewall(models.Model):
     def __str__(self): return self.name
     class Meta:
         ordering = ["name"]
-        permissions = [("refresh_firewall", "Can import and refresh firewall snapshots")]
+        permissions = [("refresh_firewall", "Can import and refresh firewall snapshots"),
+                       ("manage_credentials", "Can manage firewall API credentials"),
+                       ("sync_definitions", "Can synchronize aliases, categories and interface groups")]
 
 class LogicalInterface(models.Model):
     name = models.CharField(max_length=50, unique=True, validators=[identifier])
@@ -54,28 +59,80 @@ class Alias(ScopedPolicy):
     description = models.CharField(max_length=255, blank=True)
     enabled = models.BooleanField(default=True)
     def __str__(self): return self.name
-    class Meta: ordering = ["name"]
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "aliases"
+
+class InterfaceGroup(ScopedPolicy):
+    name = models.CharField(max_length=15, unique=True, validators=[identifier])
+    description = models.CharField(max_length=255, blank=True)
+    members = models.ManyToManyField(LogicalInterface, related_name="groups")
+    sequence = models.PositiveIntegerField(default=0, validators=[MaxValueValidator(9999)])
+    def __str__(self): return self.name
+    class Meta: ordering = ["sequence", "name"]
+
+class Category(ScopedPolicy):
+    name = models.CharField(max_length=100, unique=True, validators=[RegexValidator(r"^[^,]+$", "Commas are not allowed.")])
+    color = models.CharField(max_length=6, default="137b66", validators=[RegexValidator(r"^[0-9a-fA-F]{6}$", "Use six hex digits without #.")])
+    def __str__(self): return self.name
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "categories"
 
 class Rule(ScopedPolicy):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=150)
     sequence = models.PositiveIntegerField(default=100, validators=[MinValueValidator(1), MaxValueValidator(999999)])
-    interface = models.ForeignKey(LogicalInterface, on_delete=models.PROTECT)
+    interface = models.ForeignKey(LogicalInterface, on_delete=models.PROTECT, null=True, blank=True)
+    interfaces = models.ManyToManyField(LogicalInterface, blank=True, related_name="rules", help_text="Choose one or more mapped interfaces.")
+    interface_groups = models.ManyToManyField(InterfaceGroup, blank=True, related_name="rules")
+    floating = models.BooleanField(default=False, help_text="With no bindings, applies globally. Multiple bindings are floating in OPNsense.")
+    categories = models.ManyToManyField(Category, blank=True, related_name="rules")
     action = models.CharField(max_length=10, choices=[("pass", "Pass"), ("block", "Block"), ("reject", "Reject")], default="pass")
     direction = models.CharField(max_length=4, choices=[("in", "In"), ("out", "Out"), ("any", "Both")], default="in")
     ip_version = models.CharField(max_length=6, choices=[("inet", "IPv4"), ("inet6", "IPv6"), ("inet46", "Both")], default="inet")
-    protocol = models.CharField(max_length=10, choices=[("any", "Any"), ("TCP", "TCP"), ("UDP", "UDP"), ("TCP/UDP", "TCP/UDP"), ("ICMP", "ICMP")], default="any")
-    source = models.CharField(max_length=255, default="any", help_text="Address, alias, any, or @VL10:net / @VL10:ip for a mapped interface.")
+    protocol = models.CharField(max_length=255, default="any")
+    source = models.TextField(default="any", help_text="Address, alias, any, or @VL10:net / @VL10:ip for a mapped interface.")
     source_port = models.CharField(max_length=100, blank=True)
-    destination = models.CharField(max_length=255, default="any")
+    destination = models.TextField(default="any")
     destination_port = models.CharField(max_length=100, blank=True)
+    icmp_types = models.CharField(max_length=500, blank=True, help_text="IPv4 ICMP types; multiple selections allowed.")
+    icmp6_types = models.CharField(max_length=500, blank=True, help_text="IPv6 ICMP types; multiple selections allowed.")
+    quick = models.BooleanField(default=True)
+    source_not = models.BooleanField(default=False)
+    destination_not = models.BooleanField(default=False)
+    interface_not = models.BooleanField(default=False)
     log = models.BooleanField(default=False)
     enabled = models.BooleanField(default=True)
     def clean(self):
-        if (self.source_port or self.destination_port) and self.protocol not in ("TCP", "UDP", "TCP/UDP"):
+        from .choices import PROTOCOLS
+        protocols = {p.strip() for p in self.protocol.split(",") if p.strip()}
+        if not protocols or not protocols <= dict(PROTOCOLS).keys() or ("any" in protocols and len(protocols) > 1):
+            raise ValidationError("Choose supported protocols; Any cannot be combined with other protocols.")
+        if (self.source_port or self.destination_port) and not protocols <= {"TCP", "UDP", "TCP/UDP", "SCTP"}:
             raise ValidationError("Port matching requires TCP, UDP, or TCP/UDP.")
+        if "IPv6-ICMP" in protocols and self.ip_version == "inet":
+            raise ValidationError("ICMPv6 requires IPv6 or Both as the address family.")
+        if "ICMP" in protocols and self.ip_version == "inet6":
+            raise ValidationError("IPv4 ICMP requires IPv4 or Both as the address family.")
+        if self.icmp_types and "ICMP" not in protocols:
+            raise ValidationError("IPv4 ICMP types require the ICMP protocol.")
+        if self.icmp6_types and "IPv6-ICMP" not in protocols:
+            raise ValidationError("IPv6 ICMP types require the ICMPv6 protocol.")
+    def bound_interfaces(self):
+        interfaces = list(self.interfaces.all()) if self.pk and not self._state.adding else []
+        if self.interface_id and all(i.pk != self.interface_id for i in interfaces): interfaces.append(self.interface)
+        return interfaces
     def __str__(self): return self.name
     class Meta: ordering = ["sequence", "id"]
+
+class RuleOrigin(models.Model):
+    firewall = models.ForeignKey(Firewall, on_delete=models.CASCADE)
+    rule = models.ForeignKey(Rule, on_delete=models.CASCADE, related_name="origins")
+    remote_uuid = models.CharField(max_length=100)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["firewall", "remote_uuid"], name="one_import_per_device_rule")]
+
 
 class Snapshot(models.Model):
     firewall = models.ForeignKey(Firewall, on_delete=models.CASCADE, related_name="snapshots")
