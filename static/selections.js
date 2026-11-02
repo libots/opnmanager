@@ -50,7 +50,7 @@
     $(root).find('select.opn-select').each(function () {
       if (this.dataset.opnInitialized) return;
       this.dataset.opnInitialized = 'true';
-      if (!$(this).hasClass('select2-hidden-accessible')) $(this).select2({tags: this.dataset.tags === 'true', width: 'resolve', placeholder: 'Type to search…', tokenSeparators: [','], allowClear: true});
+      if (!$(this).hasClass('select2-hidden-accessible')) $(this).select2({tags: this.dataset.tags === 'true', width: 'resolve', placeholder: this.dataset.placeholder || 'Type to search…', tokenSeparators: [','], allowClear: true});
       if (this.multiple) addTextEditor(this, $);
     });
   }

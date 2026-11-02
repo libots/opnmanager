@@ -1,0 +1,47 @@
+{% extends "admin/change_form.html" %}{% load static %}
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static 'rule-editor.css' %}">{% endblock %}
+{% block extrahead %}{{ block.super }}<script defer src="{% static 'rule-editor.js' %}"></script>{% endblock %}
+{% block content_title %}<h1>{% if add %}Add rule{% else %}Edit rule{% endif %}</h1>{% endblock %}
+{% block content_subtitle %}{% endblock %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'rules' %}">Firewall: Rules</a> › {% if add %}Add rule{% else %}{{ original.name }}{% endif %}</div>{% endblock %}
+{% block object-tools %}{% endblock %}
+{% block form_top %}
+<div class="rule-editor-toolbar" id="rule-editor-tools" hidden>
+  <label class="rule-form-search" for="rule-form-search">Search form<input type="search" id="rule-form-search" placeholder="Find a setting…" autocomplete="off"></label>
+  <button type="button" id="rule-search-clear">Clear search</button>
+  <label class="rule-full-help"><input type="checkbox" id="rule-full-help"> Full help</label>
+  <span id="rule-search-status" role="status" aria-live="polite"></span>
+</div>
+{% endblock %}
+{% block field_sets %}
+<div class="rule-editor-sections">
+{% for fieldset in adminform %}
+  <fieldset class="module rule-editor-section" aria-labelledby="rule-section-{{ forloop.counter }}">
+    <details open><summary id="rule-section-{{ forloop.counter }}">{{ fieldset.name }}</summary>
+    {% for line in fieldset %}{% for field in line %}
+      <div class="form-row rule-editor-row field-{{ field.field.name }}{% if field.errors %} errors{% endif %}">
+        <div class="rule-field-label">{{ field.label_tag }}{% if field.field.help_text %}<button type="button" class="rule-help-toggle" aria-label="Help: {{ field.field.label }}" aria-expanded="false" aria-controls="{{ field.field.id_for_label }}_helptext" title="{{ field.field.help_text }}" hidden>?</button>{% endif %}</div>
+        <div class="rule-field-control">
+          {{ field.errors }}
+          {% if field.is_readonly %}<div class="readonly">{{ field.contents }}</div>{% else %}{{ field.field }}{% endif %}
+          {% if field.field.help_text %}<div class="help rule-field-help" id="{{ field.field.id_for_label }}_helptext">{{ field.field.help_text }}</div>{% endif %}
+        </div>
+      </div>
+    {% endfor %}{% endfor %}
+    {% if fieldset.name == 'Interface' %}
+      <div class="form-row rule-editor-row rule-placement-row"><div class="rule-field-label">Placement</div><div class="rule-field-control"><output id="rule-placement" aria-live="polite">Automatically determined from rule interfaces and groups.</output><p class="help">One binding: interface/group rule. Multiple bindings: floating. No bindings: floating on all interfaces. Origin bindings do not affect placement.</p></div></div>
+    {% endif %}
+    </details>
+  </fieldset>
+{% endfor %}
+</div>
+<p class="rule-editor-empty" id="rule-editor-empty" hidden>No matching settings. <button type="button" id="rule-empty-clear">Clear search</button></p>
+<p class="rule-save-note">Saving updates manager policy. Review and deploy it from Fleet Overview → Deployment to change firewalls.</p>
+{% endblock %}
+{% block submit_buttons_bottom %}
+<div class="rule-editor-footer">
+  <div class="rule-secondary-actions">{% if change and not is_popup %}<a href="{% url 'admin:fleet_rule_history' original.pk %}">History</a>{% if has_delete_permission %}<a class="rule-delete" href="{% url 'admin:fleet_rule_delete' original.pk %}">Delete rule</a>{% endif %}{% endif %}</div>
+  <a class="button rule-cancel" href="{% url 'rules' %}">{% if has_change_permission or add %}Cancel{% else %}Close{% endif %}</a>
+  {% if has_change_permission or add and has_add_permission %}<input type="submit" value="Save" class="default" name="_save">{% endif %}
+</div>
+{% endblock %}

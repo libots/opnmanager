@@ -69,13 +69,50 @@ class RuleForm(forms.ModelForm):
     icmp6_types = CSVChoicesField(choices=ICMP6_TYPES, required=False, help_text="IPv6 ICMP types; leave empty for any type.")
     class Meta:
         model = Rule
-        exclude = ["interface"]
+        exclude = ["interface", "floating"]
         widgets = {key: MultiSelectWidget() for key in ("interfaces", "interface_groups", "origin_interfaces", "origin_interface_groups", "categories", "firewalls", "firewall_groups")}
     def __init__(self, *args, **kwargs):
+        kwargs.setdefault('label_suffix', '')
         super().__init__(*args, **kwargs)
+        # The admin removes model fields for users with view permission only.
+        if 'name' not in self.fields: return
         for field in self.fields.values():
             field.help_text = field.help_text.split(' Hold down')[0]
         for field,label in {'name':'Description','interfaces':'Interface (rule)','interface_groups':'Interface groups (rule)','origin_interfaces':'Interface (origin)','origin_interface_groups':'Interface groups (origin)','ip_version':'Version','source_not':'Invert source','destination_not':'Invert destination','icmp_types':'ICMP type','icmp6_types':'ICMPv6 type'}.items():self.fields[field].label=label
+        if self.instance.interface_id and not self.is_bound:
+            self.initial['interfaces'] = [interface.pk for interface in self.instance.bound_interfaces()]
+        help_texts = {
+            'enabled': 'Enable this rule on targeted firewalls when deployed.',
+            'name': 'The human-readable description. A compact manager identity tag is appended automatically when deployed.',
+            'categories': 'Labels used to organize and filter rules.',
+            'interfaces': 'Choose logical interfaces mapped to your firewalls. Leave rule interfaces and groups empty to match all interfaces.',
+            'interface_groups': 'Groups can be used alongside individual rule interfaces. Placement is determined from the total number of bindings.',
+            'origin_interfaces': 'Optionally match the interface on which a packet was originally received. Empty means any origin.',
+            'origin_interface_groups': 'Optionally match a group of origin interfaces. Origin bindings do not determine floating placement.',
+            'interface_not': 'Match interfaces other than the selected rule interfaces or groups.',
+            'quick': 'Stop processing further rules when this rule matches.',
+            'action': 'Pass permits traffic, block silently drops it, and reject sends a rejection response.',
+            'direction': 'Match traffic entering, leaving, or in either direction on the rule interfaces.',
+            'ip_version': 'Select IPv4, IPv6, or both address families.',
+            'source_not': 'Match addresses outside the selected sources.',
+            'destination_not': 'Match addresses outside the selected destinations.',
+            'source': 'Choose an alias, interface network/address, built-in option, or enter a host or network.',
+            'destination': 'Choose an alias, interface network/address, built-in option, or enter a host or network.',
+            'source_port': 'Choose a service or port alias, or enter one port or a range such as 5060-5070. Empty means any port.',
+            'destination_port': 'Choose a service or port alias, or enter one port or a range such as 5060-5070. Empty means any port.',
+            'log': 'Log packets matching this rule on the firewall.',
+            'sequence': 'Rule order on the firewall; lower values are evaluated first.',
+            'scope': 'All targets every enabled firewall, including new devices. Selected uses the firewalls and groups below.',
+            'firewalls': 'Direct targets when Scope is Selected. Empty direct targets are allowed when a firewall group is selected.',
+            'firewall_groups': 'Targets include enabled firewalls in these groups, including devices added later.',
+        }
+        for name, text in help_texts.items(): self.fields[name].help_text = text
+        self.fields['interface_not'].label = 'Invert rule interfaces'
+        for name, placeholder in {'interfaces':'Any (all interfaces)', 'interface_groups':'No interface groups',
+                                  'origin_interfaces':'Any origin', 'origin_interface_groups':'No origin groups',
+                                  'source_port':'Any port', 'destination_port':'Any port'}.items():
+            widget = self.fields[name].widget
+            getattr(widget, 'widget', widget).attrs['data-placeholder'] = placeholder
         self.fields['protocol'].help_text='Refresh interface inventory to load the complete protocol catalog from your OPNsense devices.'
         choices=protocol_choices()
         self.fields['protocol'].allowed={value for value,label in choices}
@@ -94,10 +131,7 @@ class RuleForm(forms.ModelForm):
     def clean(self):
         data = super().clean()
         count = len(data.get("interfaces", [])) + len(data.get("interface_groups", []))
-        if not count and not data.get("floating"):
-            raise forms.ValidationError("Choose interfaces/groups, or select floating for a global rule.")
-        if data.get("floating") and count == 1:
-            raise forms.ValidationError("OPNsense treats a single binding as an interface/group rule. For floating use no bindings (global) or multiple bindings.")
+        self.instance.floating = count != 1
         for field in ("source", "destination"):
             values = (data.get(field) or "").split(",")
             if "any" in values and len(values) > 1: self.add_error(field, "Any cannot be combined with other addresses.")
@@ -105,7 +139,6 @@ class RuleForm(forms.ModelForm):
             if data.get(field)=="any":data[field]=""
             if "," in (data.get(field) or ""):
                 self.add_error(field, "OPNsense accepts one port, range or port alias here. Use a port alias for multiple ports.")
-        if count > 1: data["floating"] = True
         import ipaddress
         allowed = set(Alias.objects.exclude(type="port").values_list("name", flat=True)) | {"any", "(self)", "bogons", "bogonsv6"}
         allowed |= set(InterfaceGroup.objects.values_list("name", flat=True))

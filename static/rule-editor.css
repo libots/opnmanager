@@ -1,0 +1,54 @@
+body.model-rule.change-form #content{max-width:1350px;margin:0 auto;padding-bottom:24px}
+body.model-rule.change-form #content h1{font-size:26px;letter-spacing:-.5px;color:var(--body-fg);margin:0 0 20px}
+body.model-rule.change-form #content-main{float:none}
+#rule_form .rule-editor-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 16px;background:#fff;border:1px solid var(--border-color);border-bottom:0;border-radius:6px 6px 0 0}
+#rule_form [hidden]{display:none!important}
+#rule_form .rule-form-search{display:flex;gap:12px;align-items:center;margin:0;font-size:12px;font-weight:600}
+#rule_form .rule-form-search input{width:250px;min-height:34px;padding:7px 10px;font-size:13px}
+#rule_form .rule-full-help{display:flex;align-items:center;gap:6px;margin:0 0 0 auto;font-size:12px;font-weight:400}
+#rule-search-status{font-size:11px;color:var(--body-quiet-color)}
+#rule_form .rule-editor-sections{border:1px solid var(--border-color);border-radius:0 0 6px 6px;overflow:hidden}
+#rule_form .rule-editor-section{border:0;border-radius:0;margin:0;background:#fff}
+#rule_form .rule-editor-section summary{padding:11px 16px;border-top:1px solid var(--hairline-color);background:#f0f3f5;color:var(--body-fg);font-size:14px;font-weight:650;cursor:pointer}
+#rule_form .rule-editor-section:first-child summary{border-top:0}
+#rule_form .rule-editor-row{display:grid;grid-template-columns:225px minmax(0,1fr);gap:18px;padding:9px 20px;border-bottom:1px solid var(--hairline-color);overflow:visible;align-items:start}
+#rule_form .rule-editor-row:nth-child(even){background:#fafbfc}
+#rule_form .rule-editor-row:last-child{border-bottom:0}
+#rule_form .rule-field-label{display:flex;flex-direction:row;align-items:center;gap:7px;padding-top:6px;min-width:0}
+#rule_form .rule-field-label label{float:none;width:auto;padding:0;margin:0;color:var(--body-fg);font-size:13px;font-weight:600;line-height:1.5}
+#rule_form .rule-field-label label:after{content:none}
+#rule_form .rule-help-toggle{border:0;background:#647b8b;color:#fff;font-size:10px;font-weight:700;line-height:16px;width:16px;height:16px;padding:0;border-radius:50%;cursor:pointer;order:-1;flex-shrink:0}
+#rule_form .rule-field-control{display:block;min-width:0;max-width:670px}
+#rule_form .rule-field-control input:not([type=checkbox]),#rule_form .rule-field-control select,#rule_form .rule-field-control textarea{width:100%;min-width:0;max-width:100%;box-sizing:border-box;font-size:13px;padding:7px 10px;min-height:34px}
+#rule_form .rule-field-control input[type=number]{max-width:160px}
+#rule_form .rule-field-control input[type=checkbox]{margin:7px 0;accent-color:#137b66;width:15px;height:15px}
+#rule_form .related-widget-wrapper{min-width:0;gap:4px}
+#rule_form .related-widget-wrapper .select2,#rule_form .select2{min-width:0!important;width:100%!important;flex-basis:100%}
+#rule_form .related-widget-wrapper>a{display:inline-flex;margin:0 2px 2px}
+#rule_form .select2-selection--multiple{min-height:34px;border-color:#c4ced5}
+#rule_form .select2-selection__rendered{font-size:12px;line-height:1.6}
+#rule_form .select2-selection--single{height:34px;border-color:#c4ced5}
+#rule_form .select2-selection--single .select2-selection__rendered{line-height:32px}
+#rule_form .select2-selection--single .select2-selection__arrow{height:32px}
+#rule_form .select2-search__field{min-height:22px!important;padding:0!important;font-size:13px!important}
+#rule_form .rule-field-help{margin:6px 0 0;padding:0;line-height:1.6;font-size:11px;color:var(--body-quiet-color)}
+#rule_form.rule-editor-enhanced .rule-field-help{display:none}
+#rule_form.rule-editor-enhanced .rule-help-open .rule-field-help,#rule_form.rule-full-help-visible .rule-field-help,#rule_form .errors .rule-field-help{display:block}
+#rule_form .rule-placement-row{font-size:12px}
+#rule-placement{display:block;font-weight:600;margin:6px 0}
+#rule_form .rule-placement-row .help{margin:5px 0 0;padding:0;line-height:1.6}
+#rule_form .opn-bulk-editor{margin:3px 0 0!important}
+#rule_form .opn-bulk-editor>button,#rule_form .rule-editor-toolbar>button,#rule_form .rule-editor-empty button{border:0;background:none;color:#137b66;padding:2px 8px 2px 0;margin:0 10px 0 0;font:11px/1.6 system-ui;cursor:pointer}
+#rule_form .opn-bulk-editor>button:hover{text-decoration:underline}
+#rule_form .opn-bulk-editor>a{font:11px/1.6 system-ui;color:#137b66;margin-right:12px}
+#rule_form .opn-bulk-editor p{margin:6px 0;font-size:12px}
+#rule_form .rule-editor-row.errors{border-left:3px solid #ba4545}
+#rule_form .rule-field-control .errorlist{margin:0 0 6px;padding:0;color:#ba4545}
+#rule_form .rule-save-note{margin:16px 0;font-size:12px;color:var(--body-quiet-color)}
+#rule_form .rule-editor-footer{position:sticky;bottom:0;z-index:10;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:12px 16px;background:#fff;box-shadow:0 -2px 10px #192b3c12;border:1px solid var(--border-color);border-radius:5px}
+#rule_form .rule-editor-footer input[type=submit]{margin:0;padding:9px 18px;font-size:12px;min-height:36px;background:#137b66;border:1px solid #137b66;border-radius:4px;color:#fff;text-transform:none;cursor:pointer}
+#rule_form .rule-editor-footer .button{padding:8px 15px;font-size:12px;font-weight:400;background:#fff;color:#192b3c}
+#rule_form .rule-secondary-actions{display:flex;gap:14px;margin-right:auto;font-size:12px}
+#rule_form .rule-secondary-actions .rule-delete{color:#ba4545}
+@media(max-width:1000px){#rule_form .rule-editor-row{grid-template-columns:175px minmax(0,1fr);gap:10px;padding:9px 14px}}
+@media(max-width:650px){#rule_form .rule-editor-row{grid-template-columns:1fr;gap:4px}#rule_form .rule-full-help{margin-left:0}#rule_form .rule-form-search{flex:1;flex-wrap:wrap}#rule_form .rule-form-search input{width:100%}#rule_form .rule-editor-footer{padding:10px}}

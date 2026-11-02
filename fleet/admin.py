@@ -34,9 +34,11 @@ class FirewallAdmin(admin.ModelAdmin):
 class RuleAdmin(admin.ModelAdmin):
     from .forms import RuleForm
     form = RuleForm
-    fieldsets=[('Organization',{'fields':('categories','name','scope','firewalls','firewall_groups','sequence','enabled')}),
-               ('Interface',{'fields':('interfaces','interface_groups','origin_interfaces','origin_interface_groups','floating','interface_not')}),
-               ('Filter',{'fields':('quick','action','direction','ip_version','protocol','icmp_types','icmp6_types','source_not','source','source_port','destination_not','destination','destination_port','log')})]
+    change_form_template = 'admin/fleet/rule/change_form.html'
+    fieldsets=[('Organization',{'fields':('enabled','categories','name')}),
+               ('Interface',{'fields':('interfaces','interface_groups','origin_interfaces','origin_interface_groups','interface_not')}),
+               ('Filter',{'fields':('quick','action','direction','ip_version','protocol','icmp_types','icmp6_types','source_not','source','source_port','destination_not','destination','destination_port','log')}),
+               ('Deployment',{'fields':('sequence','scope','firewalls','firewall_groups')})]
     list_display = ["name", "sequence", "bindings", "action", "protocol", "scope", "enabled"]
     list_filter = ["scope", "interfaces", "interface_groups", "categories", "floating", "action", "enabled"]
     search_fields = ["name", "source", "destination"]
