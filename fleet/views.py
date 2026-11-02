@@ -85,7 +85,7 @@ from .credentials import encrypt_credentials
 from .definition_sync import definition_plan, execute_definition_plan
 from .mappings import apply_default_mappings
 from .import_rules import import_rules
-from .rule_filters import filter_rows
+from .rule_filters import filter_rows, SEARCH_FIELDS
 
 
 @login_required
@@ -157,18 +157,42 @@ def rules_page(request):
     else:
         rows = []
         groups = {g.name: {i.name for i in g.members.all()} for g in InterfaceGroup.objects.prefetch_related("members")}
-        for rule in Rule.objects.select_related("interface").prefetch_related("interfaces", "interface_groups", "categories"):
+        for rule in Rule.objects.select_related("interface").prefetch_related("interfaces", "interface_groups", "origin_interfaces", "origin_interface_groups", "categories"):
             rows.append({"description": rule.name, "id": str(rule.pk), "interface": ",".join([i.name for i in rule.bound_interfaces()] + [g.name for g in rule.interface_groups.all()]),
                 "categories": ",".join(c.name for c in rule.categories.all()), "sequence": str(rule.sequence), "action": rule.action,
                 "protocol": rule.protocol, "source_net": rule.source, "destination_net": rule.destination, "source_port": rule.source_port, "destination_port": rule.destination_port, "interfacenot": str(int(rule.interface_not)),
+                "received-on": ",".join([i.name for i in rule.origin_interfaces.all()]+[g.name for g in rule.origin_interface_groups.all()]),
+                "ipprotocol":rule.ip_version,"direction":rule.direction,"quick":str(int(rule.quick)),"log":str(int(rule.log)),
+                "source_not":str(int(rule.source_not)),"destination_not":str(int(rule.destination_not)),
                 "enabled": str(int(rule.enabled)), "icmptype": rule.icmp_types, "icmp6type": rule.icmp6_types})
         interfaces = [(i.name, i.name) for i in LogicalInterface.objects.all()] + [(g, g + " (group)") for g in groups]
         categories = [(c.name, c.name) for c in Category.objects.all()]
+    import re
     category_names = dict(categories)
+    category_colors={c.name:c.color for c in Category.objects.all()} if not fw else {r.get('uuid',r['name']):r.get('color','') for r in data.get('categories',[])}
+    origin_ids={origin.remote_uuid:str(origin.rule_id) for origin in fw.ruleorigin_set.all()} if fw else {}
+    interface_labels=dict(interfaces)
+    managed_ids=list(Rule.objects.values_list("pk",flat=True)) if fw else []
+    from .rule_identity import matches as matches_rule
     for row in rows:
+        bindings={v.strip() for v in row.get('interface','').split(',') if v.strip()}
+        row['placement']='floating' if len(bindings)!=1 else 'group' if next(iter(bindings)) in groups else 'interface'
+        row['section_label']='Floating rules' if row['placement']=='floating' else ('Group — ' if row['placement']=='group' else 'Interface — ')+interface_labels.get(next(iter(bindings)),next(iter(bindings)))
+        row['interface_display']=', '.join(interface_labels.get(v.strip(),v.strip()) for v in row.get('interface','').split(',') if v.strip())
+        row['origin_display']=', '.join(interface_labels.get(v.strip(),v.strip()) for v in row.get('received-on','').split(',') if v.strip())
+        for side in ('source','destination'):
+            address=row.get(side+'_net','') or 'any'
+            row[side+'_display']=('! ' if row.get(side+'_not')=='1' else '')+{'any':'*','(self)':'This Firewall'}.get(address,address)
+        row['manager_id']=origin_ids.get(row.get('uuid')) if fw else row['id']
+        if fw and not row['manager_id']:
+            matching_ids=[str(pk) for pk in managed_ids if matches_rule(row.get('description',''),pk)]
+            if len(matching_ids)==1:row['manager_id']=matching_ids[0]
+        row['category_badges']=[{'name':category_names.get(value,value),'color':category_colors.get(value,'137b66') if re.fullmatch('[0-9a-fA-F]{6}',category_colors.get(value,'')) else '137b66'} for value in row.get('categories','').split(',') if value]
         row["category_display"] = ", ".join(category_names.get(value, value) for value in row.get("categories", "").split(",") if value)
-    rows = filter_rows(rows, request.GET, groups)
-    return render(request, "fleet/rules.html", {"rows": rows, "firewall": fw, "snapshot": observed,
+    all_rows=rows
+    rows = filter_rows(all_rows, request.GET, groups)
+    can_import=bool(fw and observed and request.user.has_perms(['fleet.add_rule','fleet.add_alias','fleet.add_category','fleet.add_interfacegroup']))
+    return render(request, "fleet/rules.html", {"rows": rows,"rules_data":{'rows':all_rows,'search_fields':SEARCH_FIELDS,'groups':{name:sorted(members) for name,members in groups.items()},'can_import':can_import,'can_edit':request.user.has_perm('fleet.change_rule')},'can_import':can_import, "firewall": fw, "snapshot": observed,
         "firewalls": Firewall.objects.all(), "interfaces": interfaces, "categories": categories,
         "import_form": ImportRulesForm(snapshot=observed) if observed else None})
 

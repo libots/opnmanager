@@ -1,0 +1,10 @@
+<tr class="rule-row {% if row.enabled == '0' %}rule-disabled{% endif %}">
+{% if firewall %}<td>{% if can_import %}<input type="checkbox" name="rule_indices" value="{{ row.index }}" aria-label="Import {{ row.description }}">{% endif %}</td>{% endif %}
+<td class="rule-tags">{% for badge in row.category_badges %}<span class="rule-category" style="--category-color:#{{ badge.color }}">{{ badge.name }}</span>{% endfor %}</td>
+<td><span title="{% if row.enabled == '0' %}Disabled{% else %}Enabled{% endif %}">{% if row.enabled == '0' %}—{% else %}✓{% endif %}</span></td>
+<td class="rule-flags"><span title="{{ row.action }}">{% if row.action == 'block' %}⊘{% elif row.action == 'reject' %}↩{% else %}▶︎{% endif %}</span> <span title="Direction: {{ row.direction|default:'in' }}">{% if row.direction == 'out' %}←{% elif row.direction == 'any' %}↔{% else %}→{% endif %}</span>{% if row.quick != '0' %} <span title="Quick">⚡︎</span>{% endif %}{% if row.log == '1' %} <span title="Logging enabled">●</span>{% endif %}<small title="Sequence">{{ row.sequence }}</small></td>
+<td>{{ row.interface_display|default:'*' }}{% if row.interfacenot == '1' %} (inverted){% endif %}</td><td>{{ row.origin_display|default:'*' }}</td>
+<td>{% if row.ipprotocol == 'inet6' %}IPv6{% elif row.ipprotocol == 'inet46' %}Any{% else %}IPv4{% endif %}</td>
+<td>{{ row.protocol|default:'any' }}{% if row.icmptype %}<small>{{ row.icmptype }}</small>{% endif %}{% if row.icmp6type %}<small>{{ row.icmp6type }}</small>{% endif %}</td>
+<td><code>{{ row.source_display }}</code></td><td>{{ row.source_port|default:'*' }}</td><td><code>{{ row.destination_display }}</code></td><td>{{ row.destination_port|default:'*' }}</td><td>{{ row.gateway|default:'*' }}</td>
+<td class="rule-description">{{ row.description }}</td><td class="rule-commands">{% if row.manager_id and perms.fleet.change_rule %}<a class="button" href="/admin/fleet/rule/{{ row.manager_id }}/change/" title="Edit manager rule">✎ Edit</a>{% elif can_import %}<span>Select to import</span>{% else %}<span>Read-only</span>{% endif %}</td></tr>
