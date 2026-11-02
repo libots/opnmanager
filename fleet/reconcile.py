@@ -96,10 +96,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
         if definition_names is not None and group.name not in definition_names["group"]: continue
         if not group.applies_to(firewall): continue
         if "groups" not in data: plan["errors"].append("Snapshot lacks interface groups. Pull a new snapshot before synchronization.")
-        members = list(group.members.all())
-        missing = [i.name for i in members if i.name not in mappings]
-        if missing or not members:
-            plan["errors"].append(f"Group {group.name}: missing members or mappings: {', '.join(missing)}.")
+        members = [i for i in group.members.all() if i.name in mappings]
+        if not members:
+            plan["errors"].append(f"Group {group.name}: no mapped members on this firewall.")
             continue
         if group.name in mappings.values():
             plan["errors"].append(f"Group {group.name} conflicts with a device interface name.")

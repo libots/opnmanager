@@ -47,20 +47,33 @@ def import_snapshot(request, pk):
 @require_POST
 def pull_snapshot(request, pk):
     fw = get_object_or_404(Firewall, pk=pk)
+    wants_json = 'application/json' in request.headers.get('Accept', '')
+    target = {'overview': 'dashboard', 'deployment': 'deployment_overview'}.get(request.POST.get('return_to'))
+    def finish(error=None, **result):
+        if wants_json:
+            return JsonResponse({'ok': not error, 'error': error, **result}, status=400 if error else 200)
+        if error: messages.error(request, error)
+        return redirect(target) if target else redirect('firewall', pk=pk)
     if not fw.enabled:
-        messages.error(request, "Enable this firewall before pulling a snapshot.")
-        return redirect("firewall", pk=pk)
+        return finish('Enable this firewall before pulling a snapshot.')
     try:
         data = OPNsenseClient(fw).snapshot()
-        Snapshot.objects.create(firewall=fw, data=data, source="api")
-        if fw.auto_map_interfaces:
-            count = apply_default_mappings(fw, data)
-            messages.info(request, f"Added {count} default interface mappings from unique display names.")
-        AuditEvent.objects.create(actor=request.user.username, action="snapshot.pull", detail=fw.name)
-        messages.success(request, "Configuration read from device. No device changes made.")
+        snapshot = Snapshot.objects.create(firewall=fw, data=data, source='api')
+        count = apply_default_mappings(fw, data) if fw.auto_map_interfaces else 0
+        AuditEvent.objects.create(actor=request.user.username, action='snapshot.pull', detail=fw.name)
+        if not wants_json:
+            messages.info(request, f'Added {count} default interface mappings from unique display names.')
+            messages.success(request, 'Configuration read from device. No device changes made.')
+        if wants_json:
+            plan = plan_for(fw)
+            drift = sum(item['status'] in ('missing','changed','conflict','out_of_scope') for item in plan['items'])
+            return finish(observed_at=snapshot.created_at.isoformat(),
+                          policy='Needs attention' if plan['errors'] else f'{drift} differences' if drift else 'Managed fields match',
+                          attention=bool(plan['errors'] or drift))
+        return finish()
     except DeviceError as exc:
-        messages.error(request, str(exc))
-    return redirect("firewall", pk=pk)
+        return finish(str(exc))
+
 
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
