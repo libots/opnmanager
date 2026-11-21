@@ -56,13 +56,11 @@ class SystemManagementTests(TestCase):
         self.assertIn(["OSPF", "OSPF"], inventory.data["protocols"])
         self.assertIn(("OSPF", "OSPF"), list(RuleForm().fields["protocol"].widget.choices))
         self.assertContains(self.client.get("/interfaces/"), "192.0.2.1/24")
-        self.assertContains(self.client.get("/fleet/logical-interfaces/"), "Save mapping")
+        self.assertContains(self.client.get("/fleet/logical-interfaces/"), "192.0.2.1/24")
 
     def test_matrix_empty_selection_and_mapping_edit(self):
         self.assertNotContains(self.client.get("/interfaces/?selection=1"), "<th>One</th>", html=False)
-        self.client.post(
-            "/fleet/mappings/save/", {"firewall": self.fw.pk, "logical": self.logical.pk, "device": "opt2"}
-        )
+        self.client.post("/fleet/mappings/save/", {f"map_{self.fw.pk}_{self.logical.pk}": "opt2"})
         self.assertEqual(self.fw.interface_mappings.get().device_interface, "opt2")
 
     def test_protocol_origin_and_builtin_rule_options(self):
