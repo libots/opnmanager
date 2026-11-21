@@ -2,18 +2,21 @@ import copy
 import json
 import time
 from unittest.mock import Mock, patch
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.exceptions import SuspiciousOperation, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+
 from .alias_sync import alias_plan, execute_alias_plan
 from .auth import SubjectOIDCBackend
 from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
-from .opnsense import DeviceError, OPNsenseClient, flatten
+from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import plan_for, validate_snapshot
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": []}
+
 
 class FleetTests(TestCase):
     def setUp(self):
@@ -31,7 +34,8 @@ class FleetTests(TestCase):
 
     def test_scope_defaults_all_and_can_select_none_or_one(self):
         self.assertTrue(self.rule.applies_to(self.other))
-        self.rule.scope = "selected"; self.rule.save()
+        self.rule.scope = "selected"
+        self.rule.save()
         self.assertEqual(plan_for(self.fw)["operations"], [])
         self.rule.firewalls.add(self.fw)
         self.assertEqual(len(plan_for(self.fw)["operations"]), 1)
@@ -44,7 +48,9 @@ class FleetTests(TestCase):
         self.assertEqual(plan["operations"], [])
 
     def test_logical_network_references_translate(self):
-        self.rule.source = "@VL10:net"; self.rule.destination = "@VL10:ip"; self.rule.save()
+        self.rule.source = "@VL10:net"
+        self.rule.destination = "@VL10:ip"
+        self.rule.save()
         rule = plan_for(self.other)["operations"][0]["payload"]
         self.assertEqual(rule["source_net"], "opt4")
         self.assertEqual(rule["destination_net"], "opt4ip")
@@ -60,7 +66,8 @@ class FleetTests(TestCase):
     def test_alias_scope_exclusion_blocks_reference(self):
         alias = Alias.objects.create(name="DNS", content="10.0.0.1", scope="selected")
         alias.firewalls.add(self.fw)
-        self.rule.destination = "DNS"; self.rule.save()
+        self.rule.destination = "DNS"
+        self.rule.save()
         self.assertTrue(plan_for(self.other)["errors"])
         self.assertFalse(plan_for(self.fw)["errors"])
 
@@ -82,8 +89,10 @@ class FleetTests(TestCase):
 
     def test_local_rules_preserved_and_retired_rules_reported(self):
         data = copy.deepcopy(EMPTY)
-        data["rules"] = [dict(description="Manual rule", interface="wan", sequence="1"),
-                         dict(description="[opnmanager:gone] Retired", interface="wan", sequence="2")]
+        data["rules"] = [
+            dict(description="Manual rule", interface="wan", sequence="1"),
+            dict(description="[opnmanager:gone] Retired", interface="wan", sequence="2"),
+        ]
         Snapshot.objects.create(firewall=self.fw, data=data)
         statuses = [i["status"] for i in plan_for(self.fw)["items"]]
         self.assertIn("local_only", statuses)
@@ -97,23 +106,36 @@ class FleetTests(TestCase):
         snapshot = Snapshot.objects.create(firewall=self.fw, data=data)
         item = plan_for(self.fw)["items"][0]
         self.assertEqual(item["changes"], [{"field": "action", "actual": "block", "desired": "pass"}])
-        snapshot.data["rules"].append(payload); snapshot.save()
+        snapshot.data["rules"].append(payload)
+        snapshot.save()
         self.assertTrue(plan_for(self.fw)["errors"])
 
     def test_no_snapshot_and_disabled_device_block(self):
         self.fw.snapshots.all().delete()
         self.assertTrue(plan_for(self.fw)["errors"])
-        self.other.enabled = False; self.other.save()
+        self.other.enabled = False
+        self.other.save()
         self.assertEqual(plan_for(self.other)["operations"], [])
 
     def test_https_origins_only(self):
-        for url in ["http://one.test", "https://user:pass@one.test", "https://one.test/path", "https://one.test/?key=secret"]:
+        for url in [
+            "http://one.test",
+            "https://user:pass@one.test",
+            "https://one.test/path",
+            "https://one.test/?key=secret",
+        ]:
             self.fw.base_url = url
-            with self.assertRaises(ValidationError): self.fw.full_clean()
+            with self.assertRaises(ValidationError):
+                self.fw.full_clean()
 
     def test_snapshot_schema_rejects_partial_or_nested_data(self):
-        for data in [{}, {"schema_version": 1, "rules": [], "aliases": [{}]}, {**EMPTY, "rules": [{"description": {}}]}]:
-            with self.assertRaises(ValueError): validate_snapshot(data)
+        for data in [
+            {},
+            {"schema_version": 1, "rules": [], "aliases": [{}]},
+            {**EMPTY, "rules": [{"description": {}}]},
+        ]:
+            with self.assertRaises(ValueError):
+                validate_snapshot(data)
 
     def test_anonymous_and_unprivileged_views(self):
         self.assertEqual(self.client.get("/").status_code, 302)
@@ -139,14 +161,24 @@ class FleetTests(TestCase):
         user = self.viewer()
         user.user_permissions.add(Permission.objects.get(codename="refresh_firewall"))
         url = f"/firewalls/{self.fw.pk}/import/"
-        self.assertEqual(self.client.post(url, {"snapshot": SimpleUploadedFile("bad.json", b"broken")}).status_code, 400)
-        self.assertEqual(self.client.post(url, {"snapshot": SimpleUploadedFile("good.json", json.dumps(EMPTY).encode())}).status_code, 302)
+        self.assertEqual(
+            self.client.post(url, {"snapshot": SimpleUploadedFile("bad.json", b"broken")}).status_code, 400
+        )
+        self.assertEqual(
+            self.client.post(
+                url, {"snapshot": SimpleUploadedFile("good.json", json.dumps(EMPTY).encode())}
+            ).status_code,
+            302,
+        )
         self.assertTrue(AuditEvent.objects.filter(action="snapshot.import").exists())
 
     def test_alias_sync_rejects_changed_device_without_writes(self):
         Alias.objects.create(name="Shared", content="10.0.0.1")
         client = Mock()
-        client.snapshot.return_value = {**EMPTY, "aliases": [{"name": "surprise", "type": "host", "content": "1.1.1.1"}]}
+        client.snapshot.return_value = {
+            **EMPTY,
+            "aliases": [{"name": "surprise", "type": "host", "content": "1.1.1.1"}],
+        }
         with self.assertRaisesMessage(DeviceError, "Device aliases changed"):
             execute_alias_plan(self.fw, alias_plan(self.fw)["approval_sha256"], client, "test")
         client.save_alias.assert_not_called()
@@ -154,7 +186,8 @@ class FleetTests(TestCase):
     def test_alias_sync_rejects_changed_policy_without_writes(self):
         alias = Alias.objects.create(name="Shared", content="10.0.0.1")
         plan = alias_plan(self.fw)
-        alias.content = "10.0.0.2"; alias.save()
+        alias.content = "10.0.0.2"
+        alias.save()
         client = Mock()
         with self.assertRaisesMessage(DeviceError, "Plan changed"):
             execute_alias_plan(self.fw, plan["approval_sha256"], client, "test")
@@ -174,7 +207,8 @@ class FleetTests(TestCase):
 
     def test_alias_sync_failure_records_partial_state(self):
         Alias.objects.create(name="Shared", content="10.0.0.1")
-        client = Mock(); client.snapshot.return_value = copy.deepcopy(EMPTY)
+        client = Mock()
+        client.snapshot.return_value = copy.deepcopy(EMPTY)
         client.save_alias.side_effect = DeviceError("failed")
         with self.assertRaises(DeviceError):
             execute_alias_plan(self.fw, alias_plan(self.fw)["approval_sha256"], client, "test")
@@ -184,12 +218,28 @@ class FleetTests(TestCase):
     @patch.dict("os.environ", {"ONE_API_KEY": "key", "ONE_API_SECRET": "secret"})
     @patch("fleet.opnsense.requests.Session")
     def test_real_adapter_paths_tls_and_option_normalization(self, session):
-        session.return_value.get.side_effect = [Mock(status_code=200, json=lambda: {"filter": {"rules": {"rule": {"abc": {
-            "description": "Rule", "interface": {"opt2": {"selected": 1}, "opt3": {"selected": 0}}, "sequence": "100"}}}}}),
+        session.return_value.get.side_effect = [
+            Mock(
+                status_code=200,
+                json=lambda: {
+                    "filter": {
+                        "rules": {
+                            "rule": {
+                                "abc": {
+                                    "description": "Rule",
+                                    "interface": {"opt2": {"selected": 1}, "opt3": {"selected": 0}},
+                                    "sequence": "100",
+                                }
+                            }
+                        }
+                    }
+                },
+            ),
             Mock(status_code=200, json=lambda: {"aliases": {"alias": []}}),
             Mock(status_code=200, json=lambda: {"interfaces": {"items": [{"value": "opt2", "label": "VL10"}]}}),
             Mock(status_code=200, json=lambda: {"group": {"ifgroupentry": {}}}),
-            Mock(status_code=200, json=lambda: {"category": {"categories": {"category": {}}}})]
+            Mock(status_code=200, json=lambda: {"category": {"categories": {"category": {}}}}),
+        ]
         client = OPNsenseClient(self.fw)
         data = client.snapshot()
         self.assertEqual(data["rules"][0]["interface"], "opt2")
@@ -206,11 +256,20 @@ class FleetTests(TestCase):
         self.assertTrue(call.args[0].endswith("/alias/set_item/uuid"))
         self.assertEqual(call.kwargs["json"], {"alias": {"name": "A"}})
 
-@override_settings(OIDC_OP_TOKEN_ENDPOINT="https://id.test/token", OIDC_OP_USER_ENDPOINT="https://id.test/userinfo",
-    OIDC_OP_JWKS_ENDPOINT="https://id.test/keys", OIDC_RP_CLIENT_ID="client", OIDC_RP_CLIENT_SECRET="test",
-    OIDC_RP_SIGN_ALGO="RS256", OIDC_ISSUER="https://id.test")
+
+@override_settings(
+    OIDC_OP_TOKEN_ENDPOINT="https://id.test/token",
+    OIDC_OP_USER_ENDPOINT="https://id.test/userinfo",
+    OIDC_OP_JWKS_ENDPOINT="https://id.test/keys",
+    OIDC_RP_CLIENT_ID="client",
+    OIDC_RP_CLIENT_SECRET="test",
+    OIDC_RP_SIGN_ALGO="RS256",
+    OIDC_ISSUER="https://id.test",
+)
 class OIDCTests(TestCase):
-    def setUp(self): self.backend = SubjectOIDCBackend()
+    def setUp(self):
+        self.backend = SubjectOIDCBackend()
+
     def test_subject_account_does_not_link_to_existing_email(self):
         get_user_model().objects.create_user("admin", email="same@example.test", is_superuser=True)
         claims = {"sub": "new", "email": "same@example.test", "email_verified": True}
@@ -219,27 +278,44 @@ class OIDCTests(TestCase):
         self.assertFalse(user.is_staff)
         self.assertFalse(user.is_superuser)
         self.assertFalse(user.has_usable_password())
-        self.assertEqual(self.backend.get_username(claims), self.backend.get_username({**claims, "email": "new@example.test"}))
+        self.assertEqual(
+            self.backend.get_username(claims), self.backend.get_username({**claims, "email": "new@example.test"})
+        )
+
     def test_unverified_email_and_missing_subject_rejected(self):
         self.assertFalse(self.backend.verify_claims({"email": "a@example.test", "sub": "a"}))
         self.assertFalse(self.backend.verify_claims({"email": "a@example.test", "email_verified": True}))
+
     @patch("mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token")
     def test_issuer_audience_and_expiry_checked(self, verify):
         valid = {"iss": "https://id.test", "aud": "client", "sub": "one", "exp": time.time() + 300, "iat": time.time()}
         verify.return_value = valid
         self.assertEqual(self.backend.verify_token("test"), valid)
-        for change in [{"iss": "wrong"}, {"aud": "wrong"}, {"exp": 1}, {"iat": time.time() + 1000}, {"azp": "wrong"}, {"sub": ""}]:
+        for change in [
+            {"iss": "wrong"},
+            {"aud": "wrong"},
+            {"exp": 1},
+            {"iat": time.time() + 1000},
+            {"azp": "wrong"},
+            {"sub": ""},
+        ]:
             verify.return_value = {**valid, **change}
-            with self.assertRaises(SuspiciousOperation): self.backend.verify_token("test")
+            with self.assertRaises(SuspiciousOperation):
+                self.backend.verify_token("test")
+
     @patch("mozilla_django_oidc.auth.OIDCAuthenticationBackend.get_userinfo")
     def test_userinfo_subject_must_match_id_token(self, get_info):
         get_info.return_value = {"sub": "another"}
-        with self.assertRaises(SuspiciousOperation): self.backend.get_userinfo("a", "b", {"sub": "original"})
+        with self.assertRaises(SuspiciousOperation):
+            self.backend.get_userinfo("a", "b", {"sub": "original"})
+
 
 class LocalAccountTests(TestCase):
     def bootstrap(self):
         from io import StringIO
+
         from django.core.management import call_command
+
         output = StringIO()
         call_command("bootstrap_admin", stdout=output)
         text = output.getvalue()
@@ -248,6 +324,7 @@ class LocalAccountTests(TestCase):
 
     def test_bootstrap_creates_admin_and_forces_password_change(self):
         from .models import LocalAccountState
+
         user, password = self.bootstrap()
         self.assertTrue(user.is_superuser and user.is_staff)
         self.assertTrue(user.check_password(password))
@@ -257,8 +334,11 @@ class LocalAccountTests(TestCase):
         for url in ["/", "/admin/", "/settings/", "/firewalls/99/plan/"]:
             self.assertRedirects(self.client.get(url), "/accounts/password_change/", fetch_redirect_response=False)
         new_password = "A-different-password-with-entropy-7285!"
-        response = self.client.post("/accounts/password_change/", {"old_password": password,
-            "new_password1": new_password, "new_password2": new_password}, follow=True)
+        response = self.client.post(
+            "/accounts/password_change/",
+            {"old_password": password, "new_password1": new_password, "new_password2": new_password},
+            follow=True,
+        )
         self.assertContains(response, "Firewall inventory")
         self.assertFalse(LocalAccountState.objects.get(user=user).must_change_password)
         user.refresh_from_db()
@@ -268,7 +348,9 @@ class LocalAccountTests(TestCase):
 
     def test_setup_is_idempotent_and_never_prints_or_resets_existing_password(self):
         from io import StringIO
+
         from django.core.management import call_command
+
         user, password = self.bootstrap()
         original = user.password
         output = StringIO()
@@ -279,7 +361,8 @@ class LocalAccountTests(TestCase):
         self.assertNotIn("Temporary password:", output.getvalue())
 
     def test_existing_ordinary_admin_user_is_never_promoted(self):
-        from django.core.management import call_command, CommandError
+        from django.core.management import CommandError, call_command
+
         user = get_user_model().objects.create_user("admin", password="Ordinary-user-password")
         with self.assertRaisesMessage(CommandError, "already in use"):
             call_command("bootstrap_admin")
@@ -288,24 +371,29 @@ class LocalAccountTests(TestCase):
 
     def test_existing_nondefault_administrator_is_preserved(self):
         from io import StringIO
+
         from django.core.management import call_command
+
         get_user_model().objects.create_superuser("existing", password="Existing-admin-password")
         call_command("bootstrap_admin", stdout=StringIO())
         self.assertFalse(get_user_model().objects.filter(username="admin").exists())
 
     def test_same_weak_or_wrong_old_password_does_not_unlock(self):
         from .models import LocalAccountState
+
         user, password = self.bootstrap()
         self.client.force_login(user)
         for old, new in [(password, password), (password, "password"), ("wrong", "Strong-new-password-37498!")]:
-            response = self.client.post("/accounts/password_change/", {"old_password": old,
-                "new_password1": new, "new_password2": new})
+            response = self.client.post(
+                "/accounts/password_change/", {"old_password": old, "new_password1": new, "new_password2": new}
+            )
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.context["form"].errors)
             self.assertTrue(LocalAccountState.objects.get(user=user).must_change_password)
 
     def test_password_change_requires_csrf(self):
         from django.test import Client
+
         user, password = self.bootstrap()
         client = Client(enforce_csrf_checks=True)
         client.force_login(user)
