@@ -321,29 +321,6 @@ class LocalAccountState(models.Model):
     must_change_password = models.BooleanField(default=True)
 
 
-class AuthenticationServer(ScopedPolicy):
-    name = models.CharField(max_length=100, unique=True)
-    kind = models.CharField(max_length=10, choices=[("ldap", "LDAP"), ("radius", "RADIUS")], default="ldap")
-    host = models.CharField(max_length=255)
-    port = models.PositiveIntegerField(default=636, validators=[MinValueValidator(1), MaxValueValidator(65535)])
-    use_tls = models.BooleanField(default=True)
-    base_dn = models.CharField(max_length=500, blank=True)
-    bind_dn = models.CharField(max_length=500, blank=True)
-    encrypted_secret = models.TextField(blank=True, editable=False)
-
-    def __str__(self):
-        return self.name
-
-
-class FirewallAdministration(ScopedPolicy):
-    name = models.CharField(max_length=100, unique=True)
-    authentication_servers = models.ManyToManyField(AuthenticationServer, blank=True)
-    retain_local_access = models.BooleanField(default=True)
-
-    def __str__(self):
-        return self.name
-
-
 class DNSProfile(ScopedPolicy):
     name = models.CharField(max_length=100, unique=True)
     search_domains = models.TextField(help_text="One DNS search domain per line, in lookup order. Order is preserved.")

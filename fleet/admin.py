@@ -9,15 +9,13 @@ from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import AdministrationForm, AuthenticationServerForm, DNSProfileForm, VirtualIPForm
+from .forms import DNSProfileForm, VirtualIPForm
 from .models import (
     Alias,
     AuditEvent,
-    AuthenticationServer,
     Category,
     DNSProfile,
     Firewall,
-    FirewallAdministration,
     FirewallGroup,
     InterfaceGroup,
     InterfaceMapping,
@@ -365,25 +363,9 @@ class DesiredProfileAdmin(admin.ModelAdmin):
 
         messages.info(
             request,
-            "Desired configuration only: the inspected OPNsense core does not expose a supported write API for authentication servers or ordered system search domains. Saving here does not change device authentication or DNS.",
+            "Desired configuration only: the inspected OPNsense core does not expose a supported write API for ordered system search domains. Saving here does not change device DNS.",
         )
         return super().changeform_view(request, *args, **kwargs)
-
-
-@admin.register(AuthenticationServer)
-class AuthenticationServerAdmin(DesiredProfileAdmin):
-    form = AuthenticationServerForm
-    list_display = ["name", "kind", "host", "port", "scope"]
-
-    def changeform_view(self, request, *args, **kwargs):
-        request.sensitive_post_parameters = ("secret",)
-        return super().changeform_view(request, *args, **kwargs)
-
-
-@admin.register(FirewallAdministration)
-class FirewallAdministrationAdmin(DesiredProfileAdmin):
-    form = AdministrationForm
-    list_display = ["name", "scope", "retain_local_access"]
 
 
 @admin.register(DNSProfile)

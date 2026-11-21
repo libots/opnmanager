@@ -6,12 +6,11 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 
-from .forms import AuthenticationServerForm, CategoryForm, RuleForm
+from .forms import CategoryForm, RuleForm
 from .models import (
     DeviceInventory,
     DNSProfile,
     Firewall,
-    FirewallAdministration,
     InterfaceMapping,
     LogicalInterface,
     Rule,
@@ -124,32 +123,13 @@ class SystemManagementTests(TestCase):
             self.client.post("/system/firmware/action/", {"action": "update", "selected_firewalls": [self.fw.pk]})
             factory.assert_not_called()
 
-    def test_desired_profiles_preserve_domain_order_and_credentials_are_encrypted(self):
+    def test_dns_profiles_preserve_domain_order(self):
         profile = DNSProfile(name="Domains", search_domains="corp.example\nlab.example")
         profile.full_clean()
         profile.save()
         self.assertEqual(profile.search_domains, "corp.example\nlab.example")
         with self.assertRaises(ValidationError):
             DNSProfile(name="Invalid", search_domains="invalid domain").full_clean()
-        with tempfile.TemporaryDirectory() as directory, override_settings(DATA_DIR=Path(directory)):
-            form = AuthenticationServerForm(
-                {
-                    "name": "LDAP",
-                    "host": "ldap.example",
-                    "port": 636,
-                    "kind": "ldap",
-                    "scope": "all",
-                    "use_tls": "on",
-                    "secret": "test-bind-secret",
-                }
-            )
-            self.assertTrue(form.is_valid(), form.errors)
-            server = form.save()
-            self.assertNotIn("test-bind-secret", server.encrypted_secret)
-            self.assertNotIn("test-bind-secret", str(AuthenticationServerForm(instance=server)))
-            policy = FirewallAdministration.objects.create(name="Auth")
-            policy.authentication_servers.add(server)
-            self.assertTrue(policy.applies_to(self.fw))
         self.assertContains(self.client.get("/system/settings/general/"), "not deployed")
 
     def test_oidc_ui_is_write_only_encrypted_restart_configuration(self):

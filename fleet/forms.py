@@ -5,11 +5,9 @@ from django import forms
 from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, protocol_choices
 from .models import (
     Alias,
-    AuthenticationServer,
     Category,
     DNSProfile,
     Firewall,
-    FirewallAdministration,
     FirewallGroup,
     InterfaceGroup,
     LogicalInterface,
@@ -508,37 +506,6 @@ class InterfaceGroupForm(forms.ModelForm):
         model = InterfaceGroup
         fields = "__all__"
         widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups", "members")}
-
-
-class AuthenticationServerForm(forms.ModelForm):
-    secret = forms.CharField(
-        required=False,
-        widget=forms.PasswordInput(render_value=False),
-        help_text="Optional replacement bind/shared secret. Empty keeps the saved value.",
-    )
-
-    class Meta:
-        model = AuthenticationServer
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups")}
-
-    def save(self, commit=True):
-        from .credentials import cipher
-
-        obj = super().save(commit=False)
-        if self.cleaned_data.get("secret"):
-            obj.encrypted_secret = cipher().encrypt(self.cleaned_data["secret"].encode()).decode()
-        if commit:
-            obj.save()
-            self.save_m2m()
-        return obj
-
-
-class AdministrationForm(forms.ModelForm):
-    class Meta:
-        model = FirewallAdministration
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("authentication_servers", "firewalls", "firewall_groups")}
 
 
 class DNSProfileForm(forms.ModelForm):

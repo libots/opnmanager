@@ -307,17 +307,19 @@ The connector uses the actual core firmware `running`, `check`, `status`, `updat
 
 **Interfaces → Virtual IPs** reads observed VIPs without retaining CARP passwords, adopts existing IP Alias/Proxy ARP entries into scoped manager definitions, and offers reviewed apply/deletion actions. Logical interface mappings resolve per firewall. A signed review expires after ten minutes and is rejected if the VIP inventory or desired payload changed. Apply/reconfigure is followed by readback. Deletion respects OPNsense's in-use validation and verifies absence. Removing a live VIP does not silently remove a manager desired definition; remove/retarget that separately. CARP entries can be viewed but secrets and mutation remain on-device because their HA dependencies need separate handling. Writes can interrupt access and have no automatic rollback.
 
-### Authentication servers and ordered search-domain profiles — desired configuration only
+### Ordered search-domain profiles — desired configuration only
 
-**Firewall System → Access → Servers** centrally stores LDAP/RADIUS server definitions, scope and encrypted bind/shared secrets. **Settings → Administration** associates those servers with firewall authentication profiles. **Settings → General** manages DNS search-domain profiles with one domain per line in explicit lookup order; the per-firewall overview flags conflicting overlapping profiles.
+**System → Settings → General** manages DNS search-domain profiles with one domain per line in explicit lookup order; the per-firewall overview flags conflicting overlapping profiles.
 
-**These profile editors do not deploy LDAP/RADIUS or DNS search-domain settings.** The inspected upstream core provides no supported API for writing these legacy configuration sections. No guessed endpoint, hidden XML rewrite or unverified remote command is used. Profiles are central desired configuration until a version-compatible firewall-side adapter/extension is supplied and tested. They do not change OPNmanager's own login. Other authentication server types also require such an adapter.
+**These profiles do not deploy DNS search-domain settings.** The inspected upstream core provides no supported API for writing this legacy configuration section. No guessed endpoint, hidden XML rewrite or unverified remote command is used.
+
+**Authentication servers (LDAP/RADIUS) aren't managed.** OPNsense still edits them only on its legacy **System › Access › Servers** page, with no API, so configure them on each firewall. Earlier versions of OPNmanager stored server and administration profiles it could never deploy; upgrading deletes them.
 
 ### OPNmanager OIDC settings from the UI
 
 **Settings → Authentication Options** is restricted to local superusers and configures OPNmanager's OIDC provider. Secret fields are write-only. Configuration is saved atomically in owner-only `.oidc-settings.json` in `OPNMANAGER_DATA_DIR`; its client secret is encrypted with the existing separate credential key. A manager restart activates saved settings, including login routes. UI settings take precedence over environment settings. Keep local administrators available and test the provider before relying on it; existing sessions are not revoked automatically.
 
-Back up this configuration and the credential encryption key privately. If the saved file/key is corrupt and prevents startup, stop the manager, restore the configuration/key backup or move `.oidc-settings.json` aside to return to environment/local login configuration, then restart. Never put secret values in Git or support messages. LDAP/RADIUS profiles under Firewall System are independent of these manager OIDC settings.
+Back up this configuration and the credential encryption key privately. If the saved file/key is corrupt and prevents startup, stop the manager, restore the configuration/key backup or move `.oidc-settings.json` aside to return to environment/local login configuration, then restart. Never put secret values in Git or support messages.
 
 All new live-device operations have mocked API tests but still need acceptance testing against your OPNsense version. Upgrade using the usual `git pull --ff-only`, `./scripts/setup-local.sh`, then `./scripts/run-local.sh`; migrations preserve existing accounts and policy.
 

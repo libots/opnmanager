@@ -16,15 +16,11 @@
     <a href="{% url 'deployment_overview' %}">Deployment</a>
   </div></details>
   <details class="menu-section" data-menu="system" open><summary>{% icon "server" %}<span class="menu-label">System</span></summary><div class="menu-items" data-title="System">
-    <details data-menu="system.access"><summary>Access {% icon "users" "menu-sub-icon" %}</summary><div class="menu-items">
-      <a href="/admin/fleet/authenticationserver/">Servers</a>
-    </div></details>
     <details data-menu="system.firmware"><summary>Firmware {% icon "building" "menu-sub-icon" %}</summary><div class="menu-items">
       <a href="{% url 'firmware_status' %}">Status</a>
       <a href="{% url 'firmware_updates' %}">Updates</a>
     </div></details>
     <details data-menu="system.settings"><summary>Settings {% icon "gears" "menu-sub-icon" %}</summary><div class="menu-items">
-      <a href="/admin/fleet/firewalladministration/">Administration</a>
       <a href="{% url 'dns_general' %}">General</a>
     </div></details>
   </div></details>
