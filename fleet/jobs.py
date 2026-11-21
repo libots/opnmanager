@@ -28,7 +28,11 @@ def _deploy_rules(job, client):
     from .deployment import execute_deployment
 
     count = execute_deployment(
-        job.firewall, job.params.get("approval_sha256"), job.params.get("selected_rules", []), client, job.actor
+        job.firewall,
+        job.params.get("approval_sha256"),
+        [value for value in job.params.get("selected_rules", []) if value],
+        client,
+        job.actor,
     )
     return f"Applied and verified {count} selected rule changes."
 

@@ -307,3 +307,104 @@ class PlannerQueryTests(TestCase):
         small = count_queries()
         add_rules(5, 40)
         self.assertEqual(count_queries(), small)
+
+
+class RetireRuleTests(TestCase):
+    def setUp(self):
+        from .rule_identity import short_marker
+
+        self.fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        self.logical = LogicalInterface.objects.create(name="LAN")
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=self.logical, device_interface="lan")
+        self.kept = Rule.objects.create(name="Kept", interface=self.logical, sequence=100)
+        gone = Rule.objects.create(name="Gone", interface=self.logical, sequence=200)
+        self.gone_tag = "Gone " + short_marker(gone.pk)
+        gone.delete()
+        self.device_rules = [
+            {"description": self.gone_tag, "interface": "lan", "sequence": "200", "uuid": "gone-uuid"},
+            {"description": "Local rule", "interface": "lan", "sequence": "300", "uuid": "local-uuid"},
+        ]
+        Snapshot.objects.create(firewall=self.fw, data={**EMPTY, "rules": copy.deepcopy(self.device_rules)})
+
+    def test_only_orphaned_managed_rules_are_offered(self):
+        plan = deployment_plan(self.fw)
+        self.assertEqual([c["uuid"] for c in plan["retire"]], ["gone-uuid"])
+        self.assertEqual([o["id"] for o in plan["retire"][0]["options"]], ["disable:gone-uuid", "delete:gone-uuid"])
+
+    def test_targeted_rule_that_fails_to_plan_is_never_offered(self):
+        from .rule_identity import short_marker
+
+        unmapped = LogicalInterface.objects.create(name="UNMAPPED")
+        broken = Rule.objects.create(name="Broken", interface=unmapped, sequence=400)
+        snapshot = self.fw.snapshots.first()
+        snapshot.data["rules"].append(
+            {"description": "Broken " + short_marker(broken.pk), "uuid": "b", "interface": "", "sequence": "400"}
+        )
+        snapshot.save()
+        plan = deployment_plan(self.fw)
+        self.assertNotIn("b", [c["uuid"] for c in plan["retire"]])
+
+    def test_scoped_away_rule_is_offered(self):
+        from .rule_identity import short_marker
+
+        self.kept.scope = "selected"
+        self.kept.save()
+        snapshot = self.fw.snapshots.first()
+        snapshot.data["rules"].append(
+            {"description": "Kept " + short_marker(self.kept.pk), "uuid": "k", "interface": "lan", "sequence": "100"}
+        )
+        snapshot.save()
+        self.assertIn("k", [c["uuid"] for c in deployment_plan(self.fw)["retire"]])
+
+    def run_retire(self, choice, readback_rules):
+        plan = deployment_plan(self.fw)
+        client = Mock(ROLLBACK_SECONDS=60)
+        client.savepoint.return_value = "1.1"
+        client.snapshot.side_effect = [
+            {**EMPTY, "rules": copy.deepcopy(self.device_rules)},
+            {**EMPTY, "rules": readback_rules},
+        ]
+        execute_deployment(self.fw, plan["approval_sha256"], [choice], client, "test")
+        return client
+
+    def test_delete_is_protected_and_verified(self):
+        client = self.run_retire("delete:gone-uuid", [self.device_rules[1]])
+        client.delete_rule.assert_called_once_with("gone-uuid")
+        client.save_rule.assert_not_called()
+        client.cancel_rollback.assert_called_once_with("1.1")
+
+    def test_disable_is_verified_and_failed_readback_reverts(self):
+        with self.assertRaisesMessage(DeviceError, "readback did not match"):
+            self.run_retire("disable:gone-uuid", copy.deepcopy(self.device_rules))
+        client = self.run_retire("disable:gone-uuid", [{**self.device_rules[0], "enabled": "0"}, self.device_rules[1]])
+        client.disable_rule.assert_called_once_with("gone-uuid")
+        # Once disabled, only deletion is offered.
+        self.assertEqual([o["id"] for o in deployment_plan(self.fw)["retire"][0]["options"]], ["delete:gone-uuid"])
+
+    def test_both_actions_for_one_rule_are_refused(self):
+        plan = deployment_plan(self.fw)
+        with self.assertRaisesMessage(DeviceError, "not both"):
+            execute_deployment(
+                self.fw, plan["approval_sha256"], ["disable:gone-uuid", "delete:gone-uuid"], Mock(), "test"
+            )
+
+    @patch.dict("os.environ", {"TEST_API_KEY": "key", "TEST_API_SECRET": "secret"})
+    @patch("fleet.opnsense.requests.Session")
+    def test_retire_endpoints(self, session):
+        post = session.return_value.post
+        client = OPNsenseClient(self.fw)
+        post.return_value = Mock(status_code=200, json=lambda: {"result": "deleted"})
+        client.delete_rule("u")
+        self.assertTrue(post.call_args.args[0].endswith("/api/firewall/filter/del_rule/u"))
+        post.return_value = Mock(status_code=200, json=lambda: {"result": "Disabled", "changed": True})
+        client.disable_rule("u")
+        self.assertTrue(post.call_args.args[0].endswith("/api/firewall/filter/toggle_rule/u/0"))
+        post.return_value = Mock(status_code=200, json=lambda: {"result": "not found"})
+        with self.assertRaises(DeviceError):
+            client.delete_rule("u")
+
+    def test_deploy_page_renders_retire_choices(self):
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+        response = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
+        self.assertContains(response, "Retire managed rules")
+        self.assertContains(response, 'value="delete:gone-uuid"')

@@ -402,7 +402,7 @@ def deploy_rules(request, pk):
                 raise DeviceError("Confirm the apply warning before deploying.")
             params = {
                 "approval_sha256": request.POST.get("approval_sha256", ""),
-                "selected_rules": request.POST.getlist("selected_rules"),
+                "selected_rules": [value for value in request.POST.getlist("selected_rules") if value],
             }
             job = enqueue(fw, DeviceJob.RULES_DEPLOY, params, request.user.username)
         except DeviceError as exc:

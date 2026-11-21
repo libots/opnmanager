@@ -181,6 +181,16 @@ class OPNsenseClient:
         if not _saved(result):
             raise DeviceError("OPNsense rejected a rule. Inspect device validation errors; partial changes may remain.")
 
+    def delete_rule(self, remote_uuid):
+        result = self.post("/api/firewall/filter/del_rule/" + quote(remote_uuid, safe=""), {})
+        if not isinstance(result, dict) or str(result.get("result", "")).lower() != "deleted":
+            raise DeviceError("OPNsense did not delete a retired rule; partial changes may remain.")
+
+    def disable_rule(self, remote_uuid):
+        result = self.post("/api/firewall/filter/toggle_rule/" + quote(remote_uuid, safe="") + "/0", {})
+        if not isinstance(result, dict) or str(result.get("result", "")).lower() != "disabled":
+            raise DeviceError("OPNsense did not disable a retired rule; partial changes may remain.")
+
     # --- Filter rule savepoint / rollback -------------------------------------
     # OPNsense reverts an apply made with a savepoint revision after
     # ROLLBACK_SECONDS unless cancel_rollback is called. Confirming only after a
