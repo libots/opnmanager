@@ -6,8 +6,9 @@ import json
 from .alias_sync import digest
 from .dependencies import rule_definitions
 from .locks import device_write_lock
-from .models import AuditEvent, Snapshot
+from .models import AuditEvent, DeviceInventory, Snapshot
 from .opnsense import DeviceError
+from .opnsense_errors import SavepointUnsupported
 from .reconcile import Policy, canonical, plan_for
 from .rule_identity import is_managed
 from .rule_identity import matches as matches_rule
@@ -176,6 +177,7 @@ def deployment_plan(firewall):
         targeted = [rule.pk for rule in policy.rules if rule.applies_to(firewall)]
         result["retire"] = retire_candidates(device_rules, targeted)
     result["has_warnings"] = any(row["warnings"] for row in result["rows"])
+    result["rollback"] = rollback_mode(firewall)
     result["approval_sha256"] = digest(result)
     return result
 
@@ -195,19 +197,42 @@ def verify_rule_readback(observed, operations):
             raise DeviceError("Rule readback did not match the selected changes.")
 
 
-def _revert(client, revision):
-    """Best-effort immediate revert; OPNsense's rollback timer is the backstop."""
+def _revert(client, revision, history_backup=None):
+    """Best-effort immediate revert. With a savepoint, OPNsense's rollback timer is the backstop."""
     try:
-        client.revert(revision)
+        if revision:
+            client.revert(revision)
+        else:
+            client.revert_config(history_backup)
     except DeviceError:
+        if revision:
+            return (
+                f"Immediate revert failed; OPNsense will restore the previous rules automatically within "
+                f"{client.ROLLBACK_SECONDS} seconds unless the apply never started. Pull a fresh snapshot to verify."
+            )
         return (
-            f"Immediate revert failed; OPNsense will restore the previous rules automatically within "
-            f"{client.ROLLBACK_SECONDS} seconds unless the apply never started. Pull a fresh snapshot to verify."
+            "Reverting from configuration history also failed, and this firewall has no automatic rollback. "
+            f"Restore entry {history_backup} under System: Configuration: History, then pull a fresh snapshot."
         )
-    return "The previous rule configuration was restored."
+    if revision:
+        return "The previous rule configuration was restored."
+    return f"The firewall configuration was restored from configuration history ({history_backup})."
 
 
-def _execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False):
+def rollback_mode(firewall):
+    """How rule pushes to this firewall can be undone: savepoint, config_history or unknown (not tried yet)."""
+    inventory = DeviceInventory.objects.filter(firewall=firewall).first()
+    return (inventory.data.get("rule_rollback") if inventory else None) or "unknown"
+
+
+def _remember_rollback(firewall, mode):
+    inventory, _ = DeviceInventory.objects.get_or_create(firewall=firewall)
+    if inventory.data.get("rule_rollback") != mode:
+        inventory.data = {**inventory.data, "rule_rollback": mode}
+        inventory.save()
+
+
+def _execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False, allow_unprotected=False):
     plan = deployment_plan(firewall)
     if approved != plan["approval_sha256"]:
         raise DeviceError("Rule plan changed. Review again before applying.")
@@ -240,15 +265,30 @@ def _execute_deployment(firewall, approved, selected, client, actor, accept_warn
         )
     if deployment_plan(firewall)["approval_sha256"] != approved:
         raise DeviceError("Manager policy changed during preflight. Review again.")
-    AuditEvent.objects.create(
-        actor=actor,
-        action="rules.deploy.started",
-        detail=firewall.name + " " + approved + " " + ",".join(sorted(selected)),
-    )
     operations = [eligible[key] for key in sorted(selected)]
     # Savepoint before any write: if anything below fails, or the new rules cut
     # the manager off so it can never confirm, OPNsense restores this revision.
-    revision = client.savepoint()
+    history_backup = None
+    try:
+        revision = client.savepoint()
+        _remember_rollback(firewall, "savepoint")
+    except SavepointUnsupported as exc:
+        # OPNsense 26.7+: the manager can still undo a failed push from the firewall's
+        # configuration history, but nothing on the firewall undoes a push that cuts
+        # the manager off. That needs the person's explicit agreement.
+        _remember_rollback(firewall, "config_history")
+        if not allow_unprotected:
+            raise DeviceError(
+                f'{exc} Review the rules again and tick "Push without automatic rollback" to continue.'
+            ) from exc
+        revision = None
+        history_backup = client.latest_config_backup()
+    protection = f"revision {revision}" if revision else f"config history {history_backup}, no automatic rollback"
+    AuditEvent.objects.create(
+        actor=actor,
+        action="rules.deploy.started",
+        detail=f"{firewall.name} {approved} {','.join(sorted(selected))}; {protection}",
+    )
     try:
         for operation in operations:
             if operation["action"] == "delete":
@@ -261,27 +301,26 @@ def _execute_deployment(firewall, approved, selected, client, actor, accept_warn
         observed = client.snapshot()
         verify_rule_readback(observed, operations)
     except DeviceError as exc:
-        outcome = _revert(client, revision)
+        outcome = _revert(client, revision, history_backup)
         AuditEvent.objects.create(
-            actor=actor, action="rules.deploy.failed", detail=f"{firewall.name} revision {revision}; {outcome}"
+            actor=actor, action="rules.deploy.failed", detail=f"{firewall.name} {protection}; {outcome}"
         )
         raise DeviceError(f"{exc} {outcome}") from exc
-    try:
-        client.cancel_rollback(revision)
-    except DeviceError:
-        AuditEvent.objects.create(
-            actor=actor,
-            action="rules.deploy.unconfirmed",
-            detail=f"{firewall.name} revision {revision}; OPNsense will roll back automatically",
-        )
-        raise
+    if revision:
+        try:
+            client.cancel_rollback(revision)
+        except DeviceError:
+            AuditEvent.objects.create(
+                actor=actor,
+                action="rules.deploy.unconfirmed",
+                detail=f"{firewall.name} revision {revision}; OPNsense will roll back automatically",
+            )
+            raise
     Snapshot.objects.create(firewall=firewall, data=observed, source="api")
-    AuditEvent.objects.create(
-        actor=actor, action="rules.deploy.completed", detail=f"{firewall.name} revision {revision}"
-    )
+    AuditEvent.objects.create(actor=actor, action="rules.deploy.completed", detail=f"{firewall.name} {protection}")
     return len(selected)
 
 
-def execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False):
+def execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False, allow_unprotected=False):
     with device_write_lock(firewall.pk, "A rule deployment"):
-        return _execute_deployment(firewall, approved, selected, client, actor, accept_warnings)
+        return _execute_deployment(firewall, approved, selected, client, actor, accept_warnings, allow_unprotected)

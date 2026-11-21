@@ -34,6 +34,7 @@ def _deploy_rules(job, client):
         client,
         job.actor,
         accept_warnings=bool(job.params.get("accept_warnings")),
+        allow_unprotected=bool(job.params.get("allow_unprotected")),
     )
     return f"Applied and verified {count} selected rule changes."
 

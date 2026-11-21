@@ -468,3 +468,102 @@ class InterfaceWarningDeployTests(TestCase):
         self.assertContains(response, "DMZ are not mapped on this firewall")
         self.assertContains(response, 'name="accept_warnings"')
         self.assertNotContains(response, f'value="{self.rule.pk}" checked')
+
+
+class ConfigHistoryFallbackTests(TestCase):
+    """OPNsense 26.7 removed filter savepoints; pushes fall back to configuration history only when allowed."""
+
+    def setUp(self):
+        from .opnsense_errors import SavepointUnsupported
+
+        self.fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        logical = LogicalInterface.objects.create(name="LAN")
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
+        Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
+        Rule.objects.create(name="First", interface=logical, sequence=100)
+        self.unsupported = SavepointUnsupported("no filter savepoint API. No rule writes were made.")
+
+    def device(self, readback_ok=True):
+        plan = deployment_plan(self.fw)
+        row = plan["rows"][0]
+        client = Mock(ROLLBACK_SECONDS=60)
+        client.savepoint.side_effect = self.unsupported
+        client.latest_config_backup.return_value = "config-1763712000.1234.xml"
+        readback = {**EMPTY, "rules": [{**row["operation"]["payload"], "uuid": "r"}]} if readback_ok else EMPTY
+        client.snapshot.side_effect = [copy.deepcopy(EMPTY), copy.deepcopy(readback)]
+        return plan, row, client
+
+    def test_missing_savepoint_stops_before_writes_and_is_remembered(self):
+        from .deployment import rollback_mode
+
+        self.assertEqual(rollback_mode(self.fw), "unknown")
+        plan, row, client = self.device()
+        with self.assertRaisesMessage(DeviceError, "Push without automatic rollback"):
+            execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test")
+        client.save_rule.assert_not_called()
+        client.apply_rules.assert_not_called()
+        self.assertEqual(rollback_mode(self.fw), "config_history")
+        self.assertEqual(deployment_plan(self.fw)["rollback"], "config_history")
+
+    def test_allowed_push_records_history_entry_and_skips_rollback_calls(self):
+        plan, row, client = self.device()
+        execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test", allow_unprotected=True)
+        names = [call[0] for call in client.method_calls]
+        self.assertEqual(
+            names, ["snapshot", "savepoint", "latest_config_backup", "save_rule", "apply_rules", "snapshot"]
+        )
+        client.apply_rules.assert_called_once_with(None)
+        client.cancel_rollback.assert_not_called()
+        detail = AuditEvent.objects.get(action="rules.deploy.completed").detail
+        self.assertIn("config history config-1763712000.1234.xml, no automatic rollback", detail)
+
+    def test_failed_verification_restores_configuration_history(self):
+        plan, row, client = self.device(readback_ok=False)
+        with self.assertRaisesMessage(DeviceError, "restored from configuration history (config-1763712000.1234.xml)"):
+            execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test", allow_unprotected=True)
+        client.revert_config.assert_called_once_with("config-1763712000.1234.xml")
+        client.revert.assert_not_called()
+
+    def test_failed_history_revert_tells_the_person_how_to_recover(self):
+        plan, row, client = self.device(readback_ok=False)
+        client.revert_config.side_effect = DeviceError("unreachable")
+        with self.assertRaisesMessage(DeviceError, "System: Configuration: History"):
+            execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test", allow_unprotected=True)
+
+    def test_deploy_page_offers_opt_in_once_mode_is_known(self):
+        from .models import DeviceInventory
+
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+        self.assertNotContains(self.client.get(f"/firewalls/{self.fw.pk}/deploy/"), 'name="allow_unprotected"')
+        DeviceInventory.objects.create(firewall=self.fw, data={"rule_rollback": "config_history"})
+        response = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
+        self.assertContains(response, "No automatic rollback on this firewall.")
+        self.assertContains(response, 'name="allow_unprotected"')
+
+    @patch.dict("os.environ", {"TEST_API_KEY": "key", "TEST_API_SECRET": "secret"})
+    @patch("fleet.opnsense.requests.Session")
+    def test_client_detects_removed_savepoint_and_uses_backup_api(self, session):
+        from .opnsense_errors import SavepointUnsupported
+
+        client = OPNsenseClient(self.fw)
+        session.return_value.post.return_value = Mock(status_code=404)
+        with self.assertRaises(SavepointUnsupported) as caught:
+            client.savepoint()
+        self.assertIn("No rule writes were made", str(caught.exception))
+        self.assertNotIn("uncertain", str(caught.exception))
+        session.return_value.get.return_value = Mock(
+            status_code=200, json=lambda: {"items": [{"id": "config-2.xml"}, {"id": "config-1.xml"}]}
+        )
+        self.assertEqual(client.latest_config_backup(), "config-2.xml")
+        self.assertTrue(session.return_value.get.call_args.args[0].endswith("/api/core/backup/backups/this"))
+        session.return_value.post.side_effect = [
+            Mock(status_code=200, json=lambda: {"status": "reverted"}),
+            Mock(status_code=200, json=lambda: {"status": "OK"}),
+        ]
+        client.revert_config("config-2.xml")
+        urls = [call.args[0] for call in session.return_value.post.call_args_list[-2:]]
+        self.assertTrue(urls[0].endswith("/api/core/backup/revert_backup/config-2.xml"))
+        self.assertTrue(urls[1].endswith("/api/firewall/filter/apply"))
+        session.return_value.get.return_value = Mock(status_code=200, json=lambda: {"items": []})
+        with self.assertRaisesMessage(DeviceError, "no configuration history"):
+            client.latest_config_backup()

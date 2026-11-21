@@ -5,7 +5,7 @@ from urllib.parse import quote
 import requests
 
 from .credentials import get_credentials
-from .opnsense_errors import DeviceError
+from .opnsense_errors import DeviceError, SavepointUnsupported
 from .reconcile import validate_snapshot
 
 
@@ -87,7 +87,7 @@ class OPNsenseClient:
             detail = self.STATUS_EXPLANATIONS.get(response.status_code, "Check device/API availability.")
             if 300 <= response.status_code < 400:
                 detail = "The device redirected the request. Use the final HTTPS management origin and correct port; API redirects are not followed."
-            raise DeviceError(f"{endpoint}: HTTP {response.status_code}. {detail}{suffix}")
+            raise DeviceError(f"{endpoint}: HTTP {response.status_code}. {detail}{suffix}", response.status_code)
         try:
             return response.json()
         except ValueError as exc:
@@ -198,7 +198,19 @@ class OPNsenseClient:
     ROLLBACK_SECONDS = 60
 
     def savepoint(self):
-        result = self.post("/api/firewall/filter/savepoint", {})
+        """Save a filter savepoint; raises SavepointUnsupported on OPNsense 26.7 and later.
+
+        A savepoint writes no rules, so a failure here leaves the firewall unchanged.
+        """
+        try:
+            result = self.post("/api/firewall/filter/savepoint", {}, write=False)
+        except DeviceError as exc:
+            if exc.status_code == 404:
+                raise SavepointUnsupported(
+                    "This firewall's OPNsense version has no filter savepoint API (it was removed in 26.7), "
+                    "so OPNsense can't roll rules back on its own. No rule writes were made."
+                ) from exc
+            raise
         revision = str(result.get("revision", "")).strip() if isinstance(result, dict) else ""
         if not revision:
             raise DeviceError(
@@ -206,6 +218,28 @@ class OPNsenseClient:
                 "this OPNsense version may not support protected rule apply."
             )
         return revision
+
+    # --- Configuration history (OPNsense 26.7+ fallback) ----------------------
+    # Every OPNsense config save also stores a copy in /conf/backup, so the newest
+    # entry is the configuration as it is right now. Restoring it undoes later
+    # changes, but unlike a savepoint nothing on the firewall restores it by itself.
+
+    def latest_config_backup(self):
+        result = self.get("/api/core/backup/backups/this")
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list) or not items or not items[0].get("id"):
+            raise DeviceError(
+                "The firewall has no configuration history to revert to (System: Configuration: History). "
+                "No rule writes were made."
+            )
+        return str(items[0]["id"])
+
+    def revert_config(self, backup_id):
+        """Restore a configuration history entry and reload the filter with it."""
+        result = self.post("/api/core/backup/revert_backup/" + quote(backup_id, safe=""), {})
+        if not isinstance(result, dict) or result.get("status") != "reverted":
+            raise DeviceError("The configuration history entry could not be restored.")
+        self.apply_rules()
 
     def apply_rules(self, revision=None):
         """Apply saved filter rules. With a savepoint revision, OPNsense arms automatic rollback."""
