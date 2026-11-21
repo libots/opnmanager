@@ -1,4 +1,3 @@
-from django import forms
 from django.contrib import admin, messages
 from django.contrib.admin import helpers
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -166,17 +165,9 @@ class RuleAdmin(admin.ModelAdmin):
         source = Rule.objects.filter(pk=request.GET.get("clone")).first() if request.GET.get("clone") else None
         if source is None:
             return initial
-        from .forms import RuleForm, rule_form_data
+        from .forms import RuleForm, rule_form_data, rule_form_initial
 
-        data = rule_form_data(source)
-        form = RuleForm()
-        for name, field in form.fields.items():
-            if isinstance(field.widget, forms.CheckboxInput):
-                initial[name] = name in data
-            elif isinstance(field.widget, forms.SelectMultiple):
-                initial[name] = data.getlist(name)
-            elif name in data:
-                initial[name] = data[name]
+        initial.update(rule_form_initial(rule_form_data(source), RuleForm.base_fields))
         # Keep the clone next to its source without taking the source's sequence.
         taken = set(Rule.objects.values_list("sequence", flat=True))
         sequence = source.sequence + 1
@@ -230,7 +221,7 @@ class RuleAdmin(admin.ModelAdmin):
 
     def bulk_edit_view(self, request):
         """Edit several rules at once. Fields that differ start greyed out; only changed fields are saved."""
-        from .forms import RuleForm, bulk_rule_forms, comparable, rule_form_data
+        from .forms import RuleForm, bulk_rule_forms, comparable, rule_form_data, rule_form_initial
 
         if not self.has_change_permission(request):
             raise PermissionDenied
@@ -263,22 +254,9 @@ class RuleAdmin(admin.ModelAdmin):
                 messages.success(request, f"Updated {', '.join(labels)} on {len(rules)} rules.")
                 return HttpResponseRedirect(self.return_url(request))
         # The dialog shows shared values; differing fields start empty and greyed out.
-        initial = {}
-        first = datas[0]
-        for name, field in RuleForm().fields.items():
-            if name in mixed:
-                continue
-            if isinstance(field.widget, forms.CheckboxInput):
-                initial[name] = name in first
-            elif isinstance(field.widget, forms.SelectMultiple):
-                initial[name] = first.getlist(name)
-            elif name in first:
-                initial[name] = first[name]
-        for name in changed:  # keep what was typed when the save is refused
-            values = request.POST.getlist(name)
-            field = RuleForm.base_fields.get(name)
-            is_multi = isinstance(getattr(field, "widget", None), forms.SelectMultiple)
-            initial[name] = values if is_multi else (values[0] if values else "")
+        initial = rule_form_initial(datas[0], set(RuleForm.base_fields) - mixed)
+        # Keep what was entered when the save is refused.
+        initial.update(rule_form_initial(request.POST, changed))
         form = RuleForm(initial=initial)
         adminform = helpers.AdminForm(form, list(self.get_fieldsets(request)), {}, model_admin=self)
         context = {
