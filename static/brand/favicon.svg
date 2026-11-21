@@ -1,13 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">OPNmanager</title>
-  <desc id="desc">Simplified bold circular O containing a shield and white firewall bricks.</desc>
-  <!-- Opaque white canvas keeps the black mark visible in dark-browser tabs. -->
-  <rect width="64" height="64" fill="#fff"/>
+  <desc id="desc">Simplified bold circular O containing a shield with firewall bricks cut out.</desc>
+  <!-- Transparent background; the bricks are holes in the shield, broad enough for 16px rendering. -->
+  <mask id="bricks">
+    <rect width="64" height="64" fill="#fff"/>
+    <g fill="#000">
+      <rect x="23" y="25" width="8" height="4.4" rx="0.6"/>
+      <rect x="33" y="25" width="8" height="4.4" rx="0.6"/>
+      <rect x="25" y="31.8" width="14" height="4.4" rx="0.6"/>
+      <rect x="28" y="38.6" width="8" height="4.4" rx="0.6"/>
+    </g>
+  </mask>
   <circle cx="32" cy="32" r="26.5" fill="none" stroke="#C03E14" stroke-width="6.5"/>
-  <path d="M32 14 C37.1 17.9 42.2 19.2 46 19.5 V31.5 C46 39.7 40.3 46.1 32 50.2 C23.7 46.1 18 39.7 18 31.5 V19.5 C21.8 19.2 26.9 17.9 32 14 Z" fill="#C03E14"/>
-  <!-- Contrast-based brick cutouts, intentionally broad enough for 16px rendering -->
-  <rect x="23" y="25" width="8" height="4.4" rx="0.6" fill="#fff"/>
-  <rect x="33" y="25" width="8" height="4.4" rx="0.6" fill="#fff"/>
-  <rect x="25" y="31.8" width="14" height="4.4" rx="0.6" fill="#fff"/>
-  <rect x="28" y="38.6" width="8" height="4.4" rx="0.6" fill="#fff"/>
+  <path d="M32 14 C37.1 17.9 42.2 19.2 46 19.5 V31.5 C46 39.7 40.3 46.1 32 50.2 C23.7 46.1 18 39.7 18 31.5 V19.5 C21.8 19.2 26.9 17.9 32 14 Z" fill="#C03E14" mask="url(#bricks)"/>
 </svg>
