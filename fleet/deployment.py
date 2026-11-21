@@ -1,4 +1,4 @@
-"""Explicit selected-rule upsert/apply. No automatic deletion or rollback."""
+"""Explicit selected-rule upsert/apply, protected by an OPNsense savepoint with automatic rollback."""
 
 import difflib
 import json
@@ -83,6 +83,26 @@ def deployment_plan(firewall):
     return result
 
 
+def verify_rule_readback(observed, rows):
+    for row in rows:
+        payload = row["operation"]["payload"]
+        matches = [r for r in observed["rules"] if r.get("description") == payload["description"]]
+        if len(matches) != 1 or canonical(matches[0], payload, "rule") != canonical(payload, payload, "rule"):
+            raise DeviceError("Rule readback did not match the selected changes.")
+
+
+def _revert(client, revision):
+    """Best-effort immediate revert; OPNsense's rollback timer is the backstop."""
+    try:
+        client.revert(revision)
+    except DeviceError:
+        return (
+            f"Immediate revert failed; OPNsense will restore the previous rules automatically within "
+            f"{client.ROLLBACK_SECONDS} seconds unless the apply never started. Pull a fresh snapshot to verify."
+        )
+    return "The previous rule configuration was restored."
+
+
 def _execute_deployment(firewall, approved, selected, client, actor):
     plan = deployment_plan(firewall)
     if approved != plan["approval_sha256"]:
@@ -118,28 +138,35 @@ def _execute_deployment(firewall, approved, selected, client, actor):
         action="rules.deploy.started",
         detail=firewall.name + " " + approved + " " + ",".join(sorted(selected)),
     )
+    rows = [row for row in plan["rows"] if row["id"] in selected]
+    # Savepoint before any write: if anything below fails, or the new rules cut
+    # the manager off so it can never confirm, OPNsense restores this revision.
+    revision = client.savepoint()
     try:
-        rows = [row for row in plan["rows"] if row["id"] in selected]
         for row in rows:
             client.save_rule(row["operation"])
-        client.apply_rules()
+        client.apply_rules(revision)
         observed = client.snapshot()
-        for row in rows:
-            payload = row["operation"]["payload"]
-            matches = [r for r in observed["rules"] if r.get("description") == payload["description"]]
-            if len(matches) != 1 or canonical(matches[0], payload, "rule") != canonical(payload, payload, "rule"):
-                raise DeviceError(
-                    "Rule readback did not match the selected changes. Inspect the firewall; partial changes may remain."
-                )
-        Snapshot.objects.create(firewall=firewall, data=observed, source="api")
-        AuditEvent.objects.create(actor=actor, action="rules.deploy.completed", detail=firewall.name)
+        verify_rule_readback(observed, rows)
+    except DeviceError as exc:
+        outcome = _revert(client, revision)
+        AuditEvent.objects.create(
+            actor=actor, action="rules.deploy.failed", detail=f"{firewall.name} revision {revision}; {outcome}"
+        )
+        raise DeviceError(f"{exc} {outcome}") from exc
+    try:
+        client.cancel_rollback(revision)
     except DeviceError:
         AuditEvent.objects.create(
             actor=actor,
-            action="rules.deploy.failed",
-            detail=firewall.name + "; partial saved or active changes may remain",
+            action="rules.deploy.unconfirmed",
+            detail=f"{firewall.name} revision {revision}; OPNsense will roll back automatically",
         )
         raise
+    Snapshot.objects.create(firewall=firewall, data=observed, source="api")
+    AuditEvent.objects.create(
+        actor=actor, action="rules.deploy.completed", detail=f"{firewall.name} revision {revision}"
+    )
     return len(selected)
 
 

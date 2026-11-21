@@ -4,7 +4,7 @@ from .opnsense import DeviceError, flatten
 
 def refresh_inventory(firewall, client):
     response = client.post(
-        "/api/interfaces/overview/interfaces_info", {"current": 1, "rowCount": -1, "searchPhrase": ""}
+        "/api/interfaces/overview/interfaces_info", {"current": 1, "rowCount": -1, "searchPhrase": ""}, write=False
     )
     rows = response.get("rows") if isinstance(response, dict) else None
     if not isinstance(rows, list):

@@ -135,3 +135,87 @@ class DeploymentTests(TestCase):
         session.return_value.post.return_value = Mock(status_code=200, json=lambda: {"status": "OK\n"})
         client.apply_rules()
         self.assertTrue(session.return_value.post.call_args.args[0].endswith("/filter/apply"))
+
+
+class ProtectedApplyTests(TestCase):
+    """Rule deploys always run inside an OPNsense savepoint with automatic rollback."""
+
+    def setUp(self):
+        self.fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        logical = LogicalInterface.objects.create(name="LAN")
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
+        Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
+        self.rule = Rule.objects.create(name="First", interface=logical, sequence=100)
+        self.plan = deployment_plan(self.fw)
+        self.row = self.plan["rows"][0]
+
+    def device(self, readback):
+        client = Mock(ROLLBACK_SECONDS=60)
+        client.savepoint.return_value = "1700000000.1234"
+        client.snapshot.side_effect = [copy.deepcopy(EMPTY), readback]
+        return client
+
+    def run_deploy(self, client):
+        return execute_deployment(self.fw, self.plan["approval_sha256"], [self.row["id"]], client, "test")
+
+    def test_savepoint_precedes_writes_and_rollback_is_cancelled_after_verified_readback(self):
+        client = self.device({**EMPTY, "rules": [{**self.row["operation"]["payload"], "uuid": "remote"}]})
+        self.run_deploy(client)
+        names = [call[0] for call in client.method_calls]
+        self.assertEqual(names, ["snapshot", "savepoint", "save_rule", "apply_rules", "snapshot", "cancel_rollback"])
+        client.apply_rules.assert_called_once_with("1700000000.1234")
+        client.cancel_rollback.assert_called_once_with("1700000000.1234")
+        client.revert.assert_not_called()
+        self.assertIn("1700000000.1234", AuditEvent.objects.get(action="rules.deploy.completed").detail)
+
+    def test_readback_mismatch_reverts_and_never_confirms(self):
+        client = self.device(copy.deepcopy(EMPTY))
+        with self.assertRaisesMessage(DeviceError, "previous rule configuration was restored"):
+            self.run_deploy(client)
+        client.revert.assert_called_once_with("1700000000.1234")
+        client.cancel_rollback.assert_not_called()
+        self.assertFalse(Snapshot.objects.filter(source="api").exists())
+
+    def test_lost_connectivity_after_apply_relies_on_automatic_rollback(self):
+        client = self.device(None)
+        client.snapshot.side_effect = [copy.deepcopy(EMPTY), DeviceError("connection failed.")]
+        client.revert.side_effect = DeviceError("connection failed.")
+        with self.assertRaisesMessage(DeviceError, "restore the previous rules automatically within 60 seconds"):
+            self.run_deploy(client)
+        client.cancel_rollback.assert_not_called()
+        self.assertTrue(AuditEvent.objects.filter(action="rules.deploy.failed").exists())
+
+    def test_failed_confirmation_is_reported_as_unconfirmed(self):
+        client = self.device({**EMPTY, "rules": [{**self.row["operation"]["payload"], "uuid": "remote"}]})
+        client.cancel_rollback.side_effect = DeviceError("could not be confirmed")
+        with self.assertRaisesMessage(DeviceError, "could not be confirmed"):
+            self.run_deploy(client)
+        self.assertTrue(AuditEvent.objects.filter(action="rules.deploy.unconfirmed").exists())
+        self.assertFalse(AuditEvent.objects.filter(action="rules.deploy.completed").exists())
+
+    def test_missing_savepoint_blocks_before_any_write(self):
+        client = self.device(None)
+        client.savepoint.side_effect = DeviceError("No rule writes were made")
+        with self.assertRaises(DeviceError):
+            self.run_deploy(client)
+        client.save_rule.assert_not_called()
+        client.apply_rules.assert_not_called()
+
+    @patch.dict("os.environ", {"TEST_API_KEY": "key", "TEST_API_SECRET": "secret"})
+    @patch("fleet.opnsense.requests.Session")
+    def test_savepoint_endpoints(self, session):
+        post = session.return_value.post
+        client = OPNsenseClient(self.fw)
+        post.return_value = Mock(status_code=200, json=lambda: {"revision": "1700000000.1234"})
+        self.assertEqual(client.savepoint(), "1700000000.1234")
+        self.assertTrue(post.call_args.args[0].endswith("/api/firewall/filter/savepoint"))
+        post.return_value = Mock(status_code=200, json=lambda: {"status": "ok"})
+        client.apply_rules("1700000000.1234")
+        self.assertTrue(post.call_args.args[0].endswith("/api/firewall/filter/apply/1700000000.1234"))
+        client.cancel_rollback("1700000000.1234")
+        self.assertTrue(post.call_args.args[0].endswith("/api/firewall/filter/cancel_rollback/1700000000.1234"))
+        client.revert("1700000000.1234")
+        self.assertTrue(post.call_args.args[0].endswith("/api/firewall/filter/revert/1700000000.1234"))
+        post.return_value = Mock(status_code=200, json=lambda: {})
+        with self.assertRaisesMessage(DeviceError, "No rule writes were made"):
+            client.savepoint()
