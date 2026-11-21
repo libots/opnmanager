@@ -72,3 +72,14 @@ body.model-rule.change-form .submit-row { display: none; }
   #rule_form .rule-editor-row { grid-template-columns: 1fr; gap: 2px; }
   #rule_form .rule-field-label { min-height: 0; }
 }
+
+/* Editing several rules at once */
+#rule_form .rule-bulk-intro { padding: 10px 16px; border-bottom: 1px solid var(--opn-border); background: #FCF8E3; font-size: 14px; }
+#rule_form .rule-bulk-intro p { margin: 0 0 4px; }
+#rule_form .rule-bulk-errors li { color: var(--opn-danger); }
+#rule_form .rule-editor-row.bulk-mixed .rule-field-control { position: relative; }
+#rule_form .rule-editor-row.bulk-mixed .rule-bulk-control { opacity: .35; filter: grayscale(1); pointer-events: none; }
+#rule_form .rule-bulk-unlock { position: absolute; inset: 0 auto auto 0; width: min(100%, 390px); text-align: left; min-height: 34px; padding: 6px 12px; border: 1px dashed var(--opn-border-strong); border-radius: 3px; background: rgba(245, 245, 245, .92); color: var(--opn-muted); font: italic 400 14px var(--opn-font); cursor: pointer; }
+#rule_form .rule-bulk-unlock:hover { color: var(--opn-text); border-color: var(--opn-primary); }
+#rule_form .rule-editor-row.bulk-changed { box-shadow: inset 3px 0 0 var(--opn-primary); }
+#rule_form .rule-editor-row.bulk-changed .rule-field-label label::after { content: " (changed)"; font-weight: 400; color: var(--opn-primary); }

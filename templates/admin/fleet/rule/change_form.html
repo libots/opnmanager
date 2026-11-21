@@ -3,11 +3,11 @@
 {% block extrahead %}{{ block.super }}<script defer src="{% static 'rule-editor.js' %}"></script>{% endblock %}
 {% block content_title %}{% endblock %}
 {% block content_subtitle %}{% endblock %}
-{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'rules' %}">Firewall: Rules</a> › {% if add %}Add rule{% else %}{{ original.name }}{% endif %}</div>{% endblock %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{{ rules_return|default:'/rules/' }}">Firewall: Rules</a> › {% if bulk_rules %}Edit {{ bulk_rules|length }} rules{% elif add %}Add rule{% else %}{{ original.name }}{% endif %}</div>{% endblock %}
 {% block object-tools %}{% endblock %}
 {% block form_top %}
 <div class="rule-dialog-head">
-  <h1>{% if add %}Add rule{% elif has_change_permission %}Edit rule{% else %}View rule{% endif %}</h1>
+  <h1>{% if bulk_rules %}Edit {{ bulk_rules|length }} rules{% elif add %}Add rule{% elif has_change_permission %}Edit rule{% else %}View rule{% endif %}</h1>
   <label class="rule-form-search" for="rule-form-search"><span class="visually-hidden">Search form</span>
     <span class="rule-search-icon" aria-hidden="true">{% icon "magnifying-glass" %}</span>
     <input type="search" id="rule-form-search" placeholder="Search form" autocomplete="off"></label>
@@ -17,6 +17,12 @@
   <span id="rule-search-status" role="status" aria-live="polite"></span>
   <button type="button" class="rule-toggle" id="rule-full-help" role="switch" aria-checked="false"><span class="info-icon" aria-hidden="true">i</span> full help <span class="switch" aria-hidden="true"></span></button>
 </div>
+{% if bulk_rules %}<div class="rule-bulk-intro" id="rule-bulk" data-mixed="{{ bulk_mixed|join:',' }}" data-changed="{{ bulk_changed|join:',' }}">
+  {% for rule in bulk_rules %}<input type="hidden" name="ids" value="{{ rule.pk }}">{% endfor %}<div id="rule-bulk-changed"></div>
+  {% if bulk_errors %}<ul class="errorlist rule-bulk-errors">{% for error in bulk_errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
+  <p>Editing <strong>{{ bulk_rules|length }} rules</strong>: {% for rule in bulk_rules %}{{ rule.name }}{% if not forloop.last %}, {% endif %}{% endfor %}.</p>
+  <p class="help">Fields with the same value on every rule show it. Greyed-out fields differ between rules; click one to set a new value for all of them. Only fields you change are saved.</p>
+</div>{% endif %}
 {% endblock %}
 {% block field_sets %}
 <div class="rule-editor-sections">
@@ -24,16 +30,16 @@
   <fieldset class="module rule-editor-section" aria-labelledby="rule-section-{{ forloop.counter }}">
     <details open><summary id="rule-section-{{ forloop.counter }}">{{ fieldset.name }}</summary>
     {% for line in fieldset %}{% for field in line %}
-      <div class="form-row rule-editor-row field-{{ field.field.name }}{% if field.field.name in adminform.form.ADVANCED %} advanced{% endif %}{% if field.errors %} errors{% endif %}">
+      <div class="form-row rule-editor-row field-{{ field.field.name }}{% if field.field.name in adminform.form.ADVANCED %} advanced{% endif %}{% if field.errors %} errors{% endif %}{% if field.field.name in bulk_mixed %} bulk-mixed{% endif %}" data-field="{{ field.field.name }}">
         <div class="rule-field-label"><button type="button" class="rule-help-toggle{% if not field.field.help_text %} no-help{% endif %}" aria-label="Help: {{ field.field.label }}" aria-expanded="false"{% if field.field.help_text %} aria-controls="{{ field.field.id_for_label }}_helptext"{% endif %}>i</button>{{ field.label_tag }}</div>
         <div class="rule-field-control">
-          {% if field.is_readonly %}<div class="readonly">{{ field.contents }}</div>{% else %}{{ field.field }}{% endif %}
+          {% if field.is_readonly %}<div class="readonly">{{ field.contents }}</div>{% elif bulk_rules %}<div class="rule-bulk-control">{{ field.field }}</div>{% if field.field.name in bulk_mixed %}<button type="button" class="rule-bulk-unlock">Multiple values — click to change</button>{% endif %}{% else %}{{ field.field }}{% endif %}
           {{ field.errors }}
           {% if field.field.help_text %}<div class="help rule-field-help" id="{{ field.field.id_for_label }}_helptext">{{ field.field.help_text }}</div>{% endif %}
         </div>
       </div>
     {% endfor %}{% endfor %}
-    {% if fieldset.name == 'Interface' %}
+    {% if fieldset.name == 'Interface' and not bulk_rules %}
       <div class="form-row rule-editor-row rule-placement-row"><div class="rule-field-label"><span class="rule-help-toggle no-help" aria-hidden="true">i</span><label>Placement</label></div><div class="rule-field-control"><output id="rule-placement" aria-live="polite">Automatically determined from the rule interfaces.</output><div class="help rule-field-help">One interface or group: interface rule. Several, or none: floating rule. Origin interfaces don't affect placement.</div></div></div>
     {% endif %}
     </details>
@@ -44,9 +50,9 @@
 {% endblock %}
 {% block submit_buttons_bottom %}
 <div class="rule-editor-footer">
-  <p class="rule-save-note">Saving changes manager policy only. Push it to firewalls from Fleet Overview → Deployment.</p>
-  <div class="rule-secondary-actions">{% if change and not is_popup %}<a href="{% url 'admin:fleet_rule_history' original.pk %}">History</a>{% if has_delete_permission %}<a class="rule-delete" href="{% url 'admin:fleet_rule_delete' original.pk %}">Delete rule</a>{% endif %}{% endif %}</div>
-  <a class="button rule-cancel" href="{% url 'rules' %}">{% if has_change_permission or add %}Cancel{% else %}Close{% endif %}</a>
+  <p class="rule-save-note">{% if bulk_rules %}Saves only the fields you changed, on all {{ bulk_rules|length }} rules. {% endif %}Saving changes manager policy only. Push it to firewalls from Fleet Overview → Deployment.</p>
+  <div class="rule-secondary-actions">{% if change and original and not is_popup %}<a href="{% url 'admin:fleet_rule_add' %}?clone={{ original.pk }}&amp;_next={{ rules_return|urlencode }}">Clone rule</a><a href="{% url 'admin:fleet_rule_history' original.pk %}">History</a>{% if has_delete_permission %}<a class="rule-delete" href="{% url 'admin:fleet_rule_delete' original.pk %}">Delete rule</a>{% endif %}{% endif %}</div>
+  <a class="button rule-cancel" href="{{ rules_return|default:'/rules/' }}">{% if has_change_permission or add %}Cancel{% else %}Close{% endif %}</a>
   {% if has_change_permission or add and has_add_permission %}<input type="submit" value="Save" class="default" name="_save">{% endif %}
 </div>
 {% endblock %}

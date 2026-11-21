@@ -95,6 +95,12 @@ In the rule editor, categories, rule interfaces, origin interfaces and ICMP type
 
 Floating placement is automatic in the rule editor; there is no Floating checkbox. In the current OPNsense MVC API, one rule-interface or group binding is an interface/group rule, multiple bindings are floating, and no bindings means floating on all interfaces. A live **Placement** preview shows the result. Origin bindings do not determine placement. A single-bound rule cannot be forced into floating placement by a separate API flag. The manager derives filters using this same rule.
 
+### Working with the rule list
+
+**Firewall: Rules** is the place to manage rules; the old admin rule list now redirects there, and saving, cloning or deleting a rule returns you to the list with your filters intact. As in OPNsense, each row has a checkbox, a clickable enabled checkbox, and **log**, **edit**, **clone** and **delete** buttons. **Clone** opens the add dialog filled in from that rule, with the next free sequence number after it. Select rules with the checkboxes (the header checkbox selects every matching rule, including collapsed sections) and use the buttons under the table to enable, disable, turn logging on or off, delete, or **Edit** them together.
+
+**Editing several rules at once** isn't something OPNsense offers. The dialog shows each field's value when every selected rule has the same one. Fields that differ are greyed out with **Multiple values**: click one to set a new value for all the selected rules. Only fields you change are saved; everything else keeps each rule's own value. Every rule is checked before anything is saved, so if the change is invalid for one rule (for example a port on a rule whose protocol is *any*), none of them change and the errors name the rules. Like any rule edit, this changes manager policy only; push it from **Review & push rules**.
+
 ### Adopt existing OPNsense rules
 
 1. Open a firewall's page and **Pull from firewall**. The enriched snapshot reads MVC rules, aliases, interface inventory, groups and categories.
