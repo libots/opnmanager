@@ -249,7 +249,7 @@ def _execute_deployment(firewall, approved, selected, client, actor, accept_warn
     warned = [row["name"] for row in plan["rows"] if row["id"] in selected and row["warnings"]]
     if warned and not accept_warnings:
         raise DeviceError(
-            "Confirm the interface warnings for " + ", ".join(warned) + " before pushing. No rule writes were made."
+            "Confirm the warnings for " + ", ".join(warned) + " before pushing. No rule writes were made."
         )
     baseline = firewall.snapshots.get(pk=plan["snapshot_id"])
     current = client.snapshot()

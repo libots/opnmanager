@@ -80,9 +80,30 @@ class GroupPullTests(TestCase):
         payload = next(op for op in plan_for(self.fw)["operations"] if op["kind"] == "rule")["payload"]
         self.assertEqual(payload["received-on"], "opt2")
 
-    def test_unmapped_logical_address_still_blocks(self):
-        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:net")
-        self.assertTrue(any("Unmapped or invalid logical address" in error for error in plan_for(self.fw)["errors"]))
+    def test_unmapped_logical_addresses_are_left_out_of_the_pushed_rule(self):
+        LogicalInterface.objects.create(name="DMZ")
+        Rule.objects.create(
+            name="Address", interface=self.lan, source="@WAN:net,@LAN:net,10.9.0.0/16", destination="@DMZ:ip,@LAN:ip"
+        )
+        plan = plan_for(self.fw)
+        self.assertEqual(plan["errors"], [])
+        payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
+        self.assertEqual(payload["source_net"], "opt2,10.9.0.0/16")
+        self.assertEqual(payload["destination_net"], "opt2ip")
+        self.assertIn(
+            "addresses @WAN:net, @DMZ:ip are not mapped on this firewall and are left out", " ".join(plan["warnings"])
+        )
+
+    def test_rule_is_skipped_rather_than_widened_when_an_address_field_empties(self):
+        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:net", destination="@LAN:net")
+        plan = plan_for(self.fw)
+        self.assertEqual(plan["errors"], [])
+        self.assertFalse([op for op in plan["operations"] if op["kind"] == "rule"])
+        self.assertIn("leaves its source or destination empty", " ".join(plan["warnings"]))
+
+    def test_malformed_logical_address_still_blocks(self):
+        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:subnet")
+        self.assertIn("Invalid logical address @WAN:subnet.", plan_for(self.fw)["errors"])
 
     @patch("fleet.views.OPNsenseClient")
     def test_json_pull_updates_snapshot_mappings_and_audit(self, client):

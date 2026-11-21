@@ -188,7 +188,11 @@ def sync_definitions(request, pk):
 
         raise Http404("Rule does not target this firewall")
     if request.method == "POST":
-        params = {"approval_sha256": request.POST.get("approval_sha256", ""), "rule_id": str(rule.pk) if rule else None}
+        params = {
+            "approval_sha256": request.POST.get("approval_sha256", ""),
+            "rule_id": str(rule.pk) if rule else None,
+            "remove_aliases": request.POST.getlist("remove_alias") if not rule else [],
+        }
         try:
             job = enqueue(fw, DeviceJob.DEFINITIONS_SYNC, params, request.user.username)
         except DeviceError as exc:

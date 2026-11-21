@@ -5,7 +5,7 @@ from collections import Counter
 
 from .alias_patterns import compile_content
 from .models import Alias, Category, InterfaceGroup, Rule, ScopedPolicy
-from .rule_identity import is_managed, short_marker
+from .rule_identity import is_managed, marker_of, short_marker, tagged
 from .rule_identity import matches as matches_rule
 
 RULE_DEFAULTS = {
@@ -83,15 +83,49 @@ def canonical(row, fields, kind):
     return result
 
 
-def resolve_address(value, mappings):
-    if "," in value:
-        return ",".join(resolve_address(token.strip(), mappings) for token in value.split(","))
-    if not value.startswith("@"):
-        return value
-    match = re.fullmatch(r"@([A-Za-z_][A-Za-z0-9_]*):(net|ip)", value)
-    if not match or match[1] not in mappings:
-        raise ValueError(f"Unmapped or invalid logical address {value}.")
-    return mappings[match[1]] + ("ip" if match[2] == "ip" else "")
+ADDRESS_TOKEN = re.compile(r"@([A-Za-z_][A-Za-z0-9_]*):(net|ip)")
+
+
+def resolve_addresses(*values, mappings):
+    """Resolve logical @Interface:net/ip tokens in each value.
+
+    Tokens for interfaces that aren't mapped on this firewall are left out, the
+    same way unmapped rule interfaces are: that network doesn't exist here.
+    Returns (resolved values, left-out tokens, emptied) where emptied is True when
+    some value lost every token, so pushing it would widen the rule to "any".
+    Malformed tokens still raise ValueError.
+    """
+    resolved, missing, emptied = [], [], False
+    for value in values:
+        kept = []
+        tokens = [t.strip() for t in value.split(",") if t.strip()]
+        for token in tokens:
+            if not token.startswith("@"):
+                kept.append(token)
+                continue
+            match = ADDRESS_TOKEN.fullmatch(token)
+            if not match:
+                raise ValueError(f"Invalid logical address {token}.")
+            if match[1] not in mappings:
+                missing.append(token)
+                continue
+            kept.append(mappings[match[1]] + ("ip" if match[2] == "ip" else ""))
+        emptied = emptied or bool(tokens and not kept)
+        resolved.append(",".join(kept))
+    return resolved, list(dict.fromkeys(missing)), emptied
+
+
+def _alias_matches(alias_uid, name, rows, owned_markers):
+    """Device aliases for one manager alias: by its tag, else an untagged (or orphan-tagged) alias of that name."""
+    by_tag = [(i, row) for i, row in enumerate(rows) if matches_rule(row.get("description", ""), alias_uid)]
+    if by_tag:
+        return by_tag
+    claimed = owned_markers - {short_marker(alias_uid)}
+    return [
+        (i, row)
+        for i, row in enumerate(rows)
+        if row.get("name") == name and marker_of(row.get("description", "")) not in claimed
+    ]
 
 
 def _matches_identity(kind, identity, row, origin_uuids):
@@ -114,6 +148,7 @@ class Policy:
         self.aliases = list(Alias.objects.prefetch_related(*scope))
         self.alias_names = {a.name for a in self.aliases}
         self.aliases_by_name = {a.name: a for a in self.aliases}
+        self.alias_markers = {short_marker(a.uid) for a in self.aliases}
         self.categories = list(Category.objects.prefetch_related(*scope))
         self.categories_by_pk = {c.pk: c for c in self.categories}
         self.groups = {g.name: g for g in InterfaceGroup.objects.prefetch_related("members", *scope)}
@@ -200,7 +235,10 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
         for a in aliases
         if a.applies_to(firewall) and (definition_names is None or a.name in definition_names["alias"])
     ]
-    available = {a.name for a in desired_aliases} | {a["name"] for a in data["aliases"] if a["name"] not in alias_names}
+    # Device-local aliases rules may use; tagged ones belong to the manager, current or deleted.
+    available = {a.name for a in desired_aliases} | {
+        a["name"] for a in data["aliases"] if a["name"] not in alias_names and not is_managed(a.get("description", ""))
+    }
     expected = []
     for alias in desired_aliases:
         try:
@@ -215,13 +253,13 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             expected.append(
                 (
                     "alias",
-                    alias.name,
+                    str(alias.uid),
                     alias.name,
                     {
                         "name": alias.name,
                         "type": alias.type,
                         "content": compiled,
-                        "description": alias.description,
+                        "description": tagged(alias.description, alias.uid),
                         "enabled": str(int(alias.enabled)),
                     },
                 )
@@ -330,6 +368,20 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             )
             if skipped:
                 continue
+            (source_net, destination_net), missing, emptied = resolve_addresses(
+                rule.source, rule.destination, mappings=mappings
+            )
+            if missing:
+                names = ", ".join(missing)
+                if emptied:
+                    plan["warnings"].append(
+                        f"Rule {rule.name}: addresses {names} are not mapped on this firewall, which leaves its "
+                        "source or destination empty, so it is not pushed here."
+                    )
+                    continue
+                plan["warnings"].append(
+                    f"Rule {rule.name}: addresses {names} are not mapped on this firewall and are left out of the pushed rule."
+                )
             origin_binding = ",".join(sorted([mappings[i.name] for i in origins] + [g.name for g in origin_groups]))
             fields = {
                 **RULE_DEFAULTS,
@@ -345,9 +397,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
                 "direction": rule.direction,
                 "ipprotocol": rule.ip_version,
                 "protocol": rule.protocol,
-                "source_net": resolve_address(rule.source, mappings),
+                "source_net": source_net,
                 "source_port": rule.source_port,
-                "destination_net": resolve_address(rule.destination, mappings),
+                "destination_net": destination_net,
                 "destination_port": rule.destination_port,
                 "log": str(int(rule.log)),
                 "quick": str(int(rule.quick)),
@@ -371,7 +423,16 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
     collection = {"alias": "aliases", "rule": "rules", "group": "groups", "category": "categories"}
     for kind, identity, label, desired in expected:
         rows = data.get(collection[kind], [])
-        matches = [(i, row) for i, row in enumerate(rows) if _matches_identity(kind, identity, row, origin_uuids)]
+        if kind == "alias":
+            matches = _alias_matches(identity, label, rows, policy.alias_markers)
+            if len(matches) == 1 and matches[0][1].get("name") != label:
+                if any(row.get("name") == label for row in rows):
+                    plan["errors"].append(
+                        f"Alias {label}: renaming {matches[0][1].get('name')} would collide with the firewall's "
+                        f"existing alias {label}. Rename or remove that alias first."
+                    )
+        else:
+            matches = [(i, row) for i, row in enumerate(rows) if _matches_identity(kind, identity, row, origin_uuids)]
         item = {"kind": kind, "name": label, "status": "missing", "changes": [], "desired": desired, "actual": None}
         actual = None
         if len(matches) > 1:
@@ -405,7 +466,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
         for index, row in enumerate(rows):
             if index in matched[kind]:
                 continue
-            managed = kind == "rule" and is_managed(row.get("description", ""))
+            managed = kind in ("rule", "alias") and is_managed(row.get("description", ""))
             plan["items"].append(
                 {
                     "kind": kind,

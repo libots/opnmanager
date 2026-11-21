@@ -46,7 +46,14 @@ def _sync_definitions(job, client):
     rule = Rule.objects.filter(pk=rule_id).first() if rule_id else None
     if rule_id and rule is None:
         raise DeviceError("The rule this synchronization was for no longer exists.")
-    count = execute_definition_plan(job.firewall, job.params.get("approval_sha256"), client, job.actor, rule=rule)
+    count = execute_definition_plan(
+        job.firewall,
+        job.params.get("approval_sha256"),
+        client,
+        job.actor,
+        rule=rule,
+        remove=[value for value in job.params.get("remove_aliases", []) if value],
+    )
     return f"Verified {count} supporting-definition changes. No manager rules were deployed."
 
 

@@ -9,7 +9,7 @@ from .alias_patterns import compile_content
 from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, protocol_choices
 from .models import RULE_NAME_MAX, Alias, Category, InterfaceGroup, Rule, RuleOrigin
 from .reconcile import RULE_DEFAULTS, canonical
-from .rule_identity import is_managed
+from .rule_identity import is_managed, untagged
 
 # Non-default behavior we cannot represent must never be silently discarded.
 SUPPORTED = set(RULE_DEFAULTS) | {"uuid", "description", "interface", "sequence", "icmptype", "icmp6type"}
@@ -131,7 +131,7 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
             name=name,
             type=row["type"],
             content=row["content"],
-            description=row.get("description", ""),
+            description=untagged(row.get("description", "")),
             enabled=row.get("enabled", "1") == "1",
         )
         alias.full_clean()
