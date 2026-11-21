@@ -28,6 +28,8 @@ RULE_DEFAULTS = {
     "interfacenot": "0",
     "source_not": "0",
     "destination_not": "0",
+    "statetype": "keep",
+    "gateway": "",
 }
 
 
@@ -144,6 +146,32 @@ class Policy:
         return self._firewalls[key]
 
 
+def _available_bindings(rule, label, interfaces, groups, mappings, unavailable_groups, warnings):
+    """Leave out interfaces and groups that don't exist on this firewall, with a warning.
+
+    Dropping them keeps the rule's meaning on this firewall, since traffic can't
+    arrive on an interface it doesn't have. If every binding is missing, the rule
+    is skipped here instead: an empty list would widen it to all interfaces.
+    Returns (interfaces, groups, skipped).
+    """
+    missing = [i.name for i in interfaces if i.name not in mappings]
+    missing += [g.name for g in groups if g.name in unavailable_groups]
+    if not missing:
+        return interfaces, groups, False
+    kept_interfaces = [i for i in interfaces if i.name in mappings]
+    kept_groups = [g for g in groups if g.name not in unavailable_groups]
+    names = ", ".join(sorted(missing))
+    if not kept_interfaces and not kept_groups:
+        warnings.append(
+            f"Rule {rule.name}: none of its {label} ({names}) exist on this firewall, so it is not pushed here."
+        )
+        return kept_interfaces, kept_groups, True
+    warnings.append(
+        f"Rule {rule.name}: {label} {names} are not mapped on this firewall and are left out of the pushed rule."
+    )
+    return kept_interfaces, kept_groups, False
+
+
 def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, policy=None):
     snapshot = snapshot or firewall.snapshots.first()
     plan = {
@@ -151,6 +179,8 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
         "snapshot_id": snapshot.pk if snapshot else None,
         "observed_at": snapshot.created_at.isoformat() if snapshot else None,
         "errors": [],
+        # Warnings never block operations; the deploy review asks to acknowledge them.
+        "warnings": [],
         "items": [],
         "operations": [],
         "read_only": True,
@@ -219,6 +249,13 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             ("category", category.name, category.name, {"name": category.name, "color": category.color.lower()})
         )
     groups = policy.groups
+    # Interfaces can exist on only some firewalls. A group with no member mapped
+    # here doesn't exist here: it isn't created, and rules leave it out.
+    unavailable_groups = {
+        g.name
+        for g in groups.values()
+        if g.applies_to(firewall) and not any(i.name in mappings for i in g.members.all())
+    }
     for group in groups.values():
         if definition_names is not None and group.name not in definition_names["group"]:
             continue
@@ -228,7 +265,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             plan["errors"].append("Snapshot lacks interface groups. Pull a new snapshot before synchronization.")
         members = [i for i in group.members.all() if i.name in mappings]
         if not members:
-            plan["errors"].append(f"Group {group.name}: no mapped members on this firewall.")
+            plan["warnings"].append(
+                f"Group {group.name} has no members mapped on this firewall, so it is not created here."
+            )
             continue
         if group.name in mappings.values():
             plan["errors"].append(f"Group {group.name} conflicts with a device interface name.")
@@ -262,13 +301,15 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
                     f"Short rule identity collision for {marker}. Resolve the duplicate UUID prefix before deployment."
                 )
             bound = rule.bound_interfaces()
-            missing = [i.name for i in bound if i.name not in mappings]
-            if missing:
-                raise ValueError(f"Rule {rule.name}: missing interface mapping for {', '.join(missing)}.")
             selected_groups = [policy.groups_by_pk[g.pk] for g in rule.interface_groups.all()]
             for group in selected_groups:
                 if not group.applies_to(firewall):
                     raise ValueError(f"Rule {rule.name}: group {group.name} is excluded from this firewall.")
+            bound, selected_groups, skipped = _available_bindings(
+                rule, "interfaces", bound, selected_groups, mappings, unavailable_groups, plan["warnings"]
+            )
+            if skipped:
+                continue
             bindings = sorted({mappings[i.name] for i in bound} | {g.name for g in selected_groups})
             if not bindings and not rule.floating:
                 raise ValueError(f"Rule {rule.name}: choose interfaces, groups or floating placement.")
@@ -281,15 +322,21 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             if any(not c.applies_to(firewall) for c in selected_categories):
                 raise ValueError(f"Rule {rule.name}: a category is excluded from this firewall.")
             origins = list(rule.origin_interfaces.all())
-            if any(i.name not in mappings for i in origins):
-                raise ValueError(f"Rule {rule.name}: missing origin interface mapping.")
             origin_groups = [policy.groups_by_pk[g.pk] for g in rule.origin_interface_groups.all()]
             if any(not g.applies_to(firewall) for g in origin_groups):
                 raise ValueError(f"Rule {rule.name}: origin group excluded from this firewall.")
+            origins, origin_groups, skipped = _available_bindings(
+                rule, "origin interfaces", origins, origin_groups, mappings, unavailable_groups, plan["warnings"]
+            )
+            if skipped:
+                continue
             origin_binding = ",".join(sorted([mappings[i.name] for i in origins] + [g.name for g in origin_groups]))
             fields = {
                 **RULE_DEFAULTS,
                 "received-on": origin_binding,
+                "received-on-not": str(int(rule.origin_not)),
+                "statetype": rule.state_type,
+                "gateway": rule.gateway,
                 "description": rule.name + " " + marker,
                 "sequence": str(rule.sequence),
                 "interface": ",".join(bindings),

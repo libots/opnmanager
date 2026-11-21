@@ -1,7 +1,74 @@
-<aside><a class="brand" href="/">◈ <span>OPNmanager<small>FIREWALL CONTROL</small></span></a><nav class="tree-nav" aria-label="Main navigation">
-<details open><summary>Fleet Overview</summary><a href="/">Firewalls</a><a href="/admin/fleet/firewallgroup/">Groups</a><a href="{% url 'logical_matrix' %}">Logical Interfaces</a><a href="{% url 'deployment_overview' %}">Deployment</a></details>
-<details open><summary>Firewall System</summary><details><summary>Access</summary><a href="/admin/fleet/authenticationserver/">Servers</a></details><details><summary>Firmware</summary><a href="{% url 'firmware_status' %}">Status</a><a href="{% url 'firmware_updates' %}">Updates</a></details><details><summary>Settings</summary><a href="/admin/fleet/firewalladministration/">Administration</a><a href="{% url 'dns_general' %}">General</a></details></details>
-<details open><summary>Interfaces</summary><a href="{% url 'interface_overview' %}">Overview</a><a href="{% url 'virtual_ips' %}">Virtual IPs</a></details>
-<details open><summary>Firewall</summary><a href="/admin/fleet/alias/">Aliases</a><a href="/admin/fleet/category/">Categories</a><a href="/admin/fleet/interfacegroup/">Groups</a><a href="{% url 'rules' %}">Rules</a></details>
-<details open><summary>Settings</summary>{% if user.is_staff and perms.auth.view_user %}<a href="/admin/auth/user/">Manage Users</a>{% endif %}{% if user.is_staff and perms.auth.view_group %}<a href="/admin/auth/group/">Manage Groups</a>{% endif %}<a href="/admin/">Administration</a>{% if user.is_superuser %}<a href="{% url 'oidc_options' %}">Authentication Options</a>{% endif %}</details>
-</nav><div class="sidebar-footer" style="position:static;margin:20px 8px">Review changes before applying</div></aside>
+{% load icons %}<header class="opn-topbar">
+  <a class="opn-brand" href="/"><span class="opn-brand-mark">{% icon "shield-halved" %}</span><span class="opn-brand-text"><b>OPN</b>manager</span></a>
+  <button type="button" class="opn-sidebar-toggle" id="opn-sidebar-toggle" aria-controls="opn-sidebar" aria-pressed="false" title="Collapse or expand the menu">{% icon "bars" %}<span class="visually-hidden">Collapse menu</span></button>
+  <div class="opn-topbar-right">{% if user.is_authenticated %}
+    <span class="opn-user">{% icon "user" %} {{ user.get_username }}</span>
+    <a href="{% url 'password_change' %}">{% icon "key" %} <span class="topbar-label">Change password</span></a>
+    <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="text-button">{% icon "right-from-bracket" %} <span class="topbar-label">Sign out</span></button></form>
+  {% endif %}</div>
+</header>
+<aside class="opn-sidebar" id="opn-sidebar">
+<nav class="opn-menu" aria-label="Main navigation">
+  <details class="menu-section" data-menu="fleet" open><summary>{% icon "laptop" %}<span class="menu-label">Fleet</span></summary><div class="menu-items" data-title="Fleet">
+    <a href="/" data-match="/firewalls/ /jobs/">Overview</a>
+    <a href="/admin/fleet/firewallgroup/">Groups</a>
+    <a href="{% url 'logical_matrix' %}">Logical Interfaces</a>
+    <a href="{% url 'deployment_overview' %}">Deployment</a>
+  </div></details>
+  <details class="menu-section" data-menu="system" open><summary>{% icon "server" %}<span class="menu-label">System</span></summary><div class="menu-items" data-title="System">
+    <details data-menu="system.access"><summary>Access {% icon "users" "menu-sub-icon" %}</summary><div class="menu-items">
+      <a href="/admin/fleet/authenticationserver/">Servers</a>
+    </div></details>
+    <details data-menu="system.firmware"><summary>Firmware {% icon "building" "menu-sub-icon" %}</summary><div class="menu-items">
+      <a href="{% url 'firmware_status' %}">Status</a>
+      <a href="{% url 'firmware_updates' %}">Updates</a>
+    </div></details>
+    <details data-menu="system.settings"><summary>Settings {% icon "gears" "menu-sub-icon" %}</summary><div class="menu-items">
+      <a href="/admin/fleet/firewalladministration/">Administration</a>
+      <a href="{% url 'dns_general' %}">General</a>
+    </div></details>
+  </div></details>
+  <details class="menu-section" data-menu="interfaces" open><summary>{% icon "sitemap" %}<span class="menu-label">Interfaces</span></summary><div class="menu-items" data-title="Interfaces">
+    <a href="{% url 'interface_overview' %}">Overview</a>
+    <a href="{% url 'virtual_ips' %}">Virtual IPs</a>
+  </div></details>
+  <details class="menu-section" data-menu="firewall" open><summary>{% icon "fire" %}<span class="menu-label">Firewall</span></summary><div class="menu-items" data-title="Firewall">
+    <a href="/admin/fleet/alias/">Aliases</a>
+    <a href="/admin/fleet/category/">Categories</a>
+    <a href="/admin/fleet/interfacegroup/">Groups</a>
+    <a href="{% url 'rules' %}" data-match="/admin/fleet/rule/">Rules</a>
+  </div></details>
+  <details class="menu-section" data-menu="settings" open><summary>{% icon "gears" %}<span class="menu-label">Settings</span></summary><div class="menu-items" data-title="Settings">
+    {% if user.is_staff and perms.auth.view_user %}<a href="/admin/auth/user/">Manage Users</a>{% endif %}
+    {% if user.is_staff and perms.auth.view_group %}<a href="/admin/auth/group/">Manage Groups</a>{% endif %}
+    <a href="/admin/">Administration</a>
+    {% if user.is_superuser %}<a href="{% url 'oidc_options' %}">Authentication Options</a>{% endif %}
+  </div></details>
+</nav>
+<script>
+/* Runs before the page paints, so the menu never flashes into its stored state. */
+(function () {
+  var nav = document.currentScript.previousElementSibling, stored = {};
+  try { stored = JSON.parse(localStorage.getItem('opn.sidebar.sections') || '{}'); } catch (e) { stored = {}; }
+  nav.querySelectorAll('details[data-menu]').forEach(function (d) {
+    if (stored[d.dataset.menu] !== undefined) d.open = stored[d.dataset.menu];
+  });
+  /* Highlight the current page and keep its section open, as OPNsense does. */
+  var path = location.pathname, best = null, bestLength = -1;
+  nav.querySelectorAll('a[href]').forEach(function (a) {
+    var prefixes = [a.getAttribute('href')].concat((a.dataset.match || '').split(' ').filter(Boolean));
+    prefixes.forEach(function (href) {
+      var hit = href === '/' ? path === '/' : path.indexOf(href) === 0;
+      if (hit && href.length > bestLength) { best = a; bestLength = href.length; }
+    });
+  });
+  if (best) {
+    best.classList.add('active');
+    best.setAttribute('aria-current', 'page');
+    for (var node = best.parentElement; node && node !== nav; node = node.parentElement) {
+      if (node.tagName === 'DETAILS') { node.open = true; node.classList.add('active-menu'); }
+    }
+  }
+})();
+</script>
+</aside>

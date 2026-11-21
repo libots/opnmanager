@@ -261,6 +261,9 @@ def rules_page(request):
                     "enabled": str(int(rule.enabled)),
                     "icmptype": rule.icmp_types,
                     "icmp6type": rule.icmp6_types,
+                    "gateway": rule.gateway,
+                    "statetype": rule.state_type,
+                    "received-on-not": str(int(rule.origin_not)),
                 }
             )
         interfaces = [(i.name, i.name) for i in LogicalInterface.objects.all()] + [(g, g + " (group)") for g in groups]
@@ -403,6 +406,7 @@ def deploy_rules(request, pk):
             params = {
                 "approval_sha256": request.POST.get("approval_sha256", ""),
                 "selected_rules": [value for value in request.POST.getlist("selected_rules") if value],
+                "accept_warnings": request.POST.get("accept_warnings") == "yes",
             }
             job = enqueue(fw, DeviceJob.RULES_DEPLOY, params, request.user.username)
         except DeviceError as exc:

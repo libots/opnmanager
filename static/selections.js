@@ -47,7 +47,8 @@
   function initialize(root) {
     const $ = window.django && window.django.jQuery;
     if (!$ || !$.fn.select2) return;
-    $(root).find('select.opn-select').each(function () {
+    // Only free-form "tags" selects use select2 chips; opn-select.js handles the rest.
+    $(root).find('select.opn-select[data-selector="tags"]').each(function () {
       if (this.dataset.opnInitialized) return;
       this.dataset.opnInitialized = 'true';
       if (!$(this).hasClass('select2-hidden-accessible')) $(this).select2({tags: this.dataset.tags === 'true', width: 'resolve', placeholder: this.dataset.placeholder || 'Type to search…', tokenSeparators: [','], allowClear: true});
@@ -56,17 +57,6 @@
   }
   document.addEventListener('DOMContentLoaded', function () {
     initialize(document);
-    const protocol=document.getElementById('id_protocol');
-    if (protocol) {
-      function updateICMP() {
-        const values=Array.from(protocol.selectedOptions, option=>option.value.toLowerCase());
-        for (const [id,needle] of [['id_icmp_types','icmp'],['id_icmp6_types','ipv6-icmp']]) {
-          const field=document.getElementById(id),row=field?.closest('.form-row');
-          if (row) row.hidden=!values.includes(needle);
-        }
-      }
-      window.django.jQuery(protocol).on('change',updateICMP);updateICMP();
-    }
   });
   document.addEventListener('formset:added', function (event) { initialize(event.target); });
 })();

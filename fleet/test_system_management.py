@@ -77,7 +77,7 @@ class SystemManagementTests(TestCase):
         form = RuleForm()
         self.assertIn("bogonsv6", str(form["source"]))
         self.assertIn("https", str(form["destination_port"]))
-        self.assertContains(self.client.get("/admin/fleet/rule/add/"), "Organization")
+        self.assertContains(self.client.get("/admin/fleet/rule/add/"), "Organisation")
         self.assertContains(self.client.get("/admin/fleet/rule/add/"), "Interface (origin)")
 
     def test_category_picker_round_trips_hex_value(self):
@@ -212,7 +212,7 @@ class SystemManagementTests(TestCase):
         ]:
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200, url)
-            self.assertContains(response, "Firewall System")
+            self.assertContains(response, 'data-menu="system"')
             self.assertContains(response, "Change password")
         basic = get_user_model().objects.create_user("basic")
         self.client.force_login(basic)

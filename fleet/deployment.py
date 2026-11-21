@@ -156,6 +156,7 @@ def deployment_plan(firewall):
             "name": rule.name,
             "operation": operation,
             "errors": errors,
+            "warnings": list(plan.get("warnings", [])),
             "dependencies": dependencies,
             "diff": [
                 {
@@ -174,6 +175,7 @@ def deployment_plan(firewall):
         _check_positions(placed, device_rules)
         targeted = [rule.pk for rule in policy.rules if rule.applies_to(firewall)]
         result["retire"] = retire_candidates(device_rules, targeted)
+    result["has_warnings"] = any(row["warnings"] for row in result["rows"])
     result["approval_sha256"] = digest(result)
     return result
 
@@ -205,7 +207,7 @@ def _revert(client, revision):
     return "The previous rule configuration was restored."
 
 
-def _execute_deployment(firewall, approved, selected, client, actor):
+def _execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False):
     plan = deployment_plan(firewall)
     if approved != plan["approval_sha256"]:
         raise DeviceError("Rule plan changed. Review again before applying.")
@@ -219,6 +221,11 @@ def _execute_deployment(firewall, approved, selected, client, actor):
     retiring = [eligible[key]["remote_uuid"] for key in selected if eligible[key]["action"] in ("disable", "delete")]
     if len(retiring) != len(set(retiring)):
         raise DeviceError("Choose either Disable or Delete for each retired rule, not both.")
+    warned = [row["name"] for row in plan["rows"] if row["id"] in selected and row["warnings"]]
+    if warned and not accept_warnings:
+        raise DeviceError(
+            "Confirm the interface warnings for " + ", ".join(warned) + " before pushing. No rule writes were made."
+        )
     baseline = firewall.snapshots.get(pk=plan["snapshot_id"])
     current = client.snapshot()
     changes = configuration_changes(baseline.data, current)
@@ -275,6 +282,6 @@ def _execute_deployment(firewall, approved, selected, client, actor):
     return len(selected)
 
 
-def execute_deployment(firewall, approved, selected, client, actor):
+def execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False):
     with device_write_lock(firewall.pk, "A rule deployment"):
-        return _execute_deployment(firewall, approved, selected, client, actor)
+        return _execute_deployment(firewall, approved, selected, client, actor, accept_warnings)

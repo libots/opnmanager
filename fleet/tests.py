@@ -41,11 +41,12 @@ class FleetTests(TestCase):
         self.assertEqual(len(plan_for(self.fw)["operations"]), 1)
         self.assertEqual(plan_for(self.other)["operations"], [])
 
-    def test_missing_mapping_blocks_entire_plan(self):
+    def test_rule_with_no_mapped_interface_is_skipped_with_warning(self):
         self.fw.interface_mappings.all().delete()
         plan = plan_for(self.fw)
-        self.assertIn("missing interface mapping", plan["errors"][0])
-        self.assertEqual(plan["operations"], [])
+        self.assertEqual(plan["errors"], [])
+        self.assertIn("none of its interfaces (VL10) exist on this firewall", plan["warnings"][0])
+        self.assertFalse([op for op in plan["operations"] if op["kind"] == "rule"])
 
     def test_logical_network_references_translate(self):
         self.rule.source = "@VL10:net"
@@ -330,7 +331,7 @@ class LocalAccountTests(TestCase):
         self.assertTrue(user.check_password(password))
         self.assertTrue(LocalAccountState.objects.get(user=user).must_change_password)
         response = self.client.post("/accounts/login/", {"username": "admin", "password": password}, follow=True)
-        self.assertContains(response, "Set your password.")
+        self.assertContains(response, "Set your password")
         for url in ["/", "/admin/", "/settings/", "/firewalls/99/plan/"]:
             self.assertRedirects(self.client.get(url), "/accounts/password_change/", fetch_redirect_response=False)
         new_password = "A-different-password-with-entropy-7285!"
