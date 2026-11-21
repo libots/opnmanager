@@ -184,7 +184,14 @@ DJANGO_DEBUG=1 .venv/bin/python manage.py test
 DJANGO_DEBUG=1 .venv/bin/python manage.py check
 DJANGO_DEBUG=1 .venv/bin/python manage.py makemigrations --check --dry-run
 DJANGO_DEBUG=1 .venv/bin/python manage.py plan Amsterdam
+# Style and lint (CI runs both):
+ruff format --check .
+ruff check .
 ```
+
+**Which rules are visible.** The connector reads and writes rules through OPNsense's MVC filter API (**Firewall › Automation › Filter**, or the new rules UI in newer releases). Rules created in the legacy **Firewall › Rules** pages live in a different part of the configuration. The API doesn't return them, so they never appear in snapshots, drift reports or sequence-collision checks. Move rules you want managed to the MVC rules, or adopt them from another firewall's MVC rules.
+
+**Snapshot history.** Every pull or import stores the firewall's full configuration as JSON. Only the newest 50 snapshots per firewall are kept, and older ones are deleted automatically. Set `OPNMANAGER_SNAPSHOT_RETENTION` to change the limit, or to `0` to keep everything. Planning and deploys only ever use the newest snapshot.
 
 The tests exercise interface resolution, all/selected targeting, drift, conflicts, alias ordering, stale-plan rejection, synchronization/readback/failure, permissions, import validation, API request behavior and OIDC identity boundaries. API operations are mocked in tests; this does not establish live OPNsense compatibility.
 

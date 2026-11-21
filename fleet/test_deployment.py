@@ -408,3 +408,26 @@ class RetireRuleTests(TestCase):
         response = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
         self.assertContains(response, "Retire managed rules")
         self.assertContains(response, 'value="delete:gone-uuid"')
+
+
+class SnapshotRetentionTests(TestCase):
+    def test_only_newest_snapshots_are_kept_per_firewall(self):
+        from django.test import override_settings
+
+        fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        other = Firewall.objects.create(name="Other", base_url="https://other.test", credential_prefix="OTHER")
+        with override_settings(SNAPSHOT_RETENTION=3):
+            Snapshot.objects.create(firewall=other, data=copy.deepcopy(EMPTY))
+            created = [Snapshot.objects.create(firewall=fw, data=copy.deepcopy(EMPTY)).pk for _ in range(5)]
+        self.assertEqual(sorted(fw.snapshots.values_list("pk", flat=True)), created[-3:])
+        self.assertEqual(fw.snapshots.first().pk, created[-1])
+        self.assertEqual(other.snapshots.count(), 1)
+
+    def test_zero_keeps_everything(self):
+        from django.test import override_settings
+
+        fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        with override_settings(SNAPSHOT_RETENTION=0):
+            for _ in range(4):
+                Snapshot.objects.create(firewall=fw, data=copy.deepcopy(EMPTY))
+        self.assertEqual(fw.snapshots.count(), 4)

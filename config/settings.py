@@ -9,6 +9,8 @@ DEBUG = os.getenv("DJANGO_DEBUG", "0") == "1"
 LOCAL_SERVER = os.getenv("OPNMANAGER_LOCAL", "0") == "1"
 DATA_DIR = Path(os.getenv("OPNMANAGER_DATA_DIR", str(BASE_DIR))).expanduser().resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Newest snapshots kept per firewall; older ones are pruned when a new one is stored. 0 keeps all.
+SNAPSHOT_RETENTION = int(os.getenv("OPNMANAGER_SNAPSHOT_RETENTION", "50"))
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
 if not SECRET_KEY:
     if not (DEBUG or LOCAL_SERVER):
