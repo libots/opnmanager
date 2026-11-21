@@ -190,9 +190,13 @@ class Category(ScopedPolicy):
         verbose_name_plural = "categories"
 
 
+# OPNsense descriptions hold 255 characters; pushes append " [om:<12 hex>]" (18).
+RULE_NAME_MAX = 237
+
+
 class Rule(ScopedPolicy):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=150)
+    name = models.CharField(max_length=RULE_NAME_MAX)
     sequence = models.PositiveIntegerField(default=100, validators=[MinValueValidator(1), MaxValueValidator(999999)])
     interface = models.ForeignKey(LogicalInterface, on_delete=models.PROTECT, null=True, blank=True)
     interfaces = models.ManyToManyField(

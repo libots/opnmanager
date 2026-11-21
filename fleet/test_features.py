@@ -167,7 +167,7 @@ class FeatureTests(TestCase):
 
     def test_import_unsupported_behavior_rolls_back_whole_batch(self):
         snapshot = self.observed(rules=[self.row(), self.row(uuid="second", sched="weekdays")])
-        with self.assertRaisesMessage(ValidationError, "sched"):
+        with self.assertRaisesMessage(ValidationError, "Schedule"):
             import_rules(snapshot, ["0", "1"], "all", [])
         self.assertEqual(Rule.objects.count(), 0)
         self.assertEqual(RuleOrigin.objects.count(), 0)
@@ -183,7 +183,7 @@ class FeatureTests(TestCase):
 
     def test_import_rejects_missing_mapping_stale_snapshot_and_alias_conflicts(self):
         snapshot = self.observed(rules=[self.row(interface="unmapped")])
-        with self.assertRaisesMessage(ValidationError, "Map interface"):
+        with self.assertRaisesMessage(ValidationError, "interface unmapped isn't mapped"):
             import_rules(snapshot, ["0"], "all", [])
         self.observed(
             rules=[self.row(source_net="DNS")], aliases=[{"name": "DNS", "type": "host", "content": "10.0.0.1"}]

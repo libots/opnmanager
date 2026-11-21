@@ -420,13 +420,14 @@ def adopt_rules(request, pk):
             messages.success(
                 request, f"Imported {len(rules)} rules into the manager. Device configuration was unchanged."
             )
-        except (ValidationError, ValueError) as exc:
-            messages.error(
-                request,
-                "; ".join(exc.messages)
-                if isinstance(exc, ValidationError)
-                else "Unsupported rule data; check the snapshot values.",
-            )
+        except ValidationError as exc:
+            problems = exc.messages
+            if len(problems) > 1:
+                messages.error(request, f"Nothing was imported. Fix these {len(problems)} problems and try again:")
+            elif problems and problems[0].startswith("“"):
+                messages.error(request, "Nothing was imported:")
+            for problem in problems:
+                messages.error(request, problem)
     else:
         messages.error(request, "Invalid selection or stale snapshot. Select rules and target firewalls again.")
     return redirect("/rules/?firewall=" + str(fw.pk))

@@ -78,7 +78,7 @@ class CompactIdentityTests(TestCase):
         payload = self.payload()
         self.snapshot.data = {**EMPTY, "rules": [{**payload, "uuid": "remote"}]}
         self.snapshot.save()
-        with self.assertRaisesMessage(ValidationError, "manager identity"):
+        with self.assertRaisesMessage(ValidationError, "already carries a manager tag"):
             import_rules(self.snapshot, ["0"], "all", [])
         self.rule.scope = "selected"
         self.rule.save()
