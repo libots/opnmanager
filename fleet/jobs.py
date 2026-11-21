@@ -25,8 +25,28 @@ INTERRUPTED_MESSAGE = (
 
 
 def _deploy_rules(job, client):
-    from .deployment import execute_deployment
+    from .deployment import execute_combined, execute_deployment
 
+    params = job.params
+    if params.get("combined"):
+        synced, pushed = execute_combined(
+            job.firewall,
+            params.get("approval_sha256"),
+            params.get("selected_rules", []),
+            client,
+            job.actor,
+            remove=params.get("remove_aliases", []),
+            include_definitions=bool(params.get("include_definitions")),
+            accept_warnings=bool(params.get("accept_warnings")),
+            allow_unprotected=bool(params.get("allow_unprotected")),
+        )
+        parts = []
+        if synced:
+            parts.append(f"synchronized and verified {synced} definition changes")
+        if pushed:
+            parts.append(f"applied and verified {pushed} selected rule changes")
+        message = " and ".join(parts) or "nothing needed changing"
+        return message[0].upper() + message[1:] + "."
     count = execute_deployment(
         job.firewall,
         job.params.get("approval_sha256"),

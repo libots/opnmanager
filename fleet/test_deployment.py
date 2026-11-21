@@ -90,7 +90,7 @@ class DeploymentTests(TestCase):
         user = get_user_model().objects.create_superuser("admin-test", password="Test-only-password")
         self.client.force_login(user)
         response = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
-        self.assertContains(response, "Fleet: Review &amp; Push Rules")
+        self.assertContains(response, "Fleet: Review &amp; Deploy")
         self.assertContains(response, "ui.js")
         self.assertContains(self.client.get("/admin/"), "opn-sidebar")
         self.assertContains(self.client.get("/admin/fleet/alias/add/"), "admin-shell.css")
@@ -567,3 +567,134 @@ class ConfigHistoryFallbackTests(TestCase):
         session.return_value.get.return_value = Mock(status_code=200, json=lambda: {"items": []})
         with self.assertRaisesMessage(DeviceError, "no configuration history"):
             client.latest_config_backup()
+
+
+class CombinedDeploymentTests(TestCase):
+    """Definitions and rules reviewed on one page and applied by one job."""
+
+    def setUp(self):
+        from .models import Category
+
+        self.Category = Category
+        self.fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        logical = LogicalInterface.objects.create(name="LAN")
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
+        Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
+        Alias.objects.create(name="Needed", content="10.0.0.1")
+        self.rule = Rule.objects.create(name="Uses alias", interface=logical, sequence=100, source="Needed")
+
+    def client_for(self, plan, *, categories=()):
+        """A device that accepts the definitions, then the rule, reading each back."""
+        definitions = plan["definitions"]["operations"]
+        synced = {
+            **EMPTY,
+            "aliases": [
+                {**op["payload"], "uuid": "a-" + op["payload"]["name"]} for op in definitions if op["kind"] == "alias"
+            ],
+            "categories": [{"name": name, "color": color, "uuid": "c-" + name} for name, color in categories],
+        }
+        client = Mock(ROLLBACK_SECONDS=60)
+        client.savepoint.return_value = "1.1"
+        pushed = []
+        client.save_rule.side_effect = lambda op: pushed.append(op["payload"])
+        # Definition preflight, definition readback, rule preflight, rule readback.
+        states = iter([copy.deepcopy(EMPTY), copy.deepcopy(synced), copy.deepcopy(synced), None])
+
+        def snapshot():
+            value = next(states)
+            return value if value is not None else {**synced, "rules": [{**pushed[0], "uuid": "r"}]}
+
+        client.snapshot.side_effect = snapshot
+        return client, pushed
+
+    def test_rule_waiting_on_definitions_is_selectable_and_deploys_after_them(self):
+        from .deployment import combined_plan, execute_combined
+
+        plan = combined_plan(self.fw)
+        row = plan["rules"]["rows"][0]
+        self.assertEqual(row["errors"], [])
+        self.assertEqual(row["after_definitions"], "alias Needed")
+        client, pushed = self.client_for(plan)
+        result = execute_combined(self.fw, plan["approval_sha256"], [row["id"]], client, "test")
+        self.assertEqual(result, (1, 1))
+        names = [call[0] for call in client.mock_calls]
+        self.assertLess(names.index("save_definition"), names.index("save_rule"))
+        self.assertEqual(pushed[0]["source_net"], "Needed")
+        self.assertTrue(AuditEvent.objects.filter(action="definitions.sync.completed").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="rules.deploy.completed").exists())
+
+    def test_new_category_is_resolved_to_its_uuid_after_synchronization(self):
+        from .deployment import combined_plan, execute_combined
+
+        category = self.Category.objects.create(name="Web", color="aabbcc")
+        self.rule.categories.add(category)
+        plan = combined_plan(self.fw)
+        row = plan["rules"]["rows"][0]
+        self.assertEqual(row["operation"]["payload"]["categories"], "@category:Web")
+        client, pushed = self.client_for(plan, categories=[("Web", "aabbcc")])
+        self.assertEqual(execute_combined(self.fw, plan["approval_sha256"], [row["id"]], client, "test"), (2, 1))
+        self.assertEqual(pushed[0]["categories"], "c-Web")
+
+    def test_without_sync_permission_dependent_rules_stay_blocked(self):
+        from .deployment import combined_plan, execute_combined
+
+        plan = combined_plan(self.fw, include_definitions=False)
+        self.assertIsNone(plan["definitions"])
+        self.assertTrue(plan["rules"]["rows"][0]["errors"])
+        client = Mock()
+        with self.assertRaisesMessage(DeviceError, "unblocked"):
+            execute_combined(
+                self.fw, plan["approval_sha256"], [str(self.rule.pk)], client, "test", include_definitions=False
+            )
+        client.snapshot.assert_not_called()
+
+    def test_stale_plan_and_unprotected_push_fail_before_any_write(self):
+        from .deployment import _remember_rollback, combined_plan, execute_combined
+
+        plan = combined_plan(self.fw)
+        Alias.objects.filter(name="Needed").update(content="10.0.0.2")
+        client = Mock()
+        with self.assertRaisesMessage(DeviceError, "Deployment plan changed"):
+            execute_combined(self.fw, plan["approval_sha256"], [str(self.rule.pk)], client, "test")
+        _remember_rollback(self.fw, "config_history")
+        plan = combined_plan(self.fw)
+        with self.assertRaisesMessage(DeviceError, "Nothing was written"):
+            execute_combined(self.fw, plan["approval_sha256"], [str(self.rule.pk)], client, "test")
+        client.snapshot.assert_not_called()
+        client.save_definition.assert_not_called()
+
+    def test_definitions_alone_and_rule_errors_do_not_block_them(self):
+        from .deployment import combined_plan, execute_combined
+
+        Rule.objects.create(name="Clash", interface=self.rule.interface, sequence=100)
+        plan = combined_plan(self.fw)
+        self.assertEqual(plan["definitions"]["errors"], [])
+        self.assertTrue(all(row["errors"] for row in plan["rules"]["rows"]))
+        client, _ = self.client_for(plan)
+        self.assertEqual(execute_combined(self.fw, plan["approval_sha256"], [], client, "test"), (1, 0))
+        client.save_rule.assert_not_called()
+        Rule.objects.all().delete()
+        Alias.objects.all().delete()
+        with self.assertRaisesMessage(DeviceError, "Nothing selected"):
+            execute_combined(self.fw, combined_plan(self.fw)["approval_sha256"], [], Mock(), "test")
+
+    def test_review_page_posts_one_combined_job(self):
+        from .deployment import combined_plan
+        from .models import DeviceJob
+
+        user = get_user_model().objects.create_superuser("admin-test", password="Test-only-password")
+        self.client.force_login(user)
+        page = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
+        self.assertContains(page, "1. Supporting definitions")
+        self.assertContains(page, "Needed")
+        self.client.post(
+            f"/firewalls/{self.fw.pk}/deploy/",
+            {
+                "acknowledge": "yes",
+                "approval_sha256": combined_plan(self.fw)["approval_sha256"],
+                "selected_rules": [str(self.rule.pk)],
+            },
+        )
+        job = DeviceJob.objects.get()
+        self.assertTrue(job.params["combined"])
+        self.assertTrue(job.params["include_definitions"])

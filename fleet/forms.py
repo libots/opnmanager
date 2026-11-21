@@ -33,7 +33,8 @@ class SnapshotImportForm(forms.Form):
 class TokenWidget(forms.SelectMultiple):
     """Searchable select. `selector` picks the client-side control (static/opn-select.js):
 
-    picker: OPNsense selectpicker look (default without tags); tags: free-form chips (alias content);
+    picker: OPNsense selectpicker look (default without tags); tags: free-form chips like OPNsense's
+    tokenizer (alias content);
     net: networks with a "Single host or Network" manual entry; port: ports with a "Single port or range"
     manual entry; manual: a list plus one typed value (gateways).
     """
@@ -69,6 +70,10 @@ class TokenWidget(forms.SelectMultiple):
             # Grouped choices are (group label, [(value, label), ...]).
             known.update(str(k) for k, _ in label) if isinstance(label, (list, tuple)) else known.add(str(key))
         self.choices = choices + [(v, v) for v in value if v not in known]
+        if self.attrs.get("data-selector") == "tags":
+            # Chips show in option order: keep the saved order rather than listing known names first.
+            labels = dict(self.choices)
+            self.choices = [(v, labels[v]) for v in value] + [(k, label) for k, label in choices if k not in value]
         try:
             groups = super().optgroups(name, value, attrs)
         finally:
@@ -81,14 +86,7 @@ class TokenWidget(forms.SelectMultiple):
         return groups
 
     class Media:
-        css = {"all": ["admin/css/vendor/select2/select2.css"]}
-        js = [
-            "admin/js/vendor/jquery/jquery.js",
-            "admin/js/vendor/select2/select2.full.js",
-            "admin/js/jquery.init.js",
-            "selections.js",
-            "opn-select.js",
-        ]
+        js = ["opn-select.js"]
 
 
 class SearchSelect(TokenWidget):
@@ -136,7 +134,115 @@ def port_is_valid(value, aliases):
     return bool(sep) and low.isdigit() and high.isdigit() and 1 <= int(low) < int(high) <= 65535
 
 
-class RuleForm(forms.ModelForm):
+ALL_TARGETS = "all"
+
+
+def target_choices():
+    """ "Deploy to" options: everything, then firewall groups, then single firewalls."""
+    return [
+        (ALL_TARGETS, "All enabled firewalls"),
+        ("Firewall groups", [(f"group:{g.pk}", g.name) for g in FirewallGroup.objects.order_by("name")]),
+        ("Firewalls", [(f"firewall:{f.pk}", f.name) for f in Firewall.objects.order_by("name")]),
+    ]
+
+
+TARGETS_HELP = (
+    "All enabled firewalls includes devices added later. Otherwise pick firewall groups and single "
+    "firewalls; a group also covers firewalls added to it later. Nothing selected targets no firewall."
+)
+
+
+def targets_field():
+    widget = MultiSelectWidget(attrs={"data-exclusive": ALL_TARGETS, "data-placeholder": "Nothing selected"})
+    return forms.MultipleChoiceField(required=False, label="Deploy to", widget=widget, help_text=TARGETS_HELP)
+
+
+def split_targets(values):
+    """(scope, firewall ids, firewall group ids) from "Deploy to" values."""
+    values = list(values or [])
+    if ALL_TARGETS in values:
+        return ALL_TARGETS, [], []
+    firewalls = [int(v.split(":", 1)[1]) for v in values if v.startswith("firewall:")]
+    groups = [int(v.split(":", 1)[1]) for v in values if v.startswith("group:")]
+    return "selected", firewalls, groups
+
+
+def with_legacy_targets(data):
+    """Form data with "targets" derived from the former scope / firewalls / firewall_groups fields.
+
+    Lets API clients and saved links that still post the three fields keep working.
+    """
+    if "targets" in data or "scope" not in data:
+        return data
+    getlist = data.getlist if hasattr(data, "getlist") else lambda key: data.get(key) or []
+    if data.get("scope") == ALL_TARGETS:
+        targets = [ALL_TARGETS]
+    else:
+        targets = [f"firewall:{pk}" for pk in getlist("firewalls")] + [
+            f"group:{pk}" for pk in getlist("firewall_groups")
+        ]
+    data = data.copy()
+    if hasattr(data, "setlist"):
+        data.setlist("targets", targets)
+    else:
+        data["targets"] = targets
+    return data
+
+
+class TargetsFormMixin:
+    """One "Deploy to" picker in place of Scope, Firewalls and Firewall groups.
+
+    It works like Source in the rule editor: "All enabled firewalls" stands alone,
+    otherwise any mix of firewall groups and firewalls. Posts that still send the
+    three separate fields are understood too.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            # Django's "Hold down Control" hint is for native multi-selects; pickers toggle on click.
+            field.help_text = str(field.help_text).split(" Hold down")[0]
+        if "targets" not in self.fields:
+            return
+        self.fields["targets"].choices = target_choices()
+        if self.is_bound:
+            self.data = with_legacy_targets(self.data)
+        instance = getattr(self, "instance", None)
+        if instance is not None and not instance._state.adding:
+            self.initial.setdefault(
+                "targets",
+                [ALL_TARGETS]
+                if instance.scope == ALL_TARGETS
+                else [f"group:{g.pk}" for g in instance.firewall_groups.all()]
+                + [f"firewall:{f.pk}" for f in instance.firewalls.all()],
+            )
+        else:
+            self.initial.setdefault("targets", [ALL_TARGETS])
+
+    def clean_targets(self):
+        values = self.cleaned_data.get("targets") or []
+        if ALL_TARGETS in values and len(values) > 1:
+            raise forms.ValidationError("All enabled firewalls can't be combined with groups or firewalls.")
+        return values
+
+    def save(self, commit=True):
+        # self.errors runs validation when save() is called without is_valid().
+        if "targets" in self.fields and not self.errors:
+            self.instance.scope = split_targets(self.cleaned_data.get("targets"))[0]
+        return super().save(commit)
+
+    def _save_m2m(self):
+        super()._save_m2m()
+        if "targets" in self.fields:
+            _, firewalls, groups = split_targets(self.cleaned_data.get("targets"))
+            self.instance.firewalls.set(firewalls)
+            self.instance.firewall_groups.set(groups)
+
+
+SCOPE_FIELDS = ["scope", "firewalls", "firewall_groups"]
+
+
+class RuleForm(TargetsFormMixin, forms.ModelForm):
     """Manager rule editor laid out like OPNsense's Firewall: Rules dialog.
 
     Field order, labels, which fields take several values and which are
@@ -157,10 +263,12 @@ class RuleForm(forms.ModelForm):
     gateway = forms.CharField(required=False, widget=SearchSelect(tags=True, selector="manual"))
     icmp_types = CSVChoicesField(choices=ICMP_TYPES, required=False)
     icmp6_types = CSVChoicesField(choices=ICMP6_TYPES, required=False)
+    targets = targets_field()
 
     class Meta:
         model = Rule
         exclude = [
+            *SCOPE_FIELDS,
             "interface",
             "floating",
             "interfaces",
@@ -168,7 +276,7 @@ class RuleForm(forms.ModelForm):
             "origin_interfaces",
             "origin_interface_groups",
         ]
-        widgets = {key: MultiSelectWidget() for key in ("categories", "firewalls", "firewall_groups")}
+        widgets = {"categories": MultiSelectWidget()}
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("label_suffix", "")
@@ -234,10 +342,7 @@ class RuleForm(forms.ModelForm):
             "sequence numbers, use none for stateless rules.",
             "gateway": "Leave as 'default' to use the system routing table. Or choose a gateway to utilize "
             "policy based routing. The name must exist on every firewall the rule is pushed to.",
-            "scope": "All targets every enabled firewall, including new devices. Selected uses the firewalls "
-            "and groups below.",
-            "firewalls": "Direct targets when Scope is Selected.",
-            "firewall_groups": "Targets include enabled firewalls in these groups, including devices added later.",
+            "targets": TARGETS_HELP,
         }
         for name, text in help_texts.items():
             self.fields[name].help_text = text
@@ -263,7 +368,7 @@ class RuleForm(forms.ModelForm):
         # Rules saved before Protocol became single-valued keep their list until edited.
         if "," in (self.instance.protocol or ""):
             self.fields["protocol"].widget = TokenWidget(choices=protocols)
-        for name in ("action", "direction", "ip_version", "state_type", "scope"):
+        for name in ("action", "direction", "ip_version", "state_type"):
             self.fields[name].widget = SearchSelect(choices=self.fields[name].widget.choices)
         self.fields["state_type"].required = False
 
@@ -397,13 +502,7 @@ class CredentialsForm(forms.Form):
 class ImportRulesForm(forms.Form):
     snapshot_id = forms.IntegerField(widget=forms.HiddenInput)
     rule_indices = forms.MultipleChoiceField(widget=forms.CheckboxSelectMultiple, label="Rules to import")
-    scope = forms.ChoiceField(choices=Rule._meta.get_field("scope").choices, initial="selected")
-    firewalls = forms.ModelMultipleChoiceField(
-        queryset=Firewall.objects.all(), required=False, widget=MultiSelectWidget()
-    )
-    firewall_groups = forms.ModelMultipleChoiceField(
-        queryset=FirewallGroup.objects.all(), required=False, widget=MultiSelectWidget()
-    )
+    targets = targets_field()
 
     def __init__(self, *args, snapshot, **kwargs):
         super().__init__(*args, **kwargs)
@@ -411,12 +510,22 @@ class ImportRulesForm(forms.Form):
             (str(i), row.get("description") or f"Rule {i + 1}") for i, row in enumerate(snapshot.data["rules"])
         ]
         self.fields["snapshot_id"].initial = snapshot.pk
-        self.fields["firewalls"].initial = [snapshot.firewall_id]
+        self.fields["targets"].choices = target_choices()
+        self.fields["targets"].initial = [f"firewall:{snapshot.firewall_id}"]
+        if self.is_bound:
+            self.data = with_legacy_targets(self.data)
 
     def clean(self):
         data = super().clean()
-        if data.get("scope") == "selected" and not data.get("firewalls") and not data.get("firewall_groups"):
+        targets = data.get("targets") or []
+        if not targets:
             raise forms.ValidationError("Select at least one firewall or firewall group.")
+        if ALL_TARGETS in targets and len(targets) > 1:
+            raise forms.ValidationError("All enabled firewalls can't be combined with groups or firewalls.")
+        scope, firewalls, groups = split_targets(targets)
+        data["scope"] = scope
+        data["firewalls"] = Firewall.objects.filter(pk__in=firewalls)
+        data["firewall_groups"] = FirewallGroup.objects.filter(pk__in=groups)
         return data
 
 
@@ -429,7 +538,7 @@ class LineTokenWidget(TokenWidget):
         return value.replace(",", "\n")
 
 
-class AliasForm(forms.ModelForm):
+class AliasForm(TargetsFormMixin, forms.ModelForm):
     expansion_preview = forms.CharField(
         required=False,
         disabled=True,
@@ -438,13 +547,14 @@ class AliasForm(forms.ModelForm):
     )
     content = forms.CharField(
         widget=LineTokenWidget(tags=True),
-        help_text="Search aliases or type addresses, CIDRs, IP wildcard/range patterns, or ports. Edit as text accepts one item per line. Maximum 4096 compiled entries.",
+        help_text="Search aliases or type addresses, CIDRs, IP wildcard/range patterns, or ports. Text switches to one item per line. Maximum 4096 compiled entries.",
     )
+
+    targets = targets_field()
 
     class Meta:
         model = Alias
-        fields = "__all__"
-        widgets = {"firewalls": MultiSelectWidget(), "firewall_groups": MultiSelectWidget()}
+        exclude = SCOPE_FIELDS
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -494,32 +604,38 @@ class HexColorWidget(forms.TextInput):
         return data.get(name, "").lstrip("#")
 
 
-class CategoryForm(forms.ModelForm):
+class CategoryForm(TargetsFormMixin, forms.ModelForm):
+    targets = targets_field()
+
     class Meta:
         model = Category
-        fields = "__all__"
-        widgets = {"color": HexColorWidget(), "firewalls": MultiSelectWidget(), "firewall_groups": MultiSelectWidget()}
+        exclude = SCOPE_FIELDS
+        widgets = {"color": HexColorWidget()}
 
 
-class InterfaceGroupForm(forms.ModelForm):
+class InterfaceGroupForm(TargetsFormMixin, forms.ModelForm):
+    targets = targets_field()
+
     class Meta:
         model = InterfaceGroup
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups", "members")}
+        exclude = SCOPE_FIELDS
+        widgets = {"members": MultiSelectWidget()}
 
 
-class DNSProfileForm(forms.ModelForm):
+class DNSProfileForm(TargetsFormMixin, forms.ModelForm):
+    targets = targets_field()
+
     class Meta:
         model = DNSProfile
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups")}
+        exclude = SCOPE_FIELDS
 
 
-class VirtualIPForm(forms.ModelForm):
+class VirtualIPForm(TargetsFormMixin, forms.ModelForm):
+    targets = targets_field()
+
     class Meta:
         model = VirtualIP
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups")}
+        exclude = SCOPE_FIELDS
 
 
 class OIDCSettingsForm(forms.Form):

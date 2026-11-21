@@ -158,7 +158,7 @@ class RuleAdmin(admin.ModelAdmin):
         ),
         ("Stateful firewall", {"fields": ("state_type",)}),
         ("Source Routing", {"fields": ("gateway",)}),
-        ("Deployment", {"fields": ("scope", "firewalls", "firewall_groups")}),
+        ("Deployment", {"fields": ("targets",)}),
     ]
     list_display = ["name", "sequence", "rule_bindings", "action", "protocol", "scope", "enabled"]
     list_filter = ["scope", "interfaces", "interface_groups", "categories", "floating", "action", "enabled"]

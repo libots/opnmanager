@@ -86,3 +86,39 @@ document.addEventListener('DOMContentLoaded', function () {
     applyCollapsed(!narrow.matches && store.get('opn.sidebar.collapsed') === '1');
   });
 })();
+
+/* Tooltips for [data-tip]: shown at once on hover or focus, like OPNsense's black
+   bootstrap tooltips, with one item per line. Native title tooltips wait about a
+   second and show a help cursor first. */
+(function () {
+  let tip = null, owner = null;
+  function hide() {
+    if (tip) tip.remove();
+    tip = owner = null;
+  }
+  function show(target) {
+    hide();
+    owner = target;
+    tip = document.createElement('div');
+    tip.className = 'opn-tip';
+    tip.setAttribute('role', 'tooltip');
+    tip.textContent = target.dataset.tip;
+    document.body.append(tip);
+    const box = target.getBoundingClientRect(), size = tip.getBoundingClientRect();
+    const below = box.top < size.height + 10;
+    const left = Math.min(Math.max(4, box.left + box.width / 2 - size.width / 2), window.innerWidth - size.width - 4);
+    tip.classList.toggle('is-below', below);
+    tip.style.left = left + 'px';
+    tip.style.top = (below ? box.bottom + 7 : box.top - size.height - 7) + 'px';
+    tip.style.setProperty('--tip-arrow', (box.left + box.width / 2 - left) + 'px');
+  }
+  function follow(event) {
+    const target = event.target.closest ? event.target.closest('[data-tip]') : null;
+    if (target === owner) return;
+    if (target && target.dataset.tip) show(target); else hide();
+  }
+  document.addEventListener('mouseover', follow);
+  document.addEventListener('focusin', follow);
+  document.addEventListener('focusout', hide);
+  window.addEventListener('scroll', hide, true);
+})();

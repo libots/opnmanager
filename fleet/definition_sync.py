@@ -63,7 +63,8 @@ def definition_plan(firewall, rule=None):
     policy = Policy()
     all_objects = plan_for(
         firewall,
-        rule_ids={str(rule.pk)} if rule else None,
+        # Rule problems don't block definitions; they're reported on the rules themselves.
+        rule_ids={str(rule.pk)} if rule else set(),
         definition_names=rule_definitions(rule, policy) if rule else None,
         policy=policy,
     )

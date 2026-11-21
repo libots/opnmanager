@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
-from .deployment import deployment_plan
+from .deployment import combined_plan, deployment_plan
 from .jobs import enqueue, recover_interrupted, run_pending
 from .models import DeviceJob, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError
@@ -35,7 +35,11 @@ class DeviceJobTests(TestCase):
         plan, client = self.device()
         response = self.client.post(
             f"/firewalls/{self.fw.pk}/deploy/",
-            {"acknowledge": "yes", "approval_sha256": plan["approval_sha256"], "selected_rules": [str(self.rule.pk)]},
+            {
+                "acknowledge": "yes",
+                "approval_sha256": combined_plan(self.fw)["approval_sha256"],
+                "selected_rules": [str(self.rule.pk)],
+            },
         )
         job = DeviceJob.objects.get()
         self.assertRedirects(response, f"/jobs/{job.pk}/")

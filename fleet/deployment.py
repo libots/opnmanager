@@ -4,6 +4,7 @@ import difflib
 import json
 
 from .alias_sync import digest
+from .definition_sync import _execute_definition_plan, definition_plan
 from .dependencies import rule_definitions
 from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, Snapshot
@@ -101,10 +102,45 @@ def retire_candidates(device_rules, targeted_rule_ids):
     return candidates
 
 
-def deployment_plan(firewall):
+def definition_key(operation):
+    """(kind, name) of a definition operation; groups are named by ifname."""
+    payload = operation["payload"]
+    return operation["kind"], payload.get("name") or payload.get("ifname", "")
+
+
+def rule_intent(operation, category_names):
+    """What a rule push writes, independent of whether its categories exist on the device yet.
+
+    A category the device lacks is planned as "@category:Name" and becomes a UUID once
+    synchronized, so categories compare by name. Used to confirm that a rule approved
+    alongside pending definitions still writes the same thing after they are applied.
+    """
+    if not operation:
+        return None
+    payload = dict(operation["payload"])
+    payload["categories"] = ",".join(
+        sorted(
+            category_names.get(value, value.removeprefix("@category:"))
+            for value in payload.get("categories", "").split(",")
+            if value
+        )
+    )
+    return digest(payload)
+
+
+def deployment_plan(firewall, pending_definitions=None):
+    """Per-rule push plan. pending_definitions: (kind, name) keys that a combined
+    deployment synchronizes first; rules waiting only on those are not blocked."""
     snapshot = firewall.snapshots.first()
     result = {"firewall": firewall.name, "snapshot_id": snapshot.pk if snapshot else None, "rows": []}
     policy = Policy()
+    category_names = {}
+    if snapshot and firewall.enabled:
+        category_names = {
+            row["uuid"]: row["name"]
+            for row in policy.firewall_state(firewall, snapshot)[0].get("categories", [])
+            if row.get("uuid")
+        }
     placed = []  # (row, desired payload, matched device row) for the position check below
     for rule in policy.rules:
         if not rule.applies_to(firewall):
@@ -118,15 +154,25 @@ def deployment_plan(firewall):
         )
         errors = list(plan["errors"])
         dependencies = [op for op in plan["operations"] if op["kind"] != "rule"]
-        if dependencies:
-            names = ", ".join(
-                op["kind"] + " " + op["payload"].get("name", op["payload"].get("ifname", "")) for op in dependencies
-            )
-            errors.append(
-                "Required definitions need synchronization: "
-                + names
-                + ". Review them using the link below, then return to this rule plan."
-            )
+        names = ", ".join(" ".join(definition_key(op)) for op in dependencies)
+        after_definitions = bool(
+            dependencies
+            and pending_definitions is not None
+            and all(definition_key(op) in pending_definitions for op in dependencies)
+        )
+        if dependencies and not after_definitions:
+            if pending_definitions is None:
+                errors.append(
+                    "Required definitions need synchronization: "
+                    + names
+                    + ". Review them using the link below, then return to this rule plan."
+                )
+            else:
+                errors.append(
+                    "Required definitions need synchronization: "
+                    + names
+                    + ". They can't be synchronized in this deployment; resolve the definition problems above."
+                )
         item = next((i for i in plan["items"] if i["kind"] == "rule" and i.get("desired")), None)
         operation = next((op for op in plan["operations"] if op["kind"] == "rule"), None)
         if (
@@ -159,6 +205,8 @@ def deployment_plan(firewall):
             "errors": errors,
             "warnings": list(plan.get("warnings", [])),
             "dependencies": dependencies,
+            "after_definitions": names if after_definitions else "",
+            "intent": rule_intent(operation, category_names),
             "diff": [
                 {
                     "text": line,
@@ -232,15 +280,17 @@ def _remember_rollback(firewall, mode):
         inventory.save()
 
 
-def _execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False, allow_unprotected=False):
-    plan = deployment_plan(firewall)
-    if approved != plan["approval_sha256"]:
-        raise DeviceError("Rule plan changed. Review again before applying.")
-    selected = set(selected)
+def eligible_operations(plan):
+    """Selectable keys of a rule plan (rule ids and retire options) and their operations."""
     eligible = {row["id"]: row["operation"] for row in plan["rows"] if row["operation"] and not row["errors"]}
     for candidate in plan["retire"]:
         if not candidate["errors"]:
             eligible.update({option["id"]: option["operation"] for option in candidate["options"]})
+    return eligible
+
+
+def _check_selection(plan, selected, accept_warnings):
+    eligible = eligible_operations(plan)
     if not selected or not selected <= eligible.keys():
         raise DeviceError("Select one or more unblocked rule changes from the current plan.")
     retiring = [eligible[key]["remote_uuid"] for key in selected if eligible[key]["action"] in ("disable", "delete")]
@@ -251,6 +301,15 @@ def _execute_deployment(firewall, approved, selected, client, actor, accept_warn
         raise DeviceError(
             "Confirm the warnings for " + ", ".join(warned) + " before pushing. No rule writes were made."
         )
+    return eligible
+
+
+def _execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False, allow_unprotected=False):
+    plan = deployment_plan(firewall)
+    if approved != plan["approval_sha256"]:
+        raise DeviceError("Rule plan changed. Review again before applying.")
+    selected = set(selected)
+    eligible = _check_selection(plan, selected, accept_warnings)
     baseline = firewall.snapshots.get(pk=plan["snapshot_id"])
     current = client.snapshot()
     changes = configuration_changes(baseline.data, current)
@@ -324,3 +383,101 @@ def _execute_deployment(firewall, approved, selected, client, actor, accept_warn
 def execute_deployment(firewall, approved, selected, client, actor, accept_warnings=False, allow_unprotected=False):
     with device_write_lock(firewall.pk, "A rule deployment"):
         return _execute_deployment(firewall, approved, selected, client, actor, accept_warnings, allow_unprotected)
+
+
+def combined_plan(firewall, include_definitions=True):
+    """Everything one deployment applies: supporting definitions first, then selected rules.
+
+    Rules that only wait on definitions this plan synchronizes are selectable. Without
+    include_definitions (a person who may not synchronize definitions), the rule plan is
+    the standalone one and such rules stay blocked.
+    """
+    definitions = definition_plan(firewall) if include_definitions else None
+    pending = None
+    if definitions is not None:
+        pending = set() if definitions["errors"] else {definition_key(op) for op in definitions["operations"]}
+    rules = deployment_plan(firewall, pending_definitions=pending)
+    return {
+        "firewall": firewall.name,
+        "definitions": definitions,
+        "rules": rules,
+        "approval_sha256": digest(
+            {
+                "definitions": definitions["approval_sha256"] if definitions else None,
+                "rules": rules["approval_sha256"],
+            }
+        ),
+    }
+
+
+def definitions_to_apply(plan, remove=()):
+    definitions = plan["definitions"]
+    return bool(definitions and not definitions["errors"] and (definitions["operations"] or remove))
+
+
+def execute_combined(
+    firewall,
+    approved,
+    selected,
+    client,
+    actor,
+    remove=(),
+    include_definitions=True,
+    accept_warnings=False,
+    allow_unprotected=False,
+):
+    """Synchronize definitions, then push the selected rules, under one write lock.
+
+    Every selection is validated before the first write. If the definitions apply but a
+    rule can no longer be pushed as reviewed, the job stops there and says so: the
+    definitions stay (they are referenced by nothing new yet) and no rule is written.
+    Returns (definition changes, rule changes).
+    """
+    with device_write_lock(firewall.pk, "A deployment"):
+        plan = combined_plan(firewall, include_definitions)
+        if approved != plan["approval_sha256"]:
+            raise DeviceError("Deployment plan changed. Review again before applying.")
+        rules, definitions = plan["rules"], plan["definitions"]
+        selected, remove = {key for key in selected if key}, {uuid for uuid in remove if uuid}
+        if remove:
+            removable = {c["uuid"] for c in (definitions or {}).get("removals", []) if not c["errors"]}
+            if not include_definitions or not remove <= removable:
+                raise DeviceError("Select only unblocked aliases from the current plan for removal.")
+        sync = definitions_to_apply(plan, remove)
+        if not selected and not sync:
+            raise DeviceError("Nothing selected to deploy.")
+        if selected:
+            _check_selection(rules, selected, accept_warnings)
+            if rules["rollback"] == "config_history" and not allow_unprotected:
+                raise DeviceError(
+                    f"{firewall.name} has no automatic rollback. Review again and tick "
+                    '"Push without automatic rollback" to continue. Nothing was written.'
+                )
+        synced = 0
+        if sync:
+            synced = _execute_definition_plan(firewall, definitions["approval_sha256"], client, actor, remove=remove)
+        if not selected:
+            return synced, 0
+        prefix = f"Applied {synced} definition changes, then stopped before writing rules: " if synced else ""
+        fresh = deployment_plan(firewall)
+        current = {row["id"]: row for row in fresh["rows"]}
+        final = set()
+        for row in rules["rows"]:
+            if row["id"] not in selected:
+                continue
+            now = current.get(row["id"])
+            if now is None or now["errors"]:
+                problems = " ".join(now["errors"]) if now else "it no longer targets this firewall."
+                raise DeviceError(f"{prefix}rule {row['name']} is blocked: {problems} Review again.")
+            if not now["operation"]:
+                continue  # Already matches the device after the definitions were applied.
+            if now["intent"] != row["intent"]:
+                raise DeviceError(f"{prefix}rule {row['name']} changed since review. Review again.")
+            final.add(row["id"])
+        final |= selected - {row["id"] for row in rules["rows"]}  # retire options
+        if not final:
+            return synced, 0
+        pushed = _execute_deployment(
+            firewall, fresh["approval_sha256"], final, client, actor, accept_warnings, allow_unprotected
+        )
+        return synced, pushed

@@ -248,3 +248,68 @@ class FirewallTargetTests(TestCase):
         import_rules(snapshot, ["0"], "all", [])
         self.assertEqual(Alias.objects.count(), 2)
         self.assertFalse(plan_for(self.firewall)["errors"])
+
+
+class DeployToFieldTests(TestCase):
+    """One "Deploy to" picker replaces Scope, Firewalls and Firewall groups."""
+
+    def setUp(self):
+        self.one = Firewall.objects.create(name="One", base_url="https://one.test")
+        self.two = Firewall.objects.create(name="Two", base_url="https://two.test")
+        self.group = FirewallGroup.objects.create(name="Sites")
+        self.group.firewalls.add(self.two)
+
+    def form(self, targets, instance=None):
+        from django.http import QueryDict
+
+        data = QueryDict(mutable=True)
+        data.update({"name": "Hosts", "type": "host", "enabled": "on"})
+        data.setlist("content", ["10.0.0.1"])
+        data.setlist("targets", targets)
+        return AliasForm(data, instance=instance)
+
+    def test_groups_and_firewalls_mix_and_round_trip(self):
+        form = self.form([f"group:{self.group.pk}", f"firewall:{self.one.pk}"])
+        self.assertTrue(form.is_valid(), form.errors)
+        alias = form.save()
+        self.assertEqual(alias.scope, "selected")
+        self.assertEqual(list(alias.firewalls.all()), [self.one])
+        self.assertEqual(list(alias.firewall_groups.all()), [self.group])
+        self.assertTrue(alias.applies_to(self.two))
+        self.assertCountEqual(
+            AliasForm(instance=alias)["targets"].value(), [f"group:{self.group.pk}", f"firewall:{self.one.pk}"]
+        )
+        html = str(AliasForm(instance=alias)["targets"])
+        self.assertIn('data-exclusive="all"', html)
+        self.assertIn('<optgroup label="Firewall groups">', html)
+
+    def test_all_stands_alone_and_clears_selections(self):
+        alias = self.form([f"firewall:{self.one.pk}"]).save()
+        self.assertFalse(self.form(["all", f"firewall:{self.one.pk}"], alias).is_valid())
+        form = self.form(["all"], alias)
+        self.assertTrue(form.is_valid(), form.errors)
+        alias = form.save()
+        self.assertEqual(alias.scope, "all")
+        self.assertFalse(alias.firewalls.exists())
+        self.assertEqual(AliasForm(instance=alias)["targets"].value(), ["all"])
+        self.assertEqual(AliasForm()["targets"].value(), ["all"])
+
+    def test_empty_selection_targets_none(self):
+        alias = self.form([]).save()
+        self.assertEqual(alias.scope, "selected")
+        self.assertFalse(alias.applies_to(self.one))
+
+    def test_rule_editor_has_one_deployment_field(self):
+        from django.contrib.auth import get_user_model
+
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw"))
+        page = self.client.get("/admin/fleet/rule/add/")
+        self.assertContains(page, 'name="targets"')
+        self.assertNotContains(page, 'name="firewall_groups"')
+        self.assertNotContains(page, "Hold down")
+
+    def test_alias_chips_keep_saved_order(self):
+        Alias.objects.create(name="Known", content="10.0.0.9")
+        alias = Alias.objects.create(name="Mixed", content="10.0.0.1\nKnown")
+        html = str(AliasForm(instance=alias)["content"])
+        self.assertLess(html.index('value="10.0.0.1"'), html.index('value="Known"'))
