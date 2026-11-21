@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.test import TestCase
 
-from .models import Category, LogicalInterface, Rule
+from .models import Alias, Category, LogicalInterface, Rule
 
 
 class RuleListCommandTests(TestCase):
@@ -54,8 +54,26 @@ class RuleListCommandTests(TestCase):
         self.assertEqual(form.initial["sequence"], 102)
         self.assertEqual(form.initial["bindings"], [f"interface:{self.lan.pk}"])
         self.assertEqual(form.initial["categories"], [str(self.cat.pk)])
-        self.assertEqual(form.initial["destination_port"], ["53"])
+        self.assertEqual(form.initial["destination_port"], "53")
         self.assertContains(response, f'value="interface:{self.lan.pk}" selected')
+
+    def test_empty_single_value_pickers_stay_any_when_cloning_or_editing_together(self):
+        # A port alias is the first port option; an empty port must not fall back to it.
+        Alias.objects.create(name="PrinterPorts", type="port", content="9100")
+        import re
+
+        def selected(response, name):
+            select = re.search(rf'<select name="{name}".*?</select>', response.content.decode(), re.S).group(0)
+            return re.findall(r'<option value="([^"]*)"[^>]*selected', select)
+
+        clone = self.client.get(f"/admin/fleet/rule/add/?clone={self.dns.pk}")
+        self.assertEqual(clone.context["adminform"].form.initial["source_port"], "")
+        self.assertEqual(selected(clone, "source_port"), [""])
+        self.assertEqual(selected(clone, "destination_port"), ["53"])
+        self.assertEqual(selected(clone, "gateway"), [""])
+        bulk = self.client.get(f"/admin/fleet/rule/bulk-edit/?ids={self.dns.pk}&ids={self.web.pk}")
+        self.assertEqual(selected(bulk, "source_port"), [""])
+        self.assertEqual(selected(bulk, "action"), ["pass"])
 
     def test_bulk_toggles_and_delete(self):
         self.bulk("disable", self.dns, self.web, _next="/rules/?q=x")

@@ -595,3 +595,25 @@ def bulk_rule_forms(rules, posted, changed):
                 data.pop(name, None)
         forms_.append(RuleForm(data, instance=rule))
     return forms_
+
+
+def rule_form_initial(data, names):
+    """Editor initial values for `names` from submitted-style data (see rule_form_data).
+
+    Single-value pickers (protocol, ports, gateway...) need a string: an empty list
+    would leave nothing selected, and the picker would fall back to its first option.
+    """
+    initial = {}
+    for name, field in RuleForm().fields.items():
+        if name not in names:
+            continue
+        widget = field.widget
+        if isinstance(widget, forms.CheckboxInput):
+            initial[name] = name in data
+        elif isinstance(widget, SearchSelect):
+            initial[name] = ",".join(data.getlist(name))
+        elif isinstance(widget, forms.SelectMultiple):
+            initial[name] = data.getlist(name)
+        elif name in data:
+            initial[name] = data[name]
+    return initial
