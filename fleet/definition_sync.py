@@ -1,8 +1,8 @@
 """Reviewed synchronization of supporting definitions, never rules.
 
-Creates and updates are planned automatically; removing a manager alias that was
-deleted (or no longer targets the firewall) is offered per alias and only done
-when selected.
+Creates and updates are planned automatically; removing a manager alias or
+interface group that was deleted (or no longer targets the firewall) is offered
+per object and only done when selected.
 """
 
 from .alias_sync import digest
@@ -50,9 +50,53 @@ def alias_removals(firewall, data, policy):
             errors.append("Still used by " + ", ".join(referrers) + ". Remove or change those first.")
         candidates.append(
             {
+                "kind": "alias",
                 "uuid": row.get("uuid", ""),
                 "name": row.get("name", ""),
                 "content": row.get("content", ""),
+                "errors": errors,
+            }
+        )
+    return sorted(candidates, key=lambda c: c["name"])
+
+
+def group_removals(firewall, data, mappings, policy):
+    """Tagged device interface groups whose manager group was deleted or is no longer created here.
+
+    Like aliases, identity is the [om:...] tag in the group description. A group a
+    device rule still uses (as its interface, received-on or address) is listed
+    but blocked until that rule changes.
+    """
+    current = [
+        g
+        for g in policy.groups.values()
+        if g.applies_to(firewall) and any(i.name in mappings for i in g.members.all())
+    ]
+    markers = {short_marker(g.uid) for g in current}
+    names = {g.name for g in current}
+    users = {}
+    for rule in data.get("rules", []):
+        label = "rule " + (rule.get("description") or rule.get("uuid") or "unnamed")
+        for field in ("interface", "received-on", "source_net", "destination_net"):
+            for token in str(rule.get(field, "")).split(","):
+                users.setdefault(token.strip(), []).append(label)
+    candidates = []
+    for row in data.get("groups", []):
+        marker = marker_of(row.get("descr", ""))
+        if not marker or marker in markers or row.get("ifname") in names:
+            continue
+        errors = []
+        if not row.get("uuid"):
+            errors.append("Pull a live snapshot with remote group UUIDs before removing this group.")
+        referrers = sorted(set(users.get(row.get("ifname", ""), [])))
+        if referrers:
+            errors.append("Still used by " + ", ".join(referrers) + ". Remove or change those first.")
+        candidates.append(
+            {
+                "kind": "group",
+                "uuid": row.get("uuid", ""),
+                "name": row.get("ifname", ""),
+                "content": row.get("members", "").replace(",", "\n"),
                 "errors": errors,
             }
         )
@@ -94,7 +138,8 @@ def definition_plan(firewall, rule=None):
     }
     snapshot = firewall.snapshots.first()
     if rule is None and snapshot and firewall.enabled:
-        result["removals"] = alias_removals(firewall, policy.firewall_state(firewall, snapshot)[0], policy)
+        data, mappings, _ = policy.firewall_state(firewall, snapshot)
+        result["removals"] = group_removals(firewall, data, mappings, policy) + alias_removals(firewall, data, policy)
     result["approval_sha256"] = digest(result)
     return result
 
@@ -115,7 +160,7 @@ def _execute_definition_plan(firewall, approved_sha, client, actor, rule=None, r
     removable = {c["uuid"]: c for c in plan["removals"] if not c["errors"]}
     remove = set(remove)
     if not remove <= removable.keys():
-        raise DeviceError("Select only unblocked aliases from the current plan for removal.")
+        raise DeviceError("Select only unblocked aliases and groups from the current plan for removal.")
     baseline = firewall.snapshots.get(pk=plan["snapshot_id"])
     current = client.snapshot()
     if fingerprint(current) != fingerprint(baseline.data):
@@ -131,15 +176,18 @@ def _execute_definition_plan(firewall, approved_sha, client, actor, rule=None, r
     try:
         for operation in operations:
             client.save_definition(operation)
-        for uuid in sorted(remove, key=lambda u: removable[u]["name"]):
-            client.delete_alias(uuid)
+        removed_kinds = {removable[uuid]["kind"] for uuid in remove}
+        for uuid in sorted(remove, key=lambda u: (removable[u]["kind"], removable[u]["name"])):
+            kind = removable[uuid]["kind"]
+            client.delete_definition(kind, uuid)
             AuditEvent.objects.create(
-                actor=actor, action="alias.removed", detail=f"{firewall.name}: {removable[uuid]['name']} ({uuid})"
+                actor=actor, action=f"{kind}.removed", detail=f"{firewall.name}: {removable[uuid]['name']} ({uuid})"
             )
-        client.reconfigure_definitions({op["kind"] for op in operations} | ({"alias"} if remove else set()))
+        client.reconfigure_definitions({op["kind"] for op in operations} | removed_kinds)
         observed = client.snapshot()
-        if remove & {row.get("uuid") for row in observed.get("aliases", [])}:
-            raise DeviceError("Device readback still lists an alias selected for removal.")
+        remaining = {row.get("uuid") for kind in removed_kinds for row in observed.get(COLLECTIONS[kind], [])}
+        if remove & remaining:
+            raise DeviceError("Device readback still lists a definition selected for removal.")
         for op in operations:
             key = "ifname" if op["kind"] == "group" else "name"
             desired = op["payload"]

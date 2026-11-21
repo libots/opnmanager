@@ -82,11 +82,11 @@ class AliasIdentityTests(TestCase):
         untouched = Mock()
         untouched.snapshot.return_value = copy.deepcopy(self.snapshot.data)
         self.assertEqual(execute_definition_plan(self.fw, plan["approval_sha256"], untouched, "test"), 0)
-        untouched.delete_alias.assert_not_called()
+        untouched.delete_definition.assert_not_called()
         client = Mock()
         client.snapshot.side_effect = [copy.deepcopy(self.snapshot.data), {**EMPTY, "aliases": [local]}]
         self.assertEqual(execute_definition_plan(self.fw, plan["approval_sha256"], client, "test", remove=["u1"]), 1)
-        client.delete_alias.assert_called_once_with("u1")
+        client.delete_definition.assert_called_once_with("alias", "u1")
         client.reconfigure_definitions.assert_called_once_with({"alias"})
         self.assertTrue(AuditEvent.objects.filter(action="alias.removed").exists())
 
@@ -150,6 +150,6 @@ class AliasIdentityTests(TestCase):
         gone.delete()
         self.client.force_login(get_user_model().objects.create_superuser("operator", password="Test-only-pass"))
         response = self.client.get(f"/firewalls/{self.fw.pk}/sync/")
-        self.assertContains(response, 'name="remove_alias" value="u1"')
+        self.assertContains(response, 'name="remove_definition" value="u1"')
         self.assertNotContains(response, "checked")
         self.assertContains(response, "Apply selected removals to Branch")

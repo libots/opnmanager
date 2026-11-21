@@ -198,13 +198,39 @@ class Alias(ScopedPolicy):
 
 
 class InterfaceGroup(ScopedPolicy):
+    # Stable identity tagged on the device ("[om:<12 hex>]" in the description), as for
+    # aliases: a rename updates the same device group, and a deleted group can be removed.
+    uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     name = models.CharField(max_length=15, unique=True, validators=[identifier])
-    description = models.CharField(max_length=255, blank=True)
+    description = models.CharField(max_length=255, blank=True, validators=[MaxLengthValidator(DESCRIPTION_MAX)])
     members = models.ManyToManyField(LogicalInterface, related_name="groups")
     sequence = models.PositiveIntegerField(default=0, validators=[MaxValueValidator(9999)])
+    no_gui_group = models.BooleanField(
+        "(no) GUI groups",
+        default=False,
+        help_text="Prevent grouping these members in the interfaces menu section",
+    )
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        previous = None
+        if self.pk:
+            previous = InterfaceGroup.objects.filter(pk=self.pk).values_list("name", flat=True).first()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if previous and previous != self.name:
+                # Rule bindings follow the foreign key; addresses name the group as text.
+                for rule in Rule.objects.all():
+                    changed = False
+                    for field in ("source", "destination"):
+                        value, hit = _replace_token(getattr(rule, field), previous, self.name, ",")
+                        if hit:
+                            setattr(rule, field, value)
+                            changed = True
+                    if changed:
+                        rule.save()
 
     class Meta:
         ordering = ["sequence", "name"]
