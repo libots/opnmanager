@@ -122,11 +122,21 @@ class ScopedPolicy(models.Model):
     class Meta:
         abstract = True
 
+    SCOPE_PREFETCH = ("firewalls", "firewall_groups__firewalls")
+
     def applies_to(self, firewall):
-        return firewall.enabled and (
-            self.scope == self.ALL
-            or self.firewalls.filter(pk=firewall.pk).exists()
-            or self.firewall_groups.filter(firewalls=firewall).exists()
+        if not firewall.enabled:
+            return False
+        if self.scope == self.ALL:
+            return True
+        cache = getattr(self, "_prefetched_objects_cache", {})
+        if "firewalls" in cache and "firewall_groups" in cache:
+            # Loaded with SCOPE_PREFETCH: answer from memory instead of two queries per object.
+            return any(f.pk == firewall.pk for f in self.firewalls.all()) or any(
+                f.pk == firewall.pk for group in self.firewall_groups.all() for f in group.firewalls.all()
+            )
+        return (
+            self.firewalls.filter(pk=firewall.pk).exists() or self.firewall_groups.filter(firewalls=firewall).exists()
         )
 
 

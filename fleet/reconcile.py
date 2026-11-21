@@ -4,7 +4,7 @@ import re
 from collections import Counter
 
 from .alias_patterns import compile_content
-from .models import Alias, Category, InterfaceGroup, Rule
+from .models import Alias, Category, InterfaceGroup, Rule, ScopedPolicy
 from .rule_identity import is_managed, short_marker
 from .rule_identity import matches as matches_rule
 
@@ -99,7 +99,52 @@ def _matches_identity(kind, identity, row, origin_uuids):
     return matches_rule(description, identity) or (bool(row.get("uuid")) and row["uuid"] == origin_uuids.get(identity))
 
 
-def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
+class Policy:
+    """All manager definitions, loaded once with their scopes prefetched.
+
+    Planning used to re-query every alias, group, category and rule (plus two
+    scope queries per object) on each call. Build one Policy and pass it to
+    every plan_for call that should see the same manager state.
+    """
+
+    def __init__(self):
+        scope = ScopedPolicy.SCOPE_PREFETCH
+        self.aliases = list(Alias.objects.prefetch_related(*scope))
+        self.alias_names = {a.name for a in self.aliases}
+        self.aliases_by_name = {a.name: a for a in self.aliases}
+        self.categories = list(Category.objects.prefetch_related(*scope))
+        self.categories_by_pk = {c.pk: c for c in self.categories}
+        self.groups = {g.name: g for g in InterfaceGroup.objects.prefetch_related("members", *scope)}
+        self.groups_by_pk = {g.pk: g for g in self.groups.values()}
+        self.rules = list(
+            Rule.objects.select_related("interface").prefetch_related(
+                "interfaces",
+                "interface_groups",
+                "categories",
+                "origin_interfaces",
+                "origin_interface_groups",
+                *scope,
+            )
+        )
+        self.marker_counts = Counter(short_marker(rule.pk) for rule in self.rules)
+        self._firewalls = {}
+
+    def firewall_state(self, firewall, snapshot):
+        """Validated snapshot data, interface mappings and adopted rule UUIDs for one firewall."""
+        key = (firewall.pk, snapshot.pk)
+        if key not in self._firewalls:
+            self._firewalls[key] = (
+                validate_snapshot(snapshot.data),
+                {
+                    m.logical_interface.name: m.device_interface
+                    for m in firewall.interface_mappings.select_related("logical_interface")
+                },
+                {str(origin.rule_id): origin.remote_uuid for origin in firewall.ruleorigin_set.all()},
+            )
+        return self._firewalls[key]
+
+
+def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, policy=None):
     snapshot = snapshot or firewall.snapshots.first()
     plan = {
         "firewall": firewall.name,
@@ -116,13 +161,10 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
     if not snapshot:
         plan["errors"].append("No snapshot. Import or pull current configuration first.")
         return plan
-    data = validate_snapshot(snapshot.data)
-    mappings = {
-        m.logical_interface.name: m.device_interface
-        for m in firewall.interface_mappings.select_related("logical_interface")
-    }
-    aliases = list(Alias.objects.all())
-    alias_names = {a.name for a in aliases}
+    policy = policy or Policy()
+    data, mappings, origin_uuids = policy.firewall_state(firewall, snapshot)
+    aliases = policy.aliases
+    alias_names = policy.alias_names
     desired_aliases = [
         a
         for a in aliases
@@ -166,7 +208,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
 
     if any(visit(name, set()) for name in graph):
         plan["errors"].append("Alias dependency cycle detected.")
-    for category in Category.objects.all():
+    for category in policy.categories:
         if definition_names is not None and category.name not in definition_names["category"]:
             continue
         if not category.applies_to(firewall):
@@ -176,7 +218,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
         expected.append(
             ("category", category.name, category.name, {"name": category.name, "color": category.color.lower()})
         )
-    groups = {group.name: group for group in InterfaceGroup.objects.prefetch_related("members").all()}
+    groups = policy.groups
     for group in groups.values():
         if definition_names is not None and group.name not in definition_names["group"]:
             continue
@@ -205,13 +247,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
             )
         )
     category_ids = {row["name"]: row.get("uuid", "") for row in data.get("categories", [])}
-    marker_counts = Counter(short_marker(pk) for pk in Rule.objects.values_list("pk", flat=True))
+    marker_counts = policy.marker_counts
     seen_sequences = set()
-    for rule in (
-        Rule.objects.select_related("interface")
-        .prefetch_related("interfaces", "interface_groups", "categories", "origins")
-        .all()
-    ):
+    for rule in policy.rules:
         if rule_ids is not None and str(rule.pk) not in rule_ids:
             continue
         if not rule.applies_to(firewall):
@@ -227,7 +265,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
             missing = [i.name for i in bound if i.name not in mappings]
             if missing:
                 raise ValueError(f"Rule {rule.name}: missing interface mapping for {', '.join(missing)}.")
-            selected_groups = list(rule.interface_groups.all())
+            selected_groups = [policy.groups_by_pk[g.pk] for g in rule.interface_groups.all()]
             for group in selected_groups:
                 if not group.applies_to(firewall):
                     raise ValueError(f"Rule {rule.name}: group {group.name} is excluded from this firewall.")
@@ -239,13 +277,13 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
                 if key in seen_sequences:
                     raise ValueError(f"Ambiguous sequence {rule.sequence} on {binding}.")
                 seen_sequences.add(key)
-            selected_categories = list(rule.categories.all())
+            selected_categories = [policy.categories_by_pk[c.pk] for c in rule.categories.all()]
             if any(not c.applies_to(firewall) for c in selected_categories):
                 raise ValueError(f"Rule {rule.name}: a category is excluded from this firewall.")
             origins = list(rule.origin_interfaces.all())
             if any(i.name not in mappings for i in origins):
                 raise ValueError(f"Rule {rule.name}: missing origin interface mapping.")
-            origin_groups = list(rule.origin_interface_groups.all())
+            origin_groups = [policy.groups_by_pk[g.pk] for g in rule.origin_interface_groups.all()]
             if any(not g.applies_to(firewall) for g in origin_groups):
                 raise ValueError(f"Rule {rule.name}: origin group excluded from this firewall.")
             origin_binding = ",".join(sorted([mappings[i.name] for i in origins] + [g.name for g in origin_groups]))
@@ -282,7 +320,6 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
             expected.append(("rule", identity, rule.name, fields))
         except ValueError as exc:
             plan["errors"].append(str(exc))
-    origin_uuids = {str(origin.rule_id): origin.remote_uuid for origin in firewall.ruleorigin_set.all()}
     matched = {"alias": set(), "rule": set(), "group": set(), "category": set()}
     collection = {"alias": "aliases", "rule": "rules", "group": "groups", "category": "categories"}
     for kind, identity, label, desired in expected:

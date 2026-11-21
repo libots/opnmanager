@@ -243,3 +243,40 @@ class ProtectedApplyTests(TestCase):
         post.return_value = Mock(status_code=200, json=lambda: {})
         with self.assertRaisesMessage(DeviceError, "No rule writes were made"):
             client.savepoint()
+
+
+class PlannerQueryTests(TestCase):
+    """Planning cost must not grow with the number of rules (it used to be quadratic)."""
+
+    def test_deployment_plan_query_count_is_independent_of_rule_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from .models import Category, FirewallGroup, InterfaceGroup
+
+        fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        group = FirewallGroup.objects.create(name="Branches")
+        group.firewalls.add(fw)
+        logical = LogicalInterface.objects.create(name="LAN")
+        InterfaceMapping.objects.create(firewall=fw, logical_interface=logical, device_interface="lan")
+        interface_group = InterfaceGroup.objects.create(name="ALL_LAN")
+        interface_group.members.add(logical)
+        category = Category.objects.create(name="Ops")
+        Snapshot.objects.create(firewall=fw, data=copy.deepcopy(EMPTY))
+
+        def add_rules(start, count):
+            for i in range(start, start + count):
+                Alias.objects.create(name=f"A{i}", content="10.0.0.1", scope="selected").firewall_groups.add(group)
+                rule = Rule.objects.create(name=f"R{i}", interface=logical, sequence=i + 1, source=f"A{i}")
+                rule.categories.add(category)
+                rule.interface_groups.add(interface_group)
+
+        def count_queries():
+            with CaptureQueriesContext(connection) as queries:
+                deployment_plan(fw)
+            return len(queries)
+
+        add_rules(0, 5)
+        small = count_queries()
+        add_rules(5, 40)
+        self.assertEqual(count_queries(), small)

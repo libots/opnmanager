@@ -18,7 +18,7 @@ from .jobs import enqueue
 from .mappings import apply_default_mappings
 from .models import Alias, AuditEvent, Category, DeviceJob, Firewall, InterfaceGroup, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError, OPNsenseClient
-from .reconcile import plan_for
+from .reconcile import Policy, plan_for
 from .rule_filters import SEARCH_FIELDS, filter_rows
 
 
@@ -26,8 +26,9 @@ from .rule_filters import SEARCH_FIELDS, filter_rows
 @permission_required("fleet.view_firewall", raise_exception=True)
 def dashboard(request):
     devices = []
+    policy = Policy()
     for fw in Firewall.objects.all():
-        plan = plan_for(fw)
+        plan = plan_for(fw, policy=policy)
         devices.append(
             {
                 "firewall": fw,

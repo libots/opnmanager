@@ -6,9 +6,9 @@ import json
 from .alias_sync import digest
 from .dependencies import rule_definitions
 from .locks import device_write_lock
-from .models import AuditEvent, Rule, Snapshot
+from .models import AuditEvent, Snapshot
 from .opnsense import DeviceError
-from .reconcile import canonical, plan_for
+from .reconcile import Policy, canonical, plan_for
 from .snapshot_compare import configuration_changes
 
 
@@ -24,10 +24,17 @@ def fingerprint(data):
 def deployment_plan(firewall):
     snapshot = firewall.snapshots.first()
     result = {"firewall": firewall.name, "snapshot_id": snapshot.pk if snapshot else None, "rows": []}
-    for rule in Rule.objects.all():
+    policy = Policy()
+    for rule in policy.rules:
         if not rule.applies_to(firewall):
             continue
-        plan = plan_for(firewall, rule_ids={str(rule.pk)}, definition_names=rule_definitions(rule))
+        plan = plan_for(
+            firewall,
+            snapshot,
+            rule_ids={str(rule.pk)},
+            definition_names=rule_definitions(rule, policy),
+            policy=policy,
+        )
         errors = list(plan["errors"])
         dependencies = [op for op in plan["operations"] if op["kind"] != "rule"]
         if dependencies:
