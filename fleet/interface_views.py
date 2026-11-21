@@ -36,6 +36,19 @@ def device_interfaces(firewall):
                 "ipv6": row.get("ipv6", ""),
                 "vlan": row.get("vlan_tag", ""),
                 "observed": True,
+                # Shown under the dropdown: device, VLAN and status, then one address per line.
+                "summary": " · ".join(
+                    part
+                    for part in (
+                        row.get("device", ""),
+                        f"VLAN {row['vlan_tag']}" if row.get("vlan_tag") else "",
+                        row.get("status", ""),
+                    )
+                    if part
+                ),
+                "addresses": [
+                    a.strip() for family in ("ipv4", "ipv6") for a in str(row.get(family) or "").split(",") if a.strip()
+                ],
             }
     snapshot = firewall.snapshots.first()
     for row in (snapshot.data or {}).get("interfaces", []) if snapshot else []:

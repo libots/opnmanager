@@ -213,6 +213,27 @@ def default_mappings(request, pk):
     return redirect("firewall", pk=pk)
 
 
+def tokens_of(value):
+    return [v.strip() for v in str(value or "").split(",") if v.strip()]
+
+
+def address_label(value, device_interfaces=None):
+    """A rule address as OPNsense lists it: "@VL30:net" -> "VL30 net", device "lanip" -> "LAN address"."""
+    if value == "any":
+        return "*"
+    if value == "(self)":
+        return "This Firewall"
+    if value.startswith("@") and value.endswith((":net", ":ip")):
+        name, _, kind = value[1:].rpartition(":")
+        return f"{name} {'net' if kind == 'net' else 'address'}"
+    if device_interfaces:
+        if value in device_interfaces:
+            return f"{device_interfaces[value]} net"
+        if value.endswith("ip") and value[:-2] in device_interfaces:
+            return f"{device_interfaces[value[:-2]]} address"
+    return value
+
+
 # Icons rules.js draws in the OPNsense-style rule grid.
 RULE_ICONS = (
     "play",
@@ -309,6 +330,7 @@ def rules_page(request):
     )
     origin_ids = {origin.remote_uuid: str(origin.rule_id) for origin in fw.ruleorigin_set.all()} if fw else {}
     interface_labels = dict(interfaces)
+    device_labels = {r["name"]: r.get("label") or r["name"] for r in data.get("interfaces", [])} if fw else {}
     managed_ids = list(Rule.objects.values_list("pk", flat=True)) if fw else []
     from .rule_identity import matches as matches_rule
 
@@ -332,11 +354,13 @@ def rules_page(request):
             interface_labels.get(v.strip(), v.strip()) for v in row.get("received-on", "").split(",") if v.strip()
         )
         for side in ("source", "destination"):
-            address = row.get(side + "_net", "") or "any"
-            row[side + "_display"] = ("! " if row.get(side + "_not") == "1" else "") + {
-                "any": "*",
-                "(self)": "This Firewall",
-            }.get(address, address)
+            # One address per line, named as OPNsense shows them ("VL30 net", "LAN address").
+            lines = [address_label(v, device_labels) for v in tokens_of(row.get(side + "_net"))]
+            lines = lines or ["*"]
+            if row.get(side + "_not") == "1":
+                lines[0] = "! " + lines[0]
+            row[side + "_lines"] = lines
+            row[side + "_display"] = ", ".join(lines)
         row["manager_id"] = origin_ids.get(row.get("uuid")) if fw else row["id"]
         if fw and not row["manager_id"]:
             matching_ids = [str(pk) for pk in managed_ids if matches_rule(row.get("description", ""), pk)]

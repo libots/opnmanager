@@ -15,7 +15,11 @@ document.addEventListener('DOMContentLoaded', function () {
   function detail(control) {
     const target = cellOf(control).querySelector('.li-detail');
     const option = control.tagName === 'SELECT' ? control.selectedOptions[0] : null;
-    target.textContent = option ? (option.dataset.detail || '') : '';
+    const line = (text, className) => Object.assign(document.createElement('div'), {textContent: text, className: className || ''});
+    target.replaceChildren();
+    if (!option || !option.value) return;
+    if (option.dataset.detail) target.append(line(option.dataset.detail));
+    for (const address of (option.dataset.addresses || '').split('|').filter(Boolean)) target.append(line(address, 'li-address'));
   }
 
   function refresh() {
