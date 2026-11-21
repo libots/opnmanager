@@ -37,6 +37,7 @@ urlpatterns = [
     path("firewalls/<int:pk>/sync/", views.sync_definitions, name="sync_definitions"),
     path("firewalls/<int:pk>/mappings/defaults/", views.default_mappings, name="default_mappings"),
     path("firewalls/<int:pk>/rules/import/", views.adopt_rules, name="adopt_rules"),
+    path("jobs/<int:pk>/", views.job_detail, name="job"),
     path("settings/", views.settings_page, name="settings"),
     path("accounts/login/", LocalLoginView.as_view(), name="login"),
     path("accounts/password_change/", InitialPasswordChangeView.as_view(), name="password_change"),

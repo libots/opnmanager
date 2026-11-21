@@ -388,3 +388,40 @@ class VirtualIPOrigin(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["firewall", "remote_uuid"], name="one_virtual_ip_origin")]
+
+
+class DeviceJob(models.Model):
+    """A long-running device write, executed by the `run_jobs` worker instead of a web request."""
+
+    RULES_DEPLOY = "rules.deploy"
+    DEFINITIONS_SYNC = "definitions.sync"
+    KINDS = [(RULES_DEPLOY, "Rule deployment"), (DEFINITIONS_SYNC, "Definition synchronization")]
+    QUEUED, RUNNING, SUCCEEDED, FAILED, INTERRUPTED = "queued", "running", "succeeded", "failed", "interrupted"
+    STATUSES = [
+        (QUEUED, "Queued"),
+        (RUNNING, "Running"),
+        (SUCCEEDED, "Succeeded"),
+        (FAILED, "Failed"),
+        (INTERRUPTED, "Interrupted"),
+    ]
+    ACTIVE = (QUEUED, RUNNING)
+
+    firewall = models.ForeignKey(Firewall, on_delete=models.CASCADE, related_name="jobs")
+    kind = models.CharField(max_length=32, choices=KINDS)
+    status = models.CharField(max_length=12, choices=STATUSES, default=QUEUED)
+    params = models.JSONField(default=dict)
+    actor = models.CharField(max_length=150)
+    message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    @property
+    def active(self):
+        return self.status in self.ACTIVE
+
+    def __str__(self):
+        return f"{self.get_kind_display()} on {self.firewall} ({self.status})"

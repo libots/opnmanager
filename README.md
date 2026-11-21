@@ -64,6 +64,8 @@ A future container can use the same Gunicorn application and environment variabl
 ```sh
 # Use this after setup when you want the development server instead of Gunicorn.
 DJANGO_DEBUG=1 .venv/bin/python manage.py runserver 127.0.0.1:8000
+# In a second terminal: the worker that runs rule deploys and definition syncs.
+DJANGO_DEBUG=1 .venv/bin/python manage.py run_jobs
 # Optional, only for an empty fleet; never contacts a device:
 OPNMANAGER_LOCAL=1 .venv/bin/python manage.py seed_demo
 ```
@@ -259,6 +261,8 @@ The API account needs privileges for `/api/firewall/filter/add_rule`, `/set_rule
 **Protected apply.** Every rule deployment first creates an OPNsense filter savepoint, then applies with that revision. OPNsense arms a 60-second rollback timer. The manager reads the rules back and calls `cancel_rollback` only if the readback matches. If a write, the apply or the readback fails, the manager asks the firewall to revert immediately. If the firewall can no longer be reached (for example because a pushed rule blocked the manager), OPNsense restores the previous rules on its own when the timer expires. The audit log records the revision as `rules.deploy.completed`, `rules.deploy.failed` or `rules.deploy.unconfirmed`. Applying still reloads the device filter and can activate unrelated pending device edits, and a revert restores the whole filter configuration as of the savepoint. Keep independent management access and review in a maintenance window. The deployment workflow has automated mocked API coverage; a real-device acceptance test with your OPNsense version remains necessary before production use.
 
 **One write at a time per firewall.** Rule deploys, alias and definition syncs, virtual IP changes and firmware requests share a single per-firewall lock (`.device-write-<id>.lock` in the data directory). A second write to the same firewall is refused with the name of the operation already running, so one workflow's "device unchanged" preflight can't be invalidated by another's writes. Different firewalls never block each other. The lock covers one host sharing `OPNMANAGER_DATA_DIR`.
+
+**Background jobs.** Pushing rules or applying a definition sync doesn't run inside the web request. The request checks the form and queues a job, and the browser goes to a job page that refreshes until the job finishes. A separate worker (`manage.py run_jobs`) runs the jobs one at a time. `scripts/run-local.sh` starts it next to Gunicorn and stops it on exit. If you run the app another way, run exactly one worker per data directory, for example as a second systemd service. A reverse-proxy timeout or a closed tab doesn't stop a running job. If the worker itself stops mid-job, the next worker start marks the job **Interrupted**: rules that were applied but not confirmed roll back automatically, and you should pull a fresh snapshot before trying again.
 
 ## Navigation and fleet system management
 

@@ -4,16 +4,19 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
 from .credentials import encrypt_credentials
-from .definition_sync import definition_plan, execute_definition_plan
-from .deployment import deployment_plan, execute_deployment
+from .definition_sync import definition_plan
+from .deployment import deployment_plan
 from .forms import CredentialsForm, ImportRulesForm, SnapshotImportForm
 from .import_rules import import_rules
+from .jobs import enqueue
 from .mappings import apply_default_mappings
-from .models import Alias, AuditEvent, Category, Firewall, InterfaceGroup, LogicalInterface, Rule, Snapshot
+from .models import Alias, AuditEvent, Category, DeviceJob, Firewall, InterfaceGroup, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import plan_for
 from .rule_filters import SEARCH_FIELDS, filter_rows
@@ -184,16 +187,13 @@ def sync_definitions(request, pk):
 
         raise Http404("Rule does not target this firewall")
     if request.method == "POST":
+        params = {"approval_sha256": request.POST.get("approval_sha256", ""), "rule_id": str(rule.pk) if rule else None}
         try:
-            count = execute_definition_plan(
-                fw, request.POST.get("approval_sha256"), OPNsenseClient(fw), request.user.username, rule=rule
-            )
-            messages.success(
-                request, f"Verified {count} supporting-definition changes. No manager rules were deployed."
-            )
+            job = enqueue(fw, DeviceJob.DEFINITIONS_SYNC, params, request.user.username)
         except DeviceError as exc:
             messages.error(request, str(exc))
-        return redirect("deploy_rules" if rule else "firewall", pk=pk)
+            return redirect("deploy_rules" if rule else "firewall", pk=pk)
+        return redirect("job", pk=job.pk)
     return render(request, "fleet/sync.html", {"firewall": fw, "plan": definition_plan(fw, rule=rule), "rule": rule})
 
 
@@ -399,15 +399,25 @@ def deploy_rules(request, pk):
         try:
             if request.POST.get("acknowledge") != "yes":
                 raise DeviceError("Confirm the apply warning before deploying.")
-            count = execute_deployment(
-                fw,
-                request.POST.get("approval_sha256"),
-                request.POST.getlist("selected_rules"),
-                OPNsenseClient(fw),
-                request.user.username,
-            )
-            messages.success(request, f"Applied and verified {count} selected rule changes.")
+            params = {
+                "approval_sha256": request.POST.get("approval_sha256", ""),
+                "selected_rules": request.POST.getlist("selected_rules"),
+            }
+            job = enqueue(fw, DeviceJob.RULES_DEPLOY, params, request.user.username)
         except DeviceError as exc:
             messages.error(request, str(exc))
-        return redirect("deploy_rules", pk=pk)
+            return redirect("deploy_rules", pk=pk)
+        return redirect("job", pk=job.pk)
     return render(request, "fleet/deploy.html", {"firewall": fw, "plan": deployment_plan(fw)})
+
+
+@login_required
+@permission_required("fleet.view_firewall", raise_exception=True)
+def job_detail(request, pk):
+    job = get_object_or_404(DeviceJob.objects.select_related("firewall"), pk=pk)
+    if job.kind == DeviceJob.RULES_DEPLOY or job.params.get("rule_id"):
+        back = ("Return to rule deployment", reverse("deploy_rules", args=[job.firewall.pk]))
+    else:
+        back = ("Return to " + job.firewall.name, reverse("firewall", args=[job.firewall.pk]))
+    waiting = (timezone.now() - job.created_at).total_seconds() if job.status == DeviceJob.QUEUED else 0
+    return render(request, "fleet/job.html", {"job": job, "back": back, "stalled": waiting > 15})
