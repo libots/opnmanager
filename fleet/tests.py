@@ -14,6 +14,7 @@ from .auth import SubjectOIDCBackend
 from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import plan_for, validate_snapshot
+from .rule_identity import tagged
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": []}
 
@@ -57,9 +58,11 @@ class FleetTests(TestCase):
         self.assertEqual(rule["destination_net"], "opt4ip")
 
     def test_alias_order_and_duplicate_content_are_not_drift(self):
-        Alias.objects.create(name="DNS", content="10.0.0.2\n10.0.0.1\n10.0.0.1")
+        alias = Alias.objects.create(name="DNS", content="10.0.0.2\n10.0.0.1\n10.0.0.1")
         snapshot = self.fw.snapshots.first()
-        snapshot.data["aliases"] = [{"name": "DNS", "type": "host", "content": "10.0.0.1\n10.0.0.2"}]
+        snapshot.data["aliases"] = [
+            {"name": "DNS", "type": "host", "content": "10.0.0.1\n10.0.0.2", "description": tagged("", alias.uid)}
+        ]
         snapshot.save()
         item = next(i for i in plan_for(self.fw)["items"] if i["kind"] == "alias")
         self.assertEqual(item["status"], "in_sync")

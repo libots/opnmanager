@@ -456,7 +456,7 @@ class InterfaceWarningDeployTests(TestCase):
         self.assertEqual(row["errors"], [])
         self.assertEqual(row["operation"]["payload"]["interface"], "lan")
         client = self.device(row["operation"]["payload"])
-        with self.assertRaisesMessage(DeviceError, "Confirm the interface warnings for Both"):
+        with self.assertRaisesMessage(DeviceError, "Confirm the warnings for Both"):
             execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test")
         client.save_rule.assert_not_called()
         execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test", accept_warnings=True)

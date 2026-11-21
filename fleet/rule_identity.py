@@ -26,3 +26,23 @@ def is_managed(description):
     return description.startswith((LEGACY_PREFIX, SHORT_PREFIX)) or bool(
         re.search(r"(?:^| )\[(?:om:[0-9a-f]{12}|opnmanager:[0-9a-f-]{36})\]$", description)
     )
+
+
+MARKER = re.compile(r"(?:^| )(\[om:[0-9a-f]{12}\])$")
+
+
+def marker_of(description):
+    """The short tag a description ends with, or None."""
+    match = MARKER.search(description)
+    return match[1] if match else None
+
+
+def tagged(description, object_id):
+    """A pushed description: the manager text followed by the object's short tag."""
+    return (description.strip() + " " + short_marker(object_id)).strip()
+
+
+def untagged(description):
+    """A device description without its trailing short tag."""
+    match = MARKER.search(description)
+    return description[: match.start()].rstrip() if match else description

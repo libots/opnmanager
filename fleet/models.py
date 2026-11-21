@@ -3,8 +3,8 @@ from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
-from django.db import models
+from django.core.validators import MaxLengthValidator, MaxValueValidator, MinValueValidator, RegexValidator
+from django.db import models, transaction
 
 identifier = RegexValidator(
     r"^[A-Za-z_][A-Za-z0-9_]*$", "Use letters, digits and underscores; start with a letter or underscore."
@@ -140,7 +140,20 @@ class ScopedPolicy(models.Model):
         )
 
 
+# OPNsense descriptions hold 255 characters; pushes append " [om:<12 hex>]" (18).
+DESCRIPTION_MAX = 237
+
+
+def _replace_token(text, old, new, separator):
+    tokens = text.split(separator)
+    changed = [new if token.strip() == old else token for token in tokens]
+    return separator.join(changed), changed != tokens
+
+
 class Alias(ScopedPolicy):
+    # Stable identity tagged on the device ("[om:<12 hex>]" in the description), so a
+    # rename updates the same device alias and a deleted alias can be found for removal.
+    uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     name = models.CharField(max_length=32, unique=True, validators=[identifier])
     type = models.CharField(
         max_length=10, choices=[("host", "Hosts"), ("network", "Networks"), ("port", "Ports")], default="host"
@@ -148,11 +161,36 @@ class Alias(ScopedPolicy):
     content = models.TextField(
         help_text="One address, CIDR, wildcard/range pattern, port, or nested alias per line. URL/GeoIP aliases are not managed in this version."
     )
-    description = models.CharField(max_length=255, blank=True)
+    description = models.CharField(max_length=255, blank=True, validators=[MaxLengthValidator(DESCRIPTION_MAX)])
     enabled = models.BooleanField(default=True)
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        previous = None
+        if self.pk:
+            previous = Alias.objects.filter(pk=self.pk).values_list("name", flat=True).first()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if previous and previous != self.name:
+                self._rename_references(previous)
+
+    def _rename_references(self, old):
+        """Point manager rules and nested aliases at the new name, as OPNsense does on the device."""
+        for rule in Rule.objects.all():
+            changed = False
+            for field in ("source", "destination", "source_port", "destination_port"):
+                value, hit = _replace_token(getattr(rule, field), old, self.name, ",")
+                if hit:
+                    setattr(rule, field, value)
+                    changed = True
+            if changed:
+                rule.save()
+        for alias in Alias.objects.exclude(pk=self.pk):
+            content, hit = _replace_token(alias.content, old, self.name, "\n")
+            if hit:
+                Alias.objects.filter(pk=alias.pk).update(content=content)
 
     class Meta:
         ordering = ["name"]
@@ -190,8 +228,7 @@ class Category(ScopedPolicy):
         verbose_name_plural = "categories"
 
 
-# OPNsense descriptions hold 255 characters; pushes append " [om:<12 hex>]" (18).
-RULE_NAME_MAX = 237
+RULE_NAME_MAX = DESCRIPTION_MAX
 
 
 class Rule(ScopedPolicy):
