@@ -431,3 +431,40 @@ class SnapshotRetentionTests(TestCase):
             for _ in range(4):
                 Snapshot.objects.create(firewall=fw, data=copy.deepcopy(EMPTY))
         self.assertEqual(fw.snapshots.count(), 4)
+
+
+class InterfaceWarningDeployTests(TestCase):
+    def setUp(self):
+        self.fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
+        lan = LogicalInterface.objects.create(name="LAN")
+        self.dmz = LogicalInterface.objects.create(name="DMZ")
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=lan, device_interface="lan")
+        Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
+        self.rule = Rule.objects.create(name="Both", sequence=100)
+        self.rule.interfaces.set([lan, self.dmz])
+
+    def device(self, payload):
+        client = Mock(ROLLBACK_SECONDS=60)
+        client.savepoint.return_value = "1.1"
+        client.snapshot.side_effect = [copy.deepcopy(EMPTY), {**EMPTY, "rules": [{**payload, "uuid": "r"}]}]
+        return client
+
+    def test_warned_rule_needs_explicit_confirmation(self):
+        plan = deployment_plan(self.fw)
+        row = plan["rows"][0]
+        self.assertTrue(plan["has_warnings"])
+        self.assertEqual(row["errors"], [])
+        self.assertEqual(row["operation"]["payload"]["interface"], "lan")
+        client = self.device(row["operation"]["payload"])
+        with self.assertRaisesMessage(DeviceError, "Confirm the interface warnings for Both"):
+            execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test")
+        client.save_rule.assert_not_called()
+        execute_deployment(self.fw, plan["approval_sha256"], [row["id"]], client, "test", accept_warnings=True)
+        client.save_rule.assert_called_once()
+
+    def test_deploy_page_leaves_warned_rules_unchecked_and_offers_confirmation(self):
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+        response = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
+        self.assertContains(response, "DMZ are not mapped on this firewall")
+        self.assertContains(response, 'name="accept_warnings"')
+        self.assertNotContains(response, f'value="{self.rule.pk}" checked')

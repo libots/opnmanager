@@ -33,6 +33,7 @@ def _deploy_rules(job, client):
         [value for value in job.params.get("selected_rules", []) if value],
         client,
         job.actor,
+        accept_warnings=bool(job.params.get("accept_warnings")),
     )
     return f"Applied and verified {count} selected rule changes."
 

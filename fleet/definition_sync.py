@@ -35,6 +35,7 @@ def definition_plan(firewall, rule=None):
         "snapshot_id": all_objects["snapshot_id"],
         "rule_id": str(rule.pk) if rule else None,
         "errors": all_objects["errors"],
+        "warnings": all_objects["warnings"],
         "operations": operations,
     }
     result["approval_sha256"] = digest(result)

@@ -40,13 +40,49 @@ class GroupPullTests(TestCase):
         Snapshot.objects.create(firewall=other, data=EMPTY)
         self.assertEqual(definition_plan(other)["operations"][0]["payload"]["members"], "opt4")
 
-    def test_empty_group_blocks_writes_and_direct_bindings_stay_strict(self):
+    def test_group_with_no_mapped_members_is_skipped_with_warning(self):
         self.fw.interface_mappings.all().delete()
         plan = definition_plan(self.fw)
-        self.assertTrue(any("no mapped members" in error for error in plan["errors"]))
+        self.assertEqual(plan["errors"], [])
+        self.assertTrue(any("TRUSTED has no members mapped" in warning for warning in plan["warnings"]))
         self.assertFalse(plan["operations"])
-        Rule.objects.create(name="Direct", interface=self.wan)
-        self.assertTrue(any("missing interface mapping" in error for error in plan_for(self.fw)["errors"]))
+
+    def test_unmapped_interfaces_are_left_out_of_the_pushed_rule(self):
+        rule = Rule.objects.create(name="Both")
+        rule.interfaces.set([self.lan, self.wan])
+        plan = plan_for(self.fw)
+        self.assertEqual(plan["errors"], [])
+        payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
+        self.assertEqual(payload["interface"], "opt2")
+        self.assertIn("interfaces WAN are not mapped on this firewall", " ".join(plan["warnings"]))
+
+    def test_unavailable_group_is_left_out_but_mapped_interface_kept(self):
+        only_wan = InterfaceGroup.objects.create(name="WANONLY")
+        only_wan.members.set([self.wan])
+        rule = Rule.objects.create(name="Mixed")
+        rule.interfaces.set([self.lan])
+        rule.interface_groups.set([only_wan])
+        plan = plan_for(self.fw)
+        payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
+        self.assertEqual(payload["interface"], "opt2")
+        self.assertFalse(
+            any(op["kind"] == "group" and op["payload"]["ifname"] == "WANONLY" for op in plan["operations"])
+        )
+
+    def test_rule_is_skipped_rather_than_widened_when_all_origins_are_missing(self):
+        rule = Rule.objects.create(name="Origin")
+        rule.interfaces.set([self.lan])
+        rule.origin_interfaces.set([self.wan])
+        plan = plan_for(self.fw)
+        self.assertFalse([op for op in plan["operations"] if op["kind"] == "rule"])
+        self.assertIn("none of its origin interfaces (WAN)", " ".join(plan["warnings"]))
+        rule.origin_interfaces.add(self.lan)
+        payload = next(op for op in plan_for(self.fw)["operations"] if op["kind"] == "rule")["payload"]
+        self.assertEqual(payload["received-on"], "opt2")
+
+    def test_unmapped_logical_address_still_blocks(self):
+        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:net")
+        self.assertTrue(any("Unmapped or invalid logical address" in error for error in plan_for(self.fw)["errors"]))
 
     @patch("fleet.views.OPNsenseClient")
     def test_json_pull_updates_snapshot_mappings_and_audit(self, client):
