@@ -191,7 +191,7 @@ def sync_definitions(request, pk):
         params = {
             "approval_sha256": request.POST.get("approval_sha256", ""),
             "rule_id": str(rule.pk) if rule else None,
-            "remove_aliases": request.POST.getlist("remove_alias") if not rule else [],
+            "remove_definitions": request.POST.getlist("remove_definition") if not rule else [],
         }
         try:
             job = enqueue(fw, DeviceJob.DEFINITIONS_SYNC, params, request.user.username)
@@ -476,7 +476,7 @@ def deploy_rules(request, pk):
                 "include_definitions": include_definitions,
                 "approval_sha256": request.POST.get("approval_sha256", ""),
                 "selected_rules": [value for value in request.POST.getlist("selected_rules") if value],
-                "remove_aliases": [value for value in request.POST.getlist("remove_alias") if value]
+                "remove_definitions": [value for value in request.POST.getlist("remove_definition") if value]
                 if include_definitions
                 else [],
                 "accept_warnings": request.POST.get("accept_warnings") == "yes",

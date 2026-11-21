@@ -1,5 +1,5 @@
-{% load icons %}<header class="opn-topbar">
-  <a class="opn-brand" href="/"><span class="opn-brand-mark">{% icon "shield-halved" %}</span><span class="opn-brand-text"><b>OPN</b>manager</span></a>
+{% load icons static %}<header class="opn-topbar">
+  <a class="opn-brand" href="/"><span class="opn-brand-mark"><img src="{% static 'brand/opnmanager-logo.svg' %}" alt="" width="40" height="40"></span><span class="opn-brand-text"><b>OPN</b>manager</span></a>
   <button type="button" class="opn-sidebar-toggle" id="opn-sidebar-toggle" aria-controls="opn-sidebar" aria-pressed="false" title="Collapse or expand the menu">{% icon "bars" %}<span class="visually-hidden">Collapse menu</span></button>
   <div class="opn-topbar-right">{% if user.is_authenticated %}
     <span class="opn-user">{% icon "user" %} {{ user.get_username }}</span>

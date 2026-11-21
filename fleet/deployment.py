@@ -442,7 +442,7 @@ def execute_combined(
         if remove:
             removable = {c["uuid"] for c in (definitions or {}).get("removals", []) if not c["errors"]}
             if not include_definitions or not remove <= removable:
-                raise DeviceError("Select only unblocked aliases from the current plan for removal.")
+                raise DeviceError("Select only unblocked aliases and groups from the current plan for removal.")
         sync = definitions_to_apply(plan, remove)
         if not selected and not sync:
             raise DeviceError("Nothing selected to deploy.")

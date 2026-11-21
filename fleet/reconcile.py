@@ -115,17 +115,25 @@ def resolve_addresses(*values, mappings):
     return resolved, list(dict.fromkeys(missing)), emptied
 
 
-def _alias_matches(alias_uid, name, rows, owned_markers):
-    """Device aliases for one manager alias: by its tag, else an untagged (or orphan-tagged) alias of that name."""
-    by_tag = [(i, row) for i, row in enumerate(rows) if matches_rule(row.get("description", ""), alias_uid)]
+def _tagged_matches(uid, name, rows, owned_markers, name_key="name", description_key="description"):
+    """Device rows for one manager alias or group: by its tag, else an untagged (or orphan-tagged) row of that name."""
+    by_tag = [(i, row) for i, row in enumerate(rows) if matches_rule(row.get(description_key, ""), uid)]
     if by_tag:
         return by_tag
-    claimed = owned_markers - {short_marker(alias_uid)}
+    claimed = owned_markers - {short_marker(uid)}
     return [
         (i, row)
         for i, row in enumerate(rows)
-        if row.get("name") == name and marker_of(row.get("description", "")) not in claimed
+        if row.get(name_key) == name and marker_of(row.get(description_key, "")) not in claimed
     ]
+
+
+def _alias_matches(alias_uid, name, rows, owned_markers):
+    return _tagged_matches(alias_uid, name, rows, owned_markers)
+
+
+def _group_matches(group_uid, name, rows, owned_markers):
+    return _tagged_matches(group_uid, name, rows, owned_markers, name_key="ifname", description_key="descr")
 
 
 def _matches_identity(kind, identity, row, origin_uuids):
@@ -153,6 +161,7 @@ class Policy:
         self.categories_by_pk = {c.pk: c for c in self.categories}
         self.groups = {g.name: g for g in InterfaceGroup.objects.prefetch_related("members", *scope)}
         self.groups_by_pk = {g.pk: g for g in self.groups.values()}
+        self.group_markers = {short_marker(g.uid) for g in self.groups.values()}
         self.rules = list(
             Rule.objects.select_related("interface").prefetch_related(
                 "interfaces",
@@ -312,14 +321,14 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
         expected.append(
             (
                 "group",
-                group.name,
+                str(group.uid),
                 group.name,
                 {
                     "ifname": group.name,
                     "members": ",".join(mappings[i.name] for i in members),
-                    "descr": group.description,
+                    "descr": tagged(group.description, group.uid),
                     "sequence": str(group.sequence),
-                    "nogroup": "0",
+                    "nogroup": str(int(group.no_gui_group)),
                 },
             )
         )
@@ -431,6 +440,14 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
                         f"Alias {label}: renaming {matches[0][1].get('name')} would collide with the firewall's "
                         f"existing alias {label}. Rename or remove that alias first."
                     )
+        elif kind == "group":
+            matches = _group_matches(identity, label, rows, policy.group_markers)
+            if len(matches) == 1 and matches[0][1].get("ifname") != label:
+                if any(row.get("ifname") == label for row in rows):
+                    plan["errors"].append(
+                        f"Group {label}: renaming {matches[0][1].get('ifname')} would collide with the firewall's "
+                        f"existing group {label}. Rename or remove that group first."
+                    )
         else:
             matches = [(i, row) for i, row in enumerate(rows) if _matches_identity(kind, identity, row, origin_uuids)]
         item = {"kind": kind, "name": label, "status": "missing", "changes": [], "desired": desired, "actual": None}
@@ -466,7 +483,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
         for index, row in enumerate(rows):
             if index in matched[kind]:
                 continue
-            managed = kind in ("rule", "alias") and is_managed(row.get("description", ""))
+            managed = kind in ("rule", "alias", "group") and is_managed(
+                row.get("descr" if kind == "group" else "description", "")
+            )
             plan["items"].append(
                 {
                     "kind": kind,

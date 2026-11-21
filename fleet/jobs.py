@@ -24,6 +24,11 @@ INTERRUPTED_MESSAGE = (
 )
 
 
+def _removals(params):
+    # Jobs queued before groups could be removed stored "remove_aliases".
+    return params.get("remove_definitions", params.get("remove_aliases", []))
+
+
 def _deploy_rules(job, client):
     from .deployment import execute_combined, execute_deployment
 
@@ -35,7 +40,7 @@ def _deploy_rules(job, client):
             params.get("selected_rules", []),
             client,
             job.actor,
-            remove=params.get("remove_aliases", []),
+            remove=_removals(params),
             include_definitions=bool(params.get("include_definitions")),
             accept_warnings=bool(params.get("accept_warnings")),
             allow_unprotected=bool(params.get("allow_unprotected")),
@@ -72,7 +77,7 @@ def _sync_definitions(job, client):
         client,
         job.actor,
         rule=rule,
-        remove=[value for value in job.params.get("remove_aliases", []) if value],
+        remove=[value for value in _removals(job.params) if value],
     )
     return f"Verified {count} supporting-definition changes. No manager rules were deployed."
 

@@ -618,7 +618,8 @@ class InterfaceGroupForm(TargetsFormMixin, forms.ModelForm):
 
     class Meta:
         model = InterfaceGroup
-        exclude = SCOPE_FIELDS
+        # OPNsense's Firewall: Groups dialog order.
+        fields = ["name", "members", "sequence", "no_gui_group", "description"]
         widgets = {"members": MultiSelectWidget()}
 
 

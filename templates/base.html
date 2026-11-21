@@ -1,6 +1,6 @@
 {% load static %}<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{% block title %}OPNmanager{% endblock %}</title>{% include "shell_head.html" %}</head>
-<body class="opn-app{% if not user.is_authenticated %} opn-anonymous{% endif %}">{% if user.is_authenticated %}{% include 'sidebar.html' %}{% else %}<header class="opn-topbar"><a class="opn-brand" href="/"><span class="opn-brand-text"><b>OPN</b>manager</span></a></header>{% endif %}
+<body class="opn-app{% if not user.is_authenticated %} opn-anonymous{% endif %}">{% if user.is_authenticated %}{% include 'sidebar.html' %}{% else %}<header class="opn-topbar"><a class="opn-brand" href="/"><span class="opn-brand-mark"><img src="{% static 'brand/opnmanager-logo.svg' %}" alt="" width="40" height="40"></span><span class="opn-brand-text"><b>OPN</b>manager</span></a></header>{% endif %}
 <main class="opn-main">
 {% if messages %}<div class="opn-messages">{% for message in messages %}<div class="notice {{ message.tags }}">{{ message }}</div>{% endfor %}</div>{% endif %}
 {% block content %}{% endblock %}<footer class="opn-footer">OPNmanager <span>Review changes before applying them to your firewalls.</span></footer></main></body></html>

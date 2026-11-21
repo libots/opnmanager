@@ -61,8 +61,10 @@ code, .mono { font-family: var(--opn-mono); font-size: 13px; }
 .opn-brand { display: flex; align-items: center; gap: 10px; width: var(--opn-sidebar); min-width: var(--opn-sidebar-collapsed); height: 100%; padding: 0 18px; color: var(--opn-text); font-size: 24px; letter-spacing: -0.3px; transition: width .2s; overflow: hidden; white-space: nowrap; }
 .opn-brand:hover, .opn-brand:focus { color: var(--opn-text); text-decoration: none; }
 .opn-brand b { color: var(--opn-primary); font-weight: 700; }
-.opn-brand-mark { display: inline-flex; color: var(--opn-primary); font-size: 28px; }
+.opn-brand-mark { display: inline-flex; flex: none; }
+.opn-brand-mark img { display: block; width: 40px; height: 40px; }
 html.sidebar-collapsed .opn-brand-text { display: none; }
+html.sidebar-collapsed .opn-brand { padding: 0 15px; }
 .opn-sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-left: 4px; border: 0; border-radius: 3px; background: transparent; color: var(--opn-text); font-size: 20px; cursor: pointer; }
 .opn-sidebar-toggle:hover { background: var(--opn-bg); color: var(--opn-primary); }
 .opn-topbar-right { margin-left: auto; display: flex; align-items: center; gap: 22px; padding: 0 24px; font-size: 14px; }

@@ -145,12 +145,14 @@ class OPNsenseClient:
         if not _saved(result):
             raise DeviceError("OPNsense rejected the alias. Inspect its validation errors in the device UI.")
 
-    def delete_alias(self, remote_uuid):
-        result = self.post("/api/firewall/alias/del_item/" + quote(remote_uuid, safe=""), {})
+    def delete_definition(self, kind, remote_uuid):
+        """Delete one alias or interface group by its remote UUID (reconfigure afterwards)."""
+        controller, label = {"alias": ("alias", "an alias"), "group": ("group", "an interface group")}[kind]
+        result = self.post(f"/api/firewall/{controller}/del_item/" + quote(remote_uuid, safe=""), {})
         if not isinstance(result, dict) or str(result.get("result", "")).lower() != "deleted":
             detail = result.get("message") if isinstance(result, dict) else None
             raise DeviceError(
-                "OPNsense did not delete an alias" + (f": {detail}" if detail else "") + "; partial changes may remain."
+                f"OPNsense did not delete {label}" + (f": {detail}" if detail else "") + "; partial changes may remain."
             )
 
     def reconfigure_aliases(self):

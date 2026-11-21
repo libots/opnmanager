@@ -388,7 +388,7 @@ class InterfaceGroupAdmin(admin.ModelAdmin):
     from .forms import InterfaceGroupForm
 
     form = InterfaceGroupForm
-    list_display = ["name", "description", "scope", "sequence"]
+    list_display = ["name", "description", "scope", "sequence", "no_gui_group"]
 
 
 @admin.register(FirewallGroup)

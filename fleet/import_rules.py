@@ -139,8 +139,6 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
 
     def ensure_group(local):
         source = source_groups[local]
-        if source.get("nogroup", "0") not in ("", "0"):
-            raise ValidationError("Import of groups with nogroup behavior is unsupported.")
         members = tokens(source["members"])
         if any(m not in mappings for m in members):
             raise ValidationError(f"Map every member of group {local} before importing.")
@@ -153,7 +151,11 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
                 )
             return group
         group = InterfaceGroup(
-            name=local, description=source.get("descr", ""), sequence=int(source.get("sequence") or 0), scope=scope
+            name=local,
+            description=untagged(source.get("descr", "")),
+            sequence=int(source.get("sequence") or 0),
+            no_gui_group=source.get("nogroup", "0") not in ("", "0"),
+            scope=scope,
         )
         group.full_clean()
         group.save()
