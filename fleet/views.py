@@ -407,6 +407,7 @@ def deploy_rules(request, pk):
                 "approval_sha256": request.POST.get("approval_sha256", ""),
                 "selected_rules": [value for value in request.POST.getlist("selected_rules") if value],
                 "accept_warnings": request.POST.get("accept_warnings") == "yes",
+                "allow_unprotected": request.POST.get("allow_unprotected") == "yes",
             }
             job = enqueue(fw, DeviceJob.RULES_DEPLOY, params, request.user.username)
         except DeviceError as exc:
