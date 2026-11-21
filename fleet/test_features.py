@@ -224,7 +224,8 @@ class FeatureTests(TestCase):
         rule = form.save()
         self.assertEqual(rule.source, "@VL10:net,Servers")
         self.assertEqual(rule.icmp_types, "echoreq,unreach")
-        self.assertIn("selections.js", str(form.media))
+        self.assertIn("opn-select.js", str(form.media))
+        self.assertNotIn("select2", str(form.media))
         self.assertIn("Servers", str(form["source"]))
         self.assertIn("@VL10:net", str(form["source"]))
         form = RuleForm({**data, "protocol": "TCP", "icmp_types": [], "source_port": ["22", "443"]})
@@ -255,7 +256,7 @@ class FeatureTests(TestCase):
         self.assertContains(response, "Imported 1 rules")
         self.assertEqual(Rule.objects.count(), 1)
         self.assertContains(self.client.get("/rules/?placement=interface"), "Allow ping")
-        self.assertContains(self.client.get("/admin/fleet/rule/add/"), "select2")
+        self.assertContains(self.client.get("/admin/fleet/rule/add/"), "opn-select.js")
         self.assertContains(self.client.get("/admin/fleet/alias/"), "Aliases")
 
     @override_settings(OPNMANAGER_LOCAL=True)

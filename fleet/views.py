@@ -11,7 +11,7 @@ from django.views.decorators.http import require_POST
 
 from .credentials import encrypt_credentials
 from .definition_sync import definition_plan
-from .deployment import deployment_plan
+from .deployment import combined_plan, definitions_to_apply
 from .forms import CredentialsForm, ImportRulesForm, SnapshotImportForm
 from .import_rules import import_rules
 from .jobs import enqueue
@@ -464,14 +464,21 @@ def adopt_rules(request, pk):
 @login_required
 @permission_required(("fleet.view_firewall", "fleet.deploy_rules"), raise_exception=True)
 def deploy_rules(request, pk):
+    """One review for a firewall: supporting definitions are synchronized first, then the selected rules."""
     fw = get_object_or_404(Firewall, pk=pk)
+    include_definitions = request.user.has_perm("fleet.sync_definitions")
     if request.method == "POST":
         try:
             if request.POST.get("acknowledge") != "yes":
                 raise DeviceError("Confirm the apply warning before deploying.")
             params = {
+                "combined": True,
+                "include_definitions": include_definitions,
                 "approval_sha256": request.POST.get("approval_sha256", ""),
                 "selected_rules": [value for value in request.POST.getlist("selected_rules") if value],
+                "remove_aliases": [value for value in request.POST.getlist("remove_alias") if value]
+                if include_definitions
+                else [],
                 "accept_warnings": request.POST.get("accept_warnings") == "yes",
                 "allow_unprotected": request.POST.get("allow_unprotected") == "yes",
             }
@@ -480,7 +487,18 @@ def deploy_rules(request, pk):
             messages.error(request, str(exc))
             return redirect("deploy_rules", pk=pk)
         return redirect("job", pk=job.pk)
-    return render(request, "fleet/deploy.html", {"firewall": fw, "plan": deployment_plan(fw)})
+    plan = combined_plan(fw, include_definitions)
+    return render(
+        request,
+        "fleet/deploy.html",
+        {
+            "firewall": fw,
+            "combined": plan,
+            "plan": plan["rules"],
+            "definitions": plan["definitions"],
+            "sync_ready": definitions_to_apply(plan),
+        },
+    )
 
 
 @login_required

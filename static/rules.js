@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', function () {
   function icon(name,className,title) {
     const svg=icons.querySelector(`[data-icon="${name}"] svg`).cloneNode(true);
     const wrap=element('span',undefined,'rule-icon'+(className?' '+className:''));wrap.append(svg);
-    if(title){wrap.title=title;wrap.setAttribute('role','img');wrap.setAttribute('aria-label',title);}
+    if(title){wrap.dataset.tip=title;wrap.setAttribute('role','img');wrap.setAttribute('aria-label',title);}
     return wrap;
   }
   const here=()=>location.pathname+location.search;
@@ -71,8 +71,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const td=cell(row);
     if (!count) { td.textContent=inverted?'! *':'*'; return; }
     if (count===1) { td.textContent=(inverted?'! ':'')+display; return; }
-    // Several interfaces: a count and the network icon, as OPNsense does; names in the tooltip.
-    const span=element('span',(inverted?'! ':'')+count+' ','rule-binding-count');span.title=display;span.append(icon('network-wired'));td.append(span);
+    // Several interfaces: a count and the network icon, as OPNsense does; names in the tooltip, one per line.
+    const span=element('span',(inverted?'! ':'')+count+' ','rule-binding-count');span.dataset.tip=display.split(', ').join('\n');
+    span.tabIndex=0;span.setAttribute('aria-label',(inverted?'not ':'')+display);span.append(icon('network-wired'));td.append(span);
   }
   function renderRow(rule) {
     const row=element('tr',undefined,'rule-row'+(rule.enabled==='0'?' rule-disabled':'')),id=key(rule);

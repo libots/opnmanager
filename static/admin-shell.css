@@ -27,7 +27,9 @@ nav[aria-label="Breadcrumbs"] a { display: inline; padding: 0; margin: 0; backgr
 .module { background: #fff; border: 1px solid var(--opn-border); border-radius: 0; }
 .module h2, .module caption, .inline-group h2 { background: var(--opn-bg-head); color: var(--opn-text); font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--opn-border); }
 fieldset.module { padding: 0; }
-.form-row { display: block; overflow: visible; padding: 10px 16px; border-bottom: 1px solid #EEE; }
+/* Django's forms.css loads after this file and clips rows (overflow: hidden), which cut
+   open picker menus off at the row's edge; the #content prefix outranks it. */
+.form-row, #content .form-row { display: block; overflow: visible; padding: 10px 16px; border-bottom: 1px solid #EEE; }
 .form-row > div { display: flex; flex-direction: column; align-items: stretch; }
 .form-row .flex-container { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
 .form-row .flex-container > div { flex: 1; min-width: 260px; }
@@ -35,14 +37,13 @@ fieldset.module { padding: 0; }
 .aligned label { font-weight: 600; color: var(--opn-text); }
 form .aligned div.help, form .aligned p.help, .help { color: var(--opn-muted); font-size: 13px; }
 .related-widget-wrapper { float: none !important; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; max-width: 100%; }
-.related-widget-wrapper .opn-picker, .related-widget-wrapper .select2 { flex: 1 1 260px; }
+.related-widget-wrapper .opn-picker { flex: 1 1 260px; }
 .related-widget-wrapper > a { font-size: 13px; }
-.opn-bulk-editor { display: block !important; float: none !important; clear: both; flex: 0 0 100% !important; width: 100% !important; max-width: none !important; }
-.opn-bulk-editor textarea { width: 100% !important; max-width: none !important; }
+.related-widget-wrapper .opn-tokens { flex: 1 1 260px; }
 select:not(.opn-select) { height: auto; min-height: 34px; padding: 6px 8px; }
 input[type=submit], .button, a.button, .submit-row input, .submit-row a { font-family: var(--opn-font); border-radius: 3px; }
 .submit-row { background: #fff; border: 1px solid var(--opn-border); border-radius: 0; padding: 12px 16px; }
-.submit-row a.deletelink { height: auto; line-height: 20px; padding: 8px 14px; border-radius: 3px; }
+#content .submit-row a.deletelink { display: inline-flex; align-items: center; box-sizing: border-box; height: auto; min-height: 34px; line-height: 20px; padding: 7px 14px; border-radius: 3px; }
 .object-tools a:link, .object-tools a:visited { border: 1px solid var(--opn-border); border-radius: 3px; font-size: 13px; text-transform: none; letter-spacing: 0; }
 .object-tools a.addlink { background: var(--opn-primary); color: #fff; border-color: var(--opn-primary); }
 .object-tools a.addlink:hover { background: var(--opn-primary-dark); }
