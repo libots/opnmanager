@@ -1,11 +1,13 @@
 """Promote snapshot rules into manager policy without writing the source firewall."""
 
+import ipaddress
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .alias_patterns import compile_content
-from .choices import ICMP6_TYPES, ICMP_TYPES
-from .models import Alias, Category, InterfaceGroup, Rule, RuleOrigin
+from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, protocol_choices
+from .models import RULE_NAME_MAX, Alias, Category, InterfaceGroup, Rule, RuleOrigin
 from .reconcile import RULE_DEFAULTS, canonical
 from .rule_identity import is_managed
 
@@ -21,6 +23,61 @@ SAFE_DEFAULTS = {
     "max-src-conn": "",
     "max-src-states": "",
 }
+
+# OPNsense's labels for settings the manager can't represent, so errors say what to change.
+UNSUPPORTED_LABELS = {
+    "sched": "Schedule",
+    "shaper1": "Traffic shaper",
+    "shaper2": "Traffic shaper (reverse)",
+    "tag": "Set local tag",
+    "tagged": "Match local tag",
+    "divert-to": "Divert to",
+    "replyto": "Reply-to",
+    "disablereplyto": "Disable reply-to",
+    "nosync": "No XMLRPC sync",
+    "nopfsync": "No pfsync",
+    "state-policy": "State policy",
+    "statetimeout": "State timeout",
+    "udp-first": "UDP first timeout",
+    "udp-multiple": "UDP multiple timeout",
+    "udp-single": "UDP single timeout",
+    "max": "Max states",
+    "max-src-nodes": "Max source nodes",
+    "max-src-states": "Max established states per host",
+    "max-src-conn": "Max connections per host",
+    "max-src-conn-rate": "Max new connections",
+    "max-src-conn-rates": "Max new connections (seconds)",
+    "max-pkt-rate-number": "Max packet rate",
+    "max-pkt-rate-seconds": "Max packet rate (seconds)",
+    "overload": "Overload table",
+    "adaptivestart": "Adaptive timeouts start",
+    "adaptiveend": "Adaptive timeouts end",
+    "prio": "Match priority",
+    "set-prio": "Set priority",
+    "set-prio-low": "Set priority (low delay)",
+    "tcpflags1": "TCP flags",
+    "tcpflags2": "TCP flags out of",
+    "tcpflags_any": "Any TCP flags",
+    "tos": "Match TOS / DSCP",
+    "allowopts": "Allow IP options",
+    "scrub_no_df": "Normalization: clear DF",
+    "scrub_random_id": "Normalization: random IP ID",
+    "scrub_max_mss": "Normalization: max MSS",
+    "scrub_min_ttl": "Normalization: min TTL",
+    "scrub_set_tos": "Normalization: set TOS",
+}
+# Network values that exist on every OPNsense firewall.
+BUILTIN_NETWORKS = {"any", "(self)", "bogons", "bogonsv6"}
+
+
+def is_address(token):
+    """An IP, CIDR or from-to range, as OPNsense's network field accepts."""
+    for part in token.split("-", 1):
+        try:
+            ipaddress.ip_network(part, strict=False)
+        except ValueError:
+            return False
+    return True
 
 
 def tokens(value):
@@ -105,37 +162,55 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
         group.firewall_groups.set(firewall_groups)
         return group
 
-    imported = []
-    for index in indices:
-        row = snapshot.data["rules"][int(index)]
+    interface_labels = {r["name"]: r.get("label") or r["name"] for r in snapshot.data.get("interfaces", [])}
+    protocols = {value.lower(): value for value, _ in protocol_choices()}
+    port_names = {name for name, _ in PORTS}
+
+    def unmapped(local):
+        label = interface_labels.get(local)
+        named = f"{local} ({label})" if label and label != local else local
+        return ValidationError(
+            f"interface {named} isn't mapped on {firewall.name}. Map it under Interfaces: Overview first."
+        )
+
+    def import_rule(row):
         uid = row.get("uuid")
         if not uid:
-            raise ValidationError("Import requires rule UUIDs. Pull a live snapshot or include UUIDs in the import.")
+            raise ValidationError("it has no UUID. Pull a live snapshot from the firewall and try again.")
         origin = RuleOrigin.objects.filter(firewall=firewall, remote_uuid=uid).first()
         if origin:
-            imported.append(origin.rule)
-            continue
+            return origin.rule
         if is_managed(row.get("description", "")):
-            raise ValidationError(
-                "This rule already carries a manager identity; edit the existing manager rule instead."
-            )
-        unsupported = [
-            k
-            for k, v in row.items()
-            if k not in SUPPORTED | IGNORED
-            and not k.startswith("alias_meta_")
-            and v not in ("", "0", SAFE_DEFAULTS.get(k, ""))
-        ]
+            raise ValidationError("it already carries a manager tag; edit the existing manager rule instead.")
+        # Keys starting with "%" are OPNsense's display labels (e.g. "%source_net": "LAN net"), not settings.
+        unsupported = sorted(
+            {
+                UNSUPPORTED_LABELS.get(k, k)
+                for k, v in row.items()
+                if not k.startswith(("%", "alias_meta_"))
+                and k not in SUPPORTED | IGNORED
+                and v not in ("", "0", SAFE_DEFAULTS.get(k, ""))
+            }
+        )
         if unsupported:
-            raise ValidationError("Cannot import without losing behavior: " + ", ".join(sorted(unsupported)))
+            raise ValidationError(
+                "it uses settings the manager can't keep: " + ", ".join(unsupported) + ". Remove them on the "
+                "firewall and pull again, or leave this rule device-local."
+            )
+        description = row.get("description") or "Imported rule"
+        if len(description) > RULE_NAME_MAX:
+            raise ValidationError(
+                f"its description is {len(description)} characters. The manager adds an 18-character tag, "
+                f"so shorten it to {RULE_NAME_MAX} on the firewall and pull again."
+            )
         interfaces, groups = [], []
-        for local in tokens(row["interface"]):
+        for local in tokens(row.get("interface", "")):
             if local in mappings:
                 interfaces.append(mappings[local])
-                continue
-            if local not in source_groups:
-                raise ValidationError(f"Map interface {local} before importing this rule.")
-            groups.append(ensure_group(local))
+            elif local in source_groups:
+                groups.append(ensure_group(local))
+            else:
+                raise unmapped(local)
 
         def address(value):
             result = []
@@ -146,25 +221,30 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
                     token = "@" + mappings[token[:-2]].name + ":ip"
                 elif token in source_groups:
                     ensure_group(token)
-                else:
+                elif token in source_aliases:
                     import_alias(token)
+                elif token in interface_labels or (token.endswith("ip") and token[:-2] in interface_labels):
+                    raise unmapped(token if token in interface_labels else token[:-2])
+                elif not (token in BUILTIN_NETWORKS or is_address(token) or Alias.objects.filter(name=token).exists()):
+                    raise ValidationError(
+                        f"it refers to {token}, which isn't an alias, interface or address in the snapshot. "
+                        "Pull a fresh snapshot and try again."
+                    )
                 result.append(token)
             return ",".join(result)
 
-        protocol = row.get("protocol", "any")
-        protocol_names = {
-            "tcp": "TCP",
-            "udp": "UDP",
-            "tcp/udp": "TCP/UDP",
-            "icmp": "ICMP",
-            "ipv6-icmp": "IPv6-ICMP",
-            "icmp6": "IPv6-ICMP",
-        }
-        protocol = ",".join(protocol_names.get(value.lower(), value) for value in tokens(protocol))
+        protocol_values = []
+        for value in tokens(row.get("protocol", "any")):
+            if value.lower() not in protocols:
+                raise ValidationError(
+                    f"its protocol {value} isn't in the manager's protocol list. Refresh the firewall on "
+                    "Interfaces: Overview to load its protocols, then import again."
+                )
+            protocol_values.append(protocols[value.lower()])
         values = {
-            "name": (row.get("description") or "Imported rule")[:150],
+            "name": description,
             "sequence": int(row["sequence"]),
-            "protocol": protocol,
+            "protocol": ",".join(protocol_values),
             "scope": scope,
             "floating": len(interfaces) + len(groups) != 1,
             "ip_version": row.get("ipprotocol", "inet"),
@@ -178,11 +258,19 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
         if any(v not in dict(ICMP_TYPES) for v in tokens(values["icmp_types"])) or any(
             v not in dict(ICMP6_TYPES) for v in tokens(values["icmp6_types"])
         ):
-            raise ValidationError("This rule contains an unsupported ICMP type.")
+            raise ValidationError("it uses an ICMP type the manager doesn't know.")
         for key in ("action", "direction", "source_port", "destination_port"):
             values[key] = row.get(key, RULE_DEFAULTS[key])
             if key in ("source_port", "destination_port") and values[key] == "any":
                 values[key] = ""
+        for field in ("source_port", "destination_port"):
+            port = values[field]
+            if port in source_aliases:
+                import_alias(port)
+            elif port and not (port in port_names or Alias.objects.filter(name=port, type="port").exists()):
+                low, _, high = port.partition("-")
+                if not all(part.isdigit() for part in (low, high or low)):
+                    raise ValidationError(f"its port {port} isn't a port, range or port alias in the snapshot.")
         for key, source_key in [
             ("enabled", "enabled"),
             ("quick", "quick"),
@@ -193,18 +281,18 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
             ("origin_not", "received-on-not"),
         ]:
             values[key] = row.get(source_key, RULE_DEFAULTS[source_key]) == "1"
-        for field in ("source_port", "destination_port"):
-            import_alias(values[field])
-        rule = Rule(**values)
-        rule.full_clean()
-        rule.save()
-        rule.interfaces.set(interfaces)
-        rule.interface_groups.set(groups)
-        rule.firewalls.set(targets)
-        rule.firewall_groups.set(firewall_groups)
+        origin_interfaces, origin_groups = [], []
+        for local in tokens(row.get("received-on", "")):
+            if local in mappings:
+                origin_interfaces.append(mappings[local])
+            elif local in source_groups:
+                origin_groups.append(ensure_group(local))
+            else:
+                raise unmapped(local)
+        categories = []
         for category_id in tokens(row.get("categories", "")):
             if category_id not in source_categories:
-                raise ValidationError("Category inventory is missing. Pull a fresh snapshot.")
+                raise ValidationError("its categories aren't in the snapshot. Pull a fresh snapshot.")
             category_row = source_categories[category_id]
             category, created = Category.objects.get_or_create(
                 name=category_row["name"], defaults={"color": category_row.get("color") or "137b66", "scope": scope}
@@ -213,14 +301,32 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
                 category.full_clean()
                 category.firewalls.set(targets)
                 category.firewall_groups.set(firewall_groups)
-            rule.categories.add(category)
-        for local in tokens(row.get("received-on", "")):
-            if local in mappings:
-                rule.origin_interfaces.add(mappings[local])
-            elif local in source_groups:
-                rule.origin_interface_groups.add(ensure_group(local))
-            else:
-                raise ValidationError(f"Map origin interface {local} before importing.")
+            categories.append(category)
+        rule = Rule(**values)
+        rule.full_clean()
+        rule.save()
+        rule.interfaces.set(interfaces)
+        rule.interface_groups.set(groups)
+        rule.origin_interfaces.set(origin_interfaces)
+        rule.origin_interface_groups.set(origin_groups)
+        rule.categories.set(categories)
+        rule.firewalls.set(targets)
+        rule.firewall_groups.set(firewall_groups)
         RuleOrigin.objects.create(firewall=firewall, rule=rule, remote_uuid=uid)
-        imported.append(rule)
+        return rule
+
+    # Check every selected rule and report all problems at once; save nothing unless all import.
+    imported, problems = [], []
+    for index in indices:
+        row = snapshot.data["rules"][int(index)]
+        label = row.get("description") or row.get("uuid") or f"rule {int(index) + 1}"
+        try:
+            with transaction.atomic():
+                imported.append(import_rule(row))
+        except ValidationError as exc:
+            problems += [f"“{label}”: {message}" for message in exc.messages]
+        except (KeyError, ValueError):
+            problems.append(f"“{label}”: its snapshot data is incomplete. Pull a fresh snapshot.")
+    if problems:
+        raise ValidationError(problems)
     return imported

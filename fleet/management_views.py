@@ -7,12 +7,13 @@ from django.contrib.auth.decorators import login_required, permission_required, 
 from django.core import signing
 from django.http import HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
 from .alias_sync import digest
 from .locks import device_write_lock
-from .models import AuditEvent, DeviceInventory, Firewall, FirmwareJob, InterfaceMapping, LogicalInterface, VirtualIP
+from .models import AuditEvent, DeviceInventory, Firewall, FirmwareJob, VirtualIP
 from .opnsense import DeviceError, OPNsenseClient
 from .system_management import firmware_action, read_vips, refresh_firmware, refresh_inventory, vip_plan
 
@@ -47,79 +48,35 @@ def chosen(request):
 
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
-def interfaces(request, logical=False):
+def interfaces(request):
     devices = chosen(request)
-    rows = []
-    mappings = {
-        (mapping.firewall_id, mapping.logical_interface_id): mapping
-        for mapping in InterfaceMapping.objects.filter(firewall__in=devices)
-    }
-    names = (
-        list(LogicalInterface.objects.all())
-        if logical
-        else sorted(
-            {
-                r.get("name")
-                for fw in devices
-                for r in getattr(getattr(fw, "inventory", None), "data", {}).get("interfaces", [])
-                if r.get("name")
-            }
-        )
+    names = sorted(
+        {
+            r.get("name")
+            for fw in devices
+            for r in getattr(getattr(fw, "inventory", None), "data", {}).get("interfaces", [])
+            if r.get("name")
+        }
     )
-    for item in names:
+    rows = []
+    for name in names:
         cells = []
         for fw in devices:
             inventory = getattr(getattr(fw, "inventory", None), "data", {})
-            mapping = mappings.get((fw.pk, item.pk)) if logical else None
-            local = mapping.device_interface if mapping else None if logical else item
-            observed = next((r for r in inventory.get("interfaces", []) if r["name"] == local), None)
+            observed = next((r for r in inventory.get("interfaces", []) if r["name"] == name), None)
             cells.append(
                 {
                     "firewall": fw,
-                    "mapping": mapping,
-                    "local": local,
                     "observed": observed,
-                    "logical_id": item.pk if logical else None,
                     "observed_at": getattr(getattr(fw, "inventory", None), "updated_at", None),
                 }
             )
-        rows.append({"name": item.name if logical else item, "cells": cells})
+        rows.append({"name": name, "cells": cells})
     return render(
         request,
         "fleet/interface_matrix.html",
-        {"devices": devices, "all_firewalls": Firewall.objects.all(), "rows": rows, "logical": logical},
+        {"devices": devices, "all_firewalls": Firewall.objects.all(), "rows": rows},
     )
-
-
-@login_required
-@permission_required(
-    ("fleet.change_interfacemapping", "fleet.add_interfacemapping", "fleet.view_firewall"), raise_exception=True
-)
-@require_POST
-def save_mapping(request):
-    fw = get_object_or_404(Firewall, pk=request.POST.get("firewall"))
-    logical = get_object_or_404(LogicalInterface, pk=request.POST.get("logical"))
-    local = request.POST.get("device", "").strip()
-    from django.core.exceptions import ValidationError
-    from django.db import IntegrityError, transaction
-
-    if not local:
-        messages.error(request, "Use the mapping editor to remove mappings explicitly.")
-    else:
-        try:
-            with transaction.atomic():
-                mapping = InterfaceMapping.objects.filter(
-                    firewall=fw, logical_interface=logical
-                ).first() or InterfaceMapping(firewall=fw, logical_interface=logical)
-                mapping.device_interface = local
-                mapping.full_clean()
-                mapping.save()
-                AuditEvent.objects.create(
-                    actor=request.user.username, action="mapping.updated", detail=fw.name + " " + logical.name
-                )
-        except (ValidationError, IntegrityError):
-            messages.error(request, "Invalid or duplicate device interface mapping.")
-    return redirect("logical_matrix")
 
 
 @login_required
@@ -132,6 +89,9 @@ def read_interfaces(request):
             messages.success(request, fw.name + ": interface inventory refreshed.")
         except DeviceError as exc:
             messages.error(request, fw.name + ": " + str(exc))
+    target = request.POST.get("next", "")
+    if url_has_allowed_host_and_scheme(target, {request.get_host()}, request.is_secure()):
+        return redirect(target)
     return redirect("interface_overview")
 
 

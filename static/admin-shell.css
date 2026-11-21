@@ -63,3 +63,18 @@ ul.messagelist li { font-size: 14px; }
   #content { padding: 12px 16px 20px; }
   div.breadcrumbs { padding: 14px 16px 12px; font-size: 20px; }
 }
+/* Tabular inlines (e.g. a firewall's interface mappings): keep real table rows. */
+.inline-group .tabular table { width: 100%; }
+.inline-group .tabular tr.form-row { display: table-row; padding: 0; border: 0; }
+.inline-group .tabular tr.form-row > td, .inline-group .tabular thead th { padding: 8px 12px; vertical-align: middle; border-bottom: 1px solid #EEE; }
+.inline-group .tabular thead th { background: #fff; color: var(--opn-text); font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.inline-group .tabular td.original { width: 1%; padding: 0 !important; }
+.inline-group .tabular td.original p { display: none; }
+.inline-group .tabular td > select, .inline-group .tabular td > input[type=text], .inline-group .tabular .related-widget-wrapper select { width: 100%; max-width: 360px; min-height: 34px; }
+.inline-group .tabular .related-widget-wrapper { flex-wrap: nowrap; }
+.inline-group .tabular td.delete { width: 1%; text-align: center; }
+.inline-group .tabular tr.add-row td { padding: 10px 12px; }
+.inline-group h2 { padding: 10px 14px; }
+.inline-group .tabular tr.empty-form { display: none; }
+.inline-group .tabular table tr.has_original > td { padding-top: 8px; }
+.inline-group .module h2, .inline-group h2 { background: var(--opn-bg-head); color: var(--opn-text); font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--opn-border); }

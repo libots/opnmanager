@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin, messages
 from django.contrib.admin import helpers
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -25,13 +26,64 @@ from .models import (
 )
 
 
-class MappingInline(admin.TabularInline):
+class PlainRelationsMixin:
+    """Plain dropdowns in inline rows: the pencil/plus/x/eye links crowd every row."""
+
+    labels = {}
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        field = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if field is not None and hasattr(field.widget, "can_add_related"):
+            field.widget.can_add_related = field.widget.can_change_related = False
+            field.widget.can_delete_related = field.widget.can_view_related = False
+        if field is not None and db_field.name in self.labels:
+            field.label = self.labels[db_field.name]
+        return field
+
+
+class MappingInline(PlainRelationsMixin, admin.TabularInline):
+    """Interface mappings on the firewall page, picked from the firewall's own interface list."""
+
     model = InterfaceMapping
     extra = 0
+    verbose_name = "Interface mapping"
+    verbose_name_plural = "Interface mappings"
+    fields = ["logical_interface", "device_interface"]
+
+    def get_formset(self, request, obj=None, **kwargs):
+        from .interface_views import device_interfaces
+
+        formset = super().get_formset(request, obj, **kwargs)
+        options = device_interfaces(obj) if obj else []
+        if not options:
+            return formset
+        base = formset.form
+
+        class MappingForm(base):
+            def __init__(self, *args, **kw):
+                super().__init__(*args, **kw)
+                current = self.initial.get("device_interface") or ""
+                choices = [("", "— pick an interface —")] + [
+                    (
+                        o["name"],
+                        f"{o['name']} · {o['label']}"
+                        + (f" ({o['device']}{' · ' + o['ipv4'] if o.get('ipv4') else ''})" if o.get("device") else ""),
+                    )
+                    for o in options
+                ]
+                if current and current not in {o["name"] for o in options}:
+                    choices.append((current, f"{current} (not on firewall)"))
+                field = self.fields["device_interface"]
+                field.widget = forms.Select(choices=choices)
+                field.help_text = ""
+
+        formset.form = MappingForm
+        return formset
 
 
-class FirewallGroupMembershipInline(admin.TabularInline):
+class FirewallGroupMembershipInline(PlainRelationsMixin, admin.TabularInline):
     model = FirewallGroup.firewalls.through
+    labels = {"firewallgroup": "Firewall group"}
     extra = 0
     verbose_name = "Firewall group membership"
     verbose_name_plural = "Firewall group memberships"
@@ -41,7 +93,7 @@ class FirewallGroupMembershipInline(admin.TabularInline):
 class FirewallAdmin(admin.ModelAdmin):
     list_display = ["name", "base_url", "enabled"]
     inlines = [MappingInline, FirewallGroupMembershipInline]
-    readonly_fields = ["credential_settings"]
+    readonly_fields = ["credential_settings", "mapping_overview"]
 
     def get_deleted_objects(self, objs, request):
         deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
@@ -50,6 +102,19 @@ class FirewallAdmin(admin.ModelAdmin):
         if self.has_delete_permission(request):
             permissions.discard(Snapshot._meta.verbose_name)
         return deleted, counts, permissions, protected
+
+    @admin.display(description="Interface mappings")
+    def mapping_overview(self, obj):
+        if not obj or not obj.pk:
+            return "Save this firewall first, then map its interfaces below."
+        return format_html(
+            "{} of {} logical interfaces mapped. Edit them below, or compare every firewall side by side on "
+            '<a href="{}?firewalls={}">Fleet: Logical Interfaces</a>.',
+            obj.interface_mappings.count(),
+            LogicalInterface.objects.count(),
+            reverse("logical_matrix"),
+            obj.pk,
+        )
 
     @admin.display(description="API credentials")
     def credential_settings(self, obj):

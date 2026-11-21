@@ -2,8 +2,8 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
+from fleet import interface_views, views
 from fleet import management_views as management
-from fleet import views
 from fleet.accounts import InitialPasswordChangeView, LocalLoginView
 
 urlpatterns = [
@@ -12,12 +12,11 @@ urlpatterns = [
     path("interfaces/virtual-ips/<int:pk>/delete/<uuid:uuid>/", management.delete_vip, name="delete_vip"),
     path("system/settings/general/", management.dns_general, name="dns_general"),
     path("fleet/deployment/", management.deployment_overview, name="deployment_overview"),
-    path(
-        "fleet/logical-interfaces/", lambda request: management.interfaces(request, logical=True), name="logical_matrix"
-    ),
+    path("fleet/logical-interfaces/", interface_views.logical_interfaces, name="logical_matrix"),
+    path("fleet/logical-interfaces/add/", interface_views.create_logical_interface, name="create_logical_interface"),
     path("interfaces/", management.interfaces, name="interface_overview"),
     path("interfaces/refresh/", management.read_interfaces, name="refresh_interfaces"),
-    path("fleet/mappings/save/", management.save_mapping, name="save_mapping"),
+    path("fleet/mappings/save/", interface_views.save_mappings, name="save_mappings"),
     path("interfaces/virtual-ips/", management.virtual_ips, name="virtual_ips"),
     path("interfaces/virtual-ips/<int:pk>/<int:vip_id>/", management.review_vip, name="review_vip"),
     path("system/firmware/status/", management.firmware, name="firmware_status"),
