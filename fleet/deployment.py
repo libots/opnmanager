@@ -21,10 +21,53 @@ def fingerprint(data):
     )
 
 
+def rule_positions(rule_row):
+    """(binding, sequence) slots a rule occupies; OPNsense orders rules by sequence within a binding."""
+    sequence = str(rule_row.get("sequence", "")).strip()
+    sequence = str(int(sequence)) if sequence.isdigit() else sequence
+    bindings = [b.strip() for b in str(rule_row.get("interface", "")).split(",") if b.strip()]
+    return {(binding, sequence) for binding in bindings or ["(floating)"]}
+
+
+def _check_positions(placed, device_rules):
+    """Block rules whose position is shared with another manager rule or a device-local rule.
+
+    Equal sequences on one binding leave the evaluation order up to the device. A
+    single-rule plan can't see this, so it is checked across every targeted rule.
+    Device rows that a manager rule already matches are represented by that rule's
+    desired position instead of their current one.
+    """
+    owners = {}
+    for row, desired, _ in placed:
+        for position in rule_positions(desired):
+            owners.setdefault(position, []).append(row["name"])
+    matched = {id(actual) for _, _, actual in placed if actual}
+    local = {}
+    for device_rule in device_rules:
+        if id(device_rule) not in matched:
+            label = device_rule.get("description") or device_rule.get("uuid") or "unnamed rule"
+            for position in rule_positions(device_rule):
+                local.setdefault(position, []).append(label)
+    for row, desired, _ in placed:
+        for binding, sequence in sorted(rule_positions(desired)):
+            others = [name for name in owners[(binding, sequence)] if name != row["name"]]
+            if others:
+                row["errors"].append(
+                    f"Sequence {sequence} on {binding} is also used by manager rule {', '.join(others)}. "
+                    "Give each rule a distinct sequence."
+                )
+            if (binding, sequence) in local:
+                row["errors"].append(
+                    f"Sequence {sequence} on {binding} is also used by device rule {', '.join(local[(binding, sequence)])}. "
+                    "Change one sequence so evaluation order is explicit."
+                )
+
+
 def deployment_plan(firewall):
     snapshot = firewall.snapshots.first()
     result = {"firewall": firewall.name, "snapshot_id": snapshot.pk if snapshot else None, "rows": []}
     policy = Policy()
+    placed = []  # (row, desired payload, matched device row) for the position check below
     for rule in policy.rules:
         if not rule.applies_to(firewall):
             continue
@@ -71,22 +114,25 @@ def deployment_plan(firewall):
             if operation
             else []
         )
-        result["rows"].append(
-            {
-                "id": str(rule.pk),
-                "name": rule.name,
-                "operation": operation,
-                "errors": errors,
-                "dependencies": dependencies,
-                "diff": [
-                    {
-                        "text": line,
-                        "kind": "added" if line.startswith("+") else "removed" if line.startswith("-") else "",
-                    }
-                    for line in lines
-                ],
-            }
-        )
+        row = {
+            "id": str(rule.pk),
+            "name": rule.name,
+            "operation": operation,
+            "errors": errors,
+            "dependencies": dependencies,
+            "diff": [
+                {
+                    "text": line,
+                    "kind": "added" if line.startswith("+") else "removed" if line.startswith("-") else "",
+                }
+                for line in lines
+            ],
+        }
+        result["rows"].append(row)
+        if item:
+            placed.append((row, item["desired"], item["actual"]))
+    if snapshot:
+        _check_positions(placed, policy.firewall_state(firewall, snapshot)[0]["rules"])
     result["approval_sha256"] = digest(result)
     return result
 

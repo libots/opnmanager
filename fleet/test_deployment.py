@@ -103,11 +103,38 @@ class DeploymentTests(TestCase):
         self.second.save()
         plan = deployment_plan(self.fw)
         client = Mock()
-        with self.assertRaisesMessage(DeviceError, "conflicting sequence"):
+        with self.assertRaisesMessage(DeviceError, "unblocked"):
             execute_deployment(
                 self.fw, plan["approval_sha256"], [str(self.first.pk), str(self.second.pk)], client, "test"
             )
         client.snapshot.assert_not_called()
+
+    def test_sequence_shared_with_unselected_manager_rule_blocks_both(self):
+        self.second.sequence = self.first.sequence
+        self.second.save()
+        rows = {row["name"]: row for row in deployment_plan(self.fw)["rows"]}
+        self.assertIn("Sequence 100 on lan is also used by manager rule Second.", " ".join(rows["First"]["errors"]))
+        self.assertIn("also used by manager rule First", " ".join(rows["Second"]["errors"]))
+
+    def test_sequence_shared_with_device_local_rule_blocks(self):
+        snapshot = self.fw.snapshots.first()
+        snapshot.data = {
+            **EMPTY,
+            "rules": [{"description": "Local SSH", "interface": "lan,opt1", "sequence": "0100", "uuid": "l"}],
+        }
+        snapshot.save()
+        rows = {row["name"]: row for row in deployment_plan(self.fw)["rows"]}
+        self.assertIn("also used by device rule Local SSH", " ".join(rows["First"]["errors"]))
+        self.assertFalse(rows["Second"]["errors"])
+
+    def test_rules_own_current_device_row_is_not_a_collision(self):
+        payload = next(r for r in deployment_plan(self.fw)["rows"] if r["name"] == "First")["operation"]["payload"]
+        snapshot = self.fw.snapshots.first()
+        snapshot.data = {**EMPTY, "rules": [{**payload, "action": "block", "uuid": "remote"}]}
+        snapshot.save()
+        row = next(r for r in deployment_plan(self.fw)["rows"] if r["name"] == "First")
+        self.assertEqual(row["errors"], [])
+        self.assertEqual(row["operation"]["action"], "update")
 
     def test_second_deployment_is_blocked_while_first_holds_lock(self):
         from .locks import device_write_lock
