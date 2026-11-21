@@ -1,9 +1,10 @@
+from django import forms
 from django.contrib import messages
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
-from django import forms
 from django.contrib.auth.views import LoginView, PasswordChangeView
 from django.db import transaction
 from django.urls import reverse_lazy
+
 from .models import LocalAccountState
 
 

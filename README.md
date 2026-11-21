@@ -64,6 +64,8 @@ A future container can use the same Gunicorn application and environment variabl
 ```sh
 # Use this after setup when you want the development server instead of Gunicorn.
 DJANGO_DEBUG=1 .venv/bin/python manage.py runserver 127.0.0.1:8000
+# In a second terminal: the worker that runs rule deploys and definition syncs.
+DJANGO_DEBUG=1 .venv/bin/python manage.py run_jobs
 # Optional, only for an empty fleet; never contacts a device:
 OPNMANAGER_LOCAL=1 .venv/bin/python manage.py seed_demo
 ```
@@ -79,7 +81,7 @@ The demo uses `.invalid` hostnames and invented snapshots, not real device obser
 5. Use `@VL10:net` or `@VL10:ip` in source/destination to resolve an interface network or address on each firewall. Ordinary network/alias values pass through unchanged.
 6. Pull current configuration or import a normalized snapshot, then review field differences and export a plan.
 
-Rule sequence is significant. Duplicate sequence values on the same logical interface block planning. Compact stable `[om:<12 hexadecimal digits>]` description suffixes identify managed rules across devices; a local rule with the same name is **not** silently adopted. Existing rules can be reviewed as local-only, then modeled explicitly in the ideal set. Rules whose markers are no longer targeted are reported as out-of-scope for manual review, never deleted automatically.
+Rule sequence is significant. Duplicate sequence values on the same logical interface block planning. On **Review & push rules**, each rule is also checked against every other manager rule targeting that firewall and against the device's own local rules: a rule that shares a sequence with either on the same interface (or among floating rules) is blocked until one sequence changes, even when only one of the two rules is selected. Compact stable `[om:<12 hexadecimal digits>]` description suffixes identify managed rules across devices; a local rule with the same name is **not** silently adopted. Existing rules can be reviewed as local-only, then modeled explicitly in the ideal set. Rules whose markers are no longer targeted are reported as out-of-scope for manual review, never deleted automatically.
 
 Statuses distinguish missing, changed, in-sync managed fields, local-only objects, out-of-scope rules, and conflicting identities. Missing mappings, alias cycles, excluded alias references and duplicate managed identities block exportable operations. Reports use the last captured snapshot and show its timestamp; they are not live compliance guarantees.
 
@@ -182,7 +184,14 @@ DJANGO_DEBUG=1 .venv/bin/python manage.py test
 DJANGO_DEBUG=1 .venv/bin/python manage.py check
 DJANGO_DEBUG=1 .venv/bin/python manage.py makemigrations --check --dry-run
 DJANGO_DEBUG=1 .venv/bin/python manage.py plan Amsterdam
+# Style and lint (CI runs both):
+ruff format --check .
+ruff check .
 ```
+
+**Which rules are visible.** The connector reads and writes rules through OPNsense's MVC filter API (**Firewall › Automation › Filter**, or the new rules UI in newer releases). Rules created in the legacy **Firewall › Rules** pages live in a different part of the configuration. The API doesn't return them, so they never appear in snapshots, drift reports or sequence-collision checks. Move rules you want managed to the MVC rules, or adopt them from another firewall's MVC rules.
+
+**Snapshot history.** Every pull or import stores the firewall's full configuration as JSON. Only the newest 50 snapshots per firewall are kept, and older ones are deleted automatically. Set `OPNMANAGER_SNAPSHOT_RETENTION` to change the limit, or to `0` to keep everything. Planning and deploys only ever use the newest snapshot.
 
 The tests exercise interface resolution, all/selected targeting, drift, conflicts, alias ordering, stale-plan rejection, synchronization/readback/failure, permissions, import validation, API request behavior and OIDC identity boundaries. API operations are mocked in tests; this does not establish live OPNsense compatibility.
 
@@ -252,9 +261,17 @@ The configuration editors at `/admin/` now use the same sidebar, colors and page
 
 IPv6 patterns now support ranges inside a hextet: `fd5b:47d4:9272:[20-22]35::/64` compiles to exactly `fd5b:47d4:9272:2035::/64`, `fd5b:47d4:9272:2135::/64`, and `fd5b:47d4:9272:2235::/64`. Bracket values are hexadecimal and padded to the width of the longer endpoint. Nibble wildcards also work, e.g. `20x5`. IPv4 patterns with CIDRs work too, such as `10.20-22.35.0/24`. Pattern CIDRs require a network alias. Bits outside the CIDR prefix are masked and duplicate networks removed. The same 4096-entry limit applies; broad patterns that cannot fit that limit must be narrowed. Literal CIDRs and previous whole-component patterns remain supported.
 
-**Review & push rules** presents per-rule unified diffs with selectable create/update operations. Uncheck rules you do not want to push. A dedicated `fleet.deploy_rules` permission is required (superusers receive it automatically). Supporting definitions must be synchronized first. Updates require a live snapshot with remote UUIDs. The server rejects changed manager plans or changed device configuration, writes only selected eligible operations, calls the filter apply endpoint, reads back managed fields, stores a new snapshot and records success/failure in the audit log. Unchecked rules and unmanaged local rules are retained; this workflow does not automatically delete rules.
+**Review & push rules** presents per-rule unified diffs with selectable create/update operations. Uncheck rules you do not want to push. A dedicated `fleet.deploy_rules` permission is required (superusers receive it automatically). Supporting definitions must be synchronized first. Updates require a live snapshot with remote UUIDs. The server rejects changed manager plans or changed device configuration, writes only selected eligible operations, calls the filter apply endpoint, reads back managed fields, stores a new snapshot and records success/failure in the audit log. Unchecked rules and unmanaged local rules are retained; nothing is deleted automatically.
 
-The API account needs privileges for `/api/firewall/filter/add_rule`, `/set_rule/<uuid>` and `/apply`, as well as the inventory endpoints. Applying reloads the device filter and can activate unrelated pending device edits. It can interrupt management access. Writes are sequential and not transactional; there is **no automatic rollback**. A write/apply timeout may leave partially saved or active rules; inspect the device and pull a fresh snapshot before retrying. Keep independent management access and review in a maintenance window. The deployment workflow has automated mocked API coverage; a real-device acceptance test with your OPNsense version remains necessary before production use.
+**Retiring rules.** When a manager rule is deleted, or its scope no longer includes a firewall, its tagged copy stays on that device. **Review & push rules** lists these under **Retire managed rules**, and you choose Keep (the default), Disable or Delete for each one. Retirements go through the same approval, preflight, savepoint, readback and rollback as rule pushes. A rule is only offered when its tag matches no manager rule that still targets the firewall, so a rule that just fails to plan (for example, because of a missing mapping) is never offered. This needs API privileges for `/api/firewall/filter/toggle_rule/<uuid>/0` and `/del_rule/<uuid>`.
+
+The API account needs privileges for `/api/firewall/filter/add_rule`, `/set_rule/<uuid>`, `/savepoint`, `/apply/<revision>`, `/cancel_rollback/<revision>` and `/revert/<revision>`, as well as the inventory endpoints.
+
+**Protected apply.** Every rule deployment first creates an OPNsense filter savepoint, then applies with that revision. OPNsense arms a 60-second rollback timer. The manager reads the rules back and calls `cancel_rollback` only if the readback matches. If a write, the apply or the readback fails, the manager asks the firewall to revert immediately. If the firewall can no longer be reached (for example because a pushed rule blocked the manager), OPNsense restores the previous rules on its own when the timer expires. The audit log records the revision as `rules.deploy.completed`, `rules.deploy.failed` or `rules.deploy.unconfirmed`. Applying still reloads the device filter and can activate unrelated pending device edits, and a revert restores the whole filter configuration as of the savepoint. Keep independent management access and review in a maintenance window. The deployment workflow has automated mocked API coverage; a real-device acceptance test with your OPNsense version remains necessary before production use.
+
+**One write at a time per firewall.** Rule deploys, alias and definition syncs, virtual IP changes and firmware requests share a single per-firewall lock (`.device-write-<id>.lock` in the data directory). A second write to the same firewall is refused with the name of the operation already running, so one workflow's "device unchanged" preflight can't be invalidated by another's writes. Different firewalls never block each other. The lock covers one host sharing `OPNMANAGER_DATA_DIR`.
+
+**Background jobs.** Pushing rules or applying a definition sync doesn't run inside the web request. The request checks the form and queues a job, and the browser goes to a job page that refreshes until the job finishes. A separate worker (`manage.py run_jobs`) runs the jobs one at a time. `scripts/run-local.sh` starts it next to Gunicorn and stops it on exit. If you run the app another way, run exactly one worker per data directory, for example as a second systemd service. A reverse-proxy timeout or a closed tab doesn't stop a running job. If the worker itself stops mid-job, the next worker start marks the job **Interrupted**: rules that were applied but not confirmed roll back automatically, and you should pull a fresh snapshot before trying again.
 
 ## Navigation and fleet system management
 

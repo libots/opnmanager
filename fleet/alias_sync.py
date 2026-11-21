@@ -1,9 +1,12 @@
 """Explicit single-firewall alias upsert workflow; never deletes objects or writes rules."""
+
 import hashlib
 import json
-from .models import Snapshot, AuditEvent
+
+from .locks import device_write_lock
+from .models import AuditEvent, Snapshot
 from .opnsense import DeviceError
-from .reconcile import plan_for, canonical
+from .reconcile import canonical, plan_for
 from .snapshot_compare import rows_by_identity
 
 
@@ -12,7 +15,7 @@ def digest(value):
 
 
 def alias_fingerprint(rows):
-    return digest(rows_by_identity({"aliases":rows},"aliases"))
+    return digest(rows_by_identity({"aliases": rows}, "aliases"))
 
 
 def alias_plan(firewall):
@@ -22,20 +25,31 @@ def alias_plan(firewall):
     pending = {op["payload"]["name"]: op for op in operations}
     ordered = []
     while pending:
-        ready = [name for name, op in pending.items() if not
-                 (set(op["payload"]["content"].splitlines()) & set(pending))]
+        ready = [
+            name for name, op in pending.items() if not (set(op["payload"]["content"].splitlines()) & set(pending))
+        ]
         if not ready:
             plan["errors"].append("Alias dependency cycle; no synchronization allowed.")
             ordered = []
             break
-        for name in sorted(ready): ordered.append(pending.pop(name))
-    result = {"firewall": firewall.name, "snapshot_id": plan["snapshot_id"],
-              "errors": plan["errors"], "operations": ordered}
+        for name in sorted(ready):
+            ordered.append(pending.pop(name))
+    result = {
+        "firewall": firewall.name,
+        "snapshot_id": plan["snapshot_id"],
+        "errors": plan["errors"],
+        "operations": ordered,
+    }
     result["approval_sha256"] = digest(result)
     return result
 
 
 def execute_alias_plan(firewall, approved_sha, client, actor):
+    with device_write_lock(firewall.pk, "An alias synchronization"):
+        return _execute_alias_plan(firewall, approved_sha, client, actor)
+
+
+def _execute_alias_plan(firewall, approved_sha, client, actor):
     plan = alias_plan(firewall)
     if plan["errors"] or plan["approval_sha256"] != approved_sha:
         raise DeviceError("Plan changed or is blocked. Review a new dry-run plan.")
@@ -50,10 +64,12 @@ def execute_alias_plan(firewall, approved_sha, client, actor):
     for op in operations:
         if op["action"] == "update" and not op.get("remote_uuid"):
             raise DeviceError("Snapshot lacks alias UUIDs. Pull a live snapshot before synchronization.")
-    if not operations: return 0
+    if not operations:
+        return 0
     AuditEvent.objects.create(actor=actor, action="alias.sync.started", detail=firewall.name + " " + approved_sha)
     try:
-        for op in operations: client.save_alias(op)
+        for op in operations:
+            client.save_alias(op)
         client.reconfigure_aliases()
         observed = client.snapshot()
         for op in operations:
@@ -64,6 +80,8 @@ def execute_alias_plan(firewall, approved_sha, client, actor):
         Snapshot.objects.create(firewall=firewall, data=observed, source="api")
         AuditEvent.objects.create(actor=actor, action="alias.sync.completed", detail=firewall.name)
     except DeviceError:
-        AuditEvent.objects.create(actor=actor, action="alias.sync.failed", detail=firewall.name + "; partial configuration may remain")
+        AuditEvent.objects.create(
+            actor=actor, action="alias.sync.failed", detail=firewall.name + "; partial configuration may remain"
+        )
         raise
     return len(operations)

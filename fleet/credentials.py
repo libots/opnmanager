@@ -1,7 +1,10 @@
 """Write-only UI credentials encrypted with a key kept outside the database."""
+
 import os
+
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
+
 from .opnsense_errors import DeviceError
 
 
@@ -17,7 +20,8 @@ def cipher(create=True):
         except FileExistsError:
             pass
         key = path.read_bytes()
-    try: return Fernet(key)
+    try:
+        return Fernet(key)
     except (ValueError, TypeError) as exc:
         raise DeviceError("The credential encryption key is invalid; check server configuration.") from exc
 
@@ -32,11 +36,17 @@ def get_credentials(firewall):
     if firewall.encrypted_api_key or firewall.encrypted_api_secret:
         try:
             box = cipher(create=False)
-            return box.decrypt(firewall.encrypted_api_key.encode()).decode(), box.decrypt(firewall.encrypted_api_secret.encode()).decode()
+            return box.decrypt(firewall.encrypted_api_key.encode()).decode(), box.decrypt(
+                firewall.encrypted_api_secret.encode()
+            ).decode()
         except (InvalidToken, ValueError) as exc:
-            raise DeviceError("Unable to decrypt this firewall's credentials. Restore the encryption key or replace credentials in Settings.") from exc
+            raise DeviceError(
+                "Unable to decrypt this firewall's credentials. Restore the encryption key or replace credentials in Settings."
+            ) from exc
     prefix = firewall.credential_prefix
     key, secret = os.getenv(prefix + "_API_KEY"), os.getenv(prefix + "_API_SECRET")
     if not key or not secret:
-        raise DeviceError("Configure an API key and secret in this firewall's credential settings, or supply its environment variables.")
+        raise DeviceError(
+            "Configure an API key and secret in this firewall's credential settings, or supply its environment variables."
+        )
     return key, secret

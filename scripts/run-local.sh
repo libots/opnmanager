@@ -13,6 +13,11 @@ fi
 .venv/bin/python manage.py migrate --noinput
 .venv/bin/python manage.py collectstatic --noinput
 .venv/bin/python manage.py bootstrap_admin
-exec .venv/bin/gunicorn config.wsgi:application \
+# Device writes (rule deploys, definition syncs) run in this worker, not in web
+# requests, so a proxy timeout or Gunicorn restart can't cut them off halfway.
+.venv/bin/python manage.py run_jobs &
+WORKER_PID=$!
+trap 'kill -TERM "$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null || true' EXIT INT TERM
+.venv/bin/gunicorn config.wsgi:application \
   --bind "${OPNMANAGER_BIND:-127.0.0.1:8000}" --workers 1 --threads 2 --timeout 60 \
   --access-logfile - --error-logfile -

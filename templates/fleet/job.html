@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}{{ job.get_kind_display }} · OPNmanager{% endblock %}
+{% block content %}{% if job.active %}<meta http-equiv="refresh" content="2">{% endif %}
+<div class="page-title"><a href="{{ back.1 }}">← {{ back.0 }}</a><h1>{{ job.get_kind_display }}.</h1>
+<p>{{ job.firewall.name }} · Job #{{ job.pk }} · requested by {{ job.actor }} at {{ job.created_at|date:"Y-m-d H:i:s" }}</p></div>
+{% if job.status == "queued" %}<div class="notice info">Queued. This page refreshes until the job finishes; you can also leave it, and the job keeps running.</div>
+{% if stalled %}<div class="notice warning">This job has been waiting for more than 15 seconds. Check that the job worker is running (<code>manage.py run_jobs</code>; <code>scripts/run-local.sh</code> starts it automatically).</div>{% endif %}
+{% elif job.status == "running" %}<div class="notice info">Running since {{ job.started_at|date:"H:i:s" }}. This page refreshes until the job finishes.</div>
+{% elif job.status == "succeeded" %}<div class="notice success">{{ job.message }}</div>
+{% else %}<div class="notice error"><strong>{{ job.get_status_display }}.</strong> {{ job.message }}</div>{% endif %}
+{% if not job.active %}<p>Finished at {{ job.finished_at|date:"Y-m-d H:i:s" }}. <a href="{{ back.1 }}">{{ back.0 }} →</a></p>{% endif %}
+{% endblock %}

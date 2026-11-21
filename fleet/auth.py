@@ -1,19 +1,23 @@
 import hashlib
 import time
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import SuspiciousOperation
 from mozilla_django_oidc.auth import OIDCAuthenticationBackend
 
+
 class SubjectOIDCBackend(OIDCAuthenticationBackend):
     """Bind accounts to issuer + subject, never auto-link by mutable email."""
+
     def verify_token(self, token, **kwargs):
         payload = super().verify_token(token, **kwargs)
         if payload.get("iss") != settings.OIDC_ISSUER:
             raise SuspiciousOperation("Unexpected OIDC issuer")
         now = time.time()
         audience = payload.get("aud", [])
-        if isinstance(audience, str): audience = [audience]
+        if isinstance(audience, str):
+            audience = [audience]
         if not isinstance(audience, list) or settings.OIDC_RP_CLIENT_ID not in audience:
             raise SuspiciousOperation("Unexpected OIDC audience")
         if (len(audience) > 1 or "azp" in payload) and payload.get("azp") != settings.OIDC_RP_CLIENT_ID:
