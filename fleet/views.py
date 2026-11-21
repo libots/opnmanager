@@ -261,6 +261,9 @@ def rules_page(request):
                     "enabled": str(int(rule.enabled)),
                     "icmptype": rule.icmp_types,
                     "icmp6type": rule.icmp6_types,
+                    "gateway": rule.gateway,
+                    "statetype": rule.state_type,
+                    "received-on-not": str(int(rule.origin_not)),
                 }
             )
         interfaces = [(i.name, i.name) for i in LogicalInterface.objects.all()] + [(g, g + " (group)") for g in groups]

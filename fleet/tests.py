@@ -331,7 +331,7 @@ class LocalAccountTests(TestCase):
         self.assertTrue(user.check_password(password))
         self.assertTrue(LocalAccountState.objects.get(user=user).must_change_password)
         response = self.client.post("/accounts/login/", {"username": "admin", "password": password}, follow=True)
-        self.assertContains(response, "Set your password.")
+        self.assertContains(response, "Set your password")
         for url in ["/", "/admin/", "/settings/", "/firewalls/99/plan/"]:
             self.assertRedirects(self.client.get(url), "/accounts/password_change/", fetch_redirect_response=False)
         new_password = "A-different-password-with-entropy-7285!"

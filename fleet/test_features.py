@@ -166,11 +166,20 @@ class FeatureTests(TestCase):
         self.assertFalse(InterfaceGroup.objects.get().applies_to(self.other))
 
     def test_import_unsupported_behavior_rolls_back_whole_batch(self):
-        snapshot = self.observed(rules=[self.row(), self.row(uuid="second", gateway="device-specific-gateway")])
-        with self.assertRaisesMessage(ValidationError, "gateway"):
+        snapshot = self.observed(rules=[self.row(), self.row(uuid="second", sched="weekdays")])
+        with self.assertRaisesMessage(ValidationError, "sched"):
             import_rules(snapshot, ["0", "1"], "all", [])
         self.assertEqual(Rule.objects.count(), 0)
         self.assertEqual(RuleOrigin.objects.count(), 0)
+
+    def test_import_keeps_gateway_state_type_and_inverted_origin(self):
+        row = self.row(gateway="WAN_GW", statetype="sloppy", **{"received-on": "opt2", "received-on-not": "1"})
+        rule = import_rules(self.observed(rules=[row]), ["0"], "all", [])[0]
+        self.assertEqual((rule.gateway, rule.state_type, rule.origin_not), ("WAN_GW", "sloppy", True))
+        payload = next(op for op in plan_for(self.fw)["operations"] if op["kind"] == "rule")["payload"]
+        self.assertEqual(
+            (payload["gateway"], payload["statetype"], payload["received-on-not"]), ("WAN_GW", "sloppy", "1")
+        )
 
     def test_import_rejects_missing_mapping_stale_snapshot_and_alias_conflicts(self):
         snapshot = self.observed(rules=[self.row(interface="unmapped")])
@@ -198,7 +207,7 @@ class FeatureTests(TestCase):
         data = {
             "name": "Multi",
             "sequence": "400",
-            "interfaces": [str(self.logical.pk)],
+            "bindings": [f"interface:{self.logical.pk}"],
             "action": "pass",
             "direction": "in",
             "ip_version": "inet",
@@ -360,27 +369,33 @@ class FeatureTests(TestCase):
         self.assertIn('value="echoreq" selected', str(form["icmp_types"]))
         self.assertIn('value="10.0.0.2" selected', str(form["source"]))
 
-    def test_protocol_multiselect_accepts_transport_combination(self):
+    def test_protocol_is_single_valued_like_opnsense(self):
         data = {
             "name": "Web",
             "sequence": "500",
-            "interfaces": [str(self.logical.pk)],
+            "bindings": [f"interface:{self.logical.pk}"],
             "action": "pass",
             "direction": "in",
             "ip_version": "inet",
-            "protocol": ["TCP", "UDP"],
+            "protocol": "TCP/UDP",
             "source": ["any"],
             "destination": ["any"],
-            "destination_port": ["443"],
+            "destination_port": "443",
             "scope": "all",
             "enabled": "on",
             "quick": "on",
         }
         form = RuleForm(data)
         self.assertTrue(form.is_valid(), form.errors)
-        self.assertEqual(form.save().protocol, "TCP,UDP")
-        bad = RuleForm({**data, "protocol": ["any", "TCP"]})
+        self.assertEqual(form.save().protocol, "TCP/UDP")
+        bad = RuleForm({**data, "protocol": ["TCP", "UDP"]})
         self.assertFalse(bad.is_valid())
+        self.assertIn("Choose one protocol.", str(bad.errors))
+
+    def test_legacy_multi_protocol_rule_stays_editable(self):
+        rule = Rule.objects.create(name="Legacy", protocol="TCP,UDP", interface=self.logical)
+        form = RuleForm(instance=rule)
+        self.assertIn("multiple", str(form["protocol"]))
 
     def test_alias_editor_accepts_multiple_entries_and_searchable_nested_aliases(self):
         from .forms import AliasForm

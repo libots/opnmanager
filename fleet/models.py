@@ -206,11 +206,13 @@ class Rule(ScopedPolicy):
     origin_interfaces = models.ManyToManyField(LogicalInterface, blank=True, related_name="origin_rules")
     origin_interface_groups = models.ManyToManyField(InterfaceGroup, blank=True, related_name="origin_rules")
     action = models.CharField(
-        max_length=10, choices=[("pass", "Pass"), ("block", "Block"), ("reject", "Reject")], default="pass"
+        max_length=10,
+        choices=[("pass", "Pass"), ("block", "Block"), ("reject", "Reject"), ("match", "Match")],
+        default="pass",
     )
     direction = models.CharField(max_length=4, choices=[("in", "In"), ("out", "Out"), ("any", "Both")], default="in")
     ip_version = models.CharField(
-        max_length=6, choices=[("inet", "IPv4"), ("inet6", "IPv6"), ("inet46", "Both")], default="inet"
+        max_length=6, choices=[("inet", "IPv4"), ("inet6", "IPv6"), ("inet46", "any")], default="inet"
     )
     protocol = models.CharField(max_length=255, default="any")
     source = models.TextField(
@@ -227,8 +229,26 @@ class Rule(ScopedPolicy):
     source_not = models.BooleanField(default=False)
     destination_not = models.BooleanField(default=False)
     interface_not = models.BooleanField(default=False)
+    origin_not = models.BooleanField(default=False)
     log = models.BooleanField(default=False)
     enabled = models.BooleanField(default=True)
+    state_type = models.CharField(
+        max_length=10,
+        choices=[
+            ("keep", "keep state"),
+            ("sloppy", "sloppy state"),
+            ("modulate", "modulate state"),
+            ("synproxy", "synproxy state"),
+            ("none", "no state"),
+        ],
+        default="keep",
+    )
+    gateway = models.CharField(
+        max_length=100,
+        blank=True,
+        validators=[RegexValidator(r"^[A-Za-z0-9_.-]*$", "Use a gateway or gateway group name.")],
+        help_text="Gateway or gateway group name on the firewall; empty uses the routing table.",
+    )
 
     def clean(self):
         from .choices import protocol_choices

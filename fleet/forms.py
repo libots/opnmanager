@@ -2,7 +2,7 @@ import json
 
 from django import forms
 
-from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, PROTOCOLS, protocol_choices
+from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, protocol_choices
 from .models import (
     Alias,
     AuthenticationServer,
@@ -33,13 +33,20 @@ class SnapshotImportForm(forms.Form):
 
 
 class TokenWidget(forms.SelectMultiple):
-    def __init__(self, *args, tags=False, **kwargs):
+    """Searchable select. `selector` picks the client-side control (static/opn-select.js):
+
+    picker: OPNsense selectpicker look (default without tags); tags: free-form chips (alias content);
+    net: networks with a "Single host or Network" manual entry; port: ports with a "Single port or range"
+    manual entry; manual: a list plus one typed value (gateways).
+    """
+
+    def __init__(self, *args, tags=False, selector=None, **kwargs):
         attrs = kwargs.pop("attrs", {})
         attrs.update(
             {
                 "class": "opn-select",
                 "data-tags": "true" if tags else "false",
-                "style": "min-width:260px;max-width:100%;width:100%",
+                "data-selector": selector or ("tags" if tags else "picker"),
             }
         )
         super().__init__(*args, attrs=attrs, **kwargs)
@@ -59,12 +66,21 @@ class TokenWidget(forms.SelectMultiple):
 
     def optgroups(self, name, value, attrs=None):
         choices = list(self.choices)
-        known = {str(key) for key, label in choices}
+        known = set()
+        for key, label in choices:
+            # Grouped choices are (group label, [(value, label), ...]).
+            known.update(str(k) for k, _ in label) if isinstance(label, (list, tuple)) else known.add(str(key))
         self.choices = choices + [(v, v) for v in value if v not in known]
         try:
-            return super().optgroups(name, value, attrs)
+            groups = super().optgroups(name, value, attrs)
         finally:
             self.choices = choices
+        # Saved values that aren't in the list were typed in; the picker shows them in its manual-entry box.
+        for _, options, _ in groups:
+            for option in options:
+                if str(option["value"]) not in known:
+                    option["attrs"]["data-manual"] = "true"
+        return groups
 
     class Media:
         css = {"all": ["admin/css/vendor/select2/select2.css"]}
@@ -73,6 +89,7 @@ class TokenWidget(forms.SelectMultiple):
             "admin/js/vendor/select2/select2.full.js",
             "admin/js/jquery.init.js",
             "selections.js",
+            "opn-select.js",
         ]
 
 
@@ -80,7 +97,12 @@ class SearchSelect(TokenWidget):
     allow_multiple_selected = False
 
     def value_from_datadict(self, data, files, name):
-        return data.get(name, "")
+        value = data.get(name, "")
+        # A plain dict may carry a list; join it so validation can reject several values.
+        return ",".join(value) if isinstance(value, (list, tuple)) else value
+
+    def format_value(self, value):
+        return [value] if isinstance(value, str) else super().format_value(value)
 
 
 class MultiSelectWidget(TokenWidget):
@@ -99,34 +121,56 @@ class CSVChoicesField(forms.CharField):
             raise forms.ValidationError("Choose a supported value.")
 
 
+def binding_choices():
+    """Interface (rule/origin) options in OPNsense's order: groups, then interfaces."""
+    groups = [(f"group:{g.pk}", g.name) for g in InterfaceGroup.objects.order_by("name")]
+    interfaces = [(f"interface:{i.pk}", i.name) for i in LogicalInterface.objects.order_by("name")]
+    return [("Groups", groups), ("Interfaces", interfaces)]
+
+
+def port_is_valid(value, aliases):
+    """OPNsense PortField: a well-known name, a port alias, 1-65535, or a from-to range."""
+    if value in aliases or value in dict(PORTS):
+        return True
+    if value.isdigit():
+        return 1 <= int(value) <= 65535
+    low, sep, high = value.partition("-")
+    return bool(sep) and low.isdigit() and high.isdigit() and 1 <= int(low) < int(high) <= 65535
+
+
 class RuleForm(forms.ModelForm):
-    protocol = CSVChoicesField(choices=PROTOCOLS, initial="any")
+    """Manager rule editor laid out like OPNsense's Firewall: Rules dialog.
+
+    Field order, labels, which fields take several values and which are
+    advanced-only follow OPNsense's dialogFilterRule.xml. Logical interfaces and
+    interface groups are picked in one "Interface" list, as on the firewall.
+    """
+
+    # OPNsense hides these unless "advanced mode" is on.
+    ADVANCED = ("interface_not", "origin_not")
+
+    bindings = forms.MultipleChoiceField(required=False, label="Interface (rule)", widget=MultiSelectWidget())
+    origin_bindings = forms.MultipleChoiceField(required=False, label="Interface (origin)", widget=MultiSelectWidget())
+    protocol = forms.CharField(initial="any", widget=SearchSelect())
     source = CSVChoicesField(tags=True, initial="any")
     destination = CSVChoicesField(tags=True, initial="any")
-    source_port = forms.CharField(required=False, widget=TokenWidget(tags=True))
-    destination_port = forms.CharField(required=False, widget=TokenWidget(tags=True))
-    icmp_types = CSVChoicesField(
-        choices=ICMP_TYPES, required=False, help_text="IPv4 ICMP types; leave empty for any type."
-    )
-    icmp6_types = CSVChoicesField(
-        choices=ICMP6_TYPES, required=False, help_text="IPv6 ICMP types; leave empty for any type."
-    )
+    source_port = forms.CharField(required=False, widget=SearchSelect(tags=True, selector="port"))
+    destination_port = forms.CharField(required=False, widget=SearchSelect(tags=True, selector="port"))
+    gateway = forms.CharField(required=False, widget=SearchSelect(tags=True, selector="manual"))
+    icmp_types = CSVChoicesField(choices=ICMP_TYPES, required=False)
+    icmp6_types = CSVChoicesField(choices=ICMP6_TYPES, required=False)
 
     class Meta:
         model = Rule
-        exclude = ["interface", "floating"]
-        widgets = {
-            key: MultiSelectWidget()
-            for key in (
-                "interfaces",
-                "interface_groups",
-                "origin_interfaces",
-                "origin_interface_groups",
-                "categories",
-                "firewalls",
-                "firewall_groups",
-            )
-        }
+        exclude = [
+            "interface",
+            "floating",
+            "interfaces",
+            "interface_groups",
+            "origin_interfaces",
+            "origin_interface_groups",
+        ]
+        widgets = {key: MultiSelectWidget() for key in ("categories", "firewalls", "firewall_groups")}
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("label_suffix", "")
@@ -136,97 +180,158 @@ class RuleForm(forms.ModelForm):
             return
         for field in self.fields.values():
             field.help_text = field.help_text.split(" Hold down")[0]
-        for field, label in {
+        labels = {
             "name": "Description",
-            "interfaces": "Interface (rule)",
-            "interface_groups": "Interface groups (rule)",
-            "origin_interfaces": "Interface (origin)",
-            "origin_interface_groups": "Interface groups (origin)",
+            "interface_not": "Invert interface (rule)",
+            "origin_not": "Invert interface (origin)",
             "ip_version": "Version",
-            "source_not": "Invert source",
-            "destination_not": "Invert destination",
+            "source_not": "Invert Source",
+            "source_port": "Source Port",
+            "destination_not": "Invert Destination",
+            "destination_port": "Destination Port",
             "icmp_types": "ICMP type",
             "icmp6_types": "ICMPv6 type",
-        }.items():
-            self.fields[field].label = label
-        if self.instance.interface_id and not self.is_bound:
-            self.initial["interfaces"] = [interface.pk for interface in self.instance.bound_interfaces()]
+            "state_type": "State type",
+        }
+        for name, label in labels.items():
+            self.fields[name].label = label
+        # Help texts are OPNsense's own; fields OPNsense documents without help keep none.
         help_texts = {
-            "enabled": "Enable this rule on targeted firewalls when deployed.",
-            "name": "The human-readable description. A compact manager identity tag is appended automatically when deployed.",
-            "categories": "Labels used to organize and filter rules.",
-            "interfaces": "Choose logical interfaces mapped to your firewalls. Leave rule interfaces and groups empty to match all interfaces.",
-            "interface_groups": "Groups can be used alongside individual rule interfaces. Placement is determined from the total number of bindings.",
-            "origin_interfaces": "Optionally match the interface on which a packet was originally received. Empty means any origin.",
-            "origin_interface_groups": "Optionally match a group of origin interfaces. Origin bindings do not determine floating placement.",
-            "interface_not": "Match interfaces other than the selected rule interfaces or groups.",
-            "quick": "Stop processing further rules when this rule matches.",
-            "action": "Pass permits traffic, block silently drops it, and reject sends a rejection response.",
-            "direction": "Match traffic entering, leaving, or in either direction on the rule interfaces.",
-            "ip_version": "Select IPv4, IPv6, or both address families.",
-            "source_not": "Match addresses outside the selected sources.",
-            "destination_not": "Match addresses outside the selected destinations.",
-            "source": "Choose an alias, interface network/address, built-in option, or enter a host or network.",
-            "destination": "Choose an alias, interface network/address, built-in option, or enter a host or network.",
-            "source_port": "Choose a service or port alias, or enter one port or a range such as 5060-5070. Empty means any port.",
-            "destination_port": "Choose a service or port alias, or enter one port or a range such as 5060-5070. Empty means any port.",
-            "log": "Log packets matching this rule on the firewall.",
-            "sequence": "Rule order on the firewall; lower values are evaluated first.",
-            "scope": "All targets every enabled firewall, including new devices. Selected uses the firewalls and groups below.",
-            "firewalls": "Direct targets when Scope is Selected. Empty direct targets are allowed when a firewall group is selected.",
+            "enabled": "Enable this rule",
+            "sequence": "The order in which rules are being processed. Lower values are evaluated first. "
+            "Each rule needs its own sequence on an interface.",
+            "categories": "For grouping purposes you may select multiple groups here to organize items.",
+            "name": "You may enter a description here for your reference (not parsed). "
+            "A short manager tag is appended when the rule is pushed.",
+            "interface_not": "Match packets on all but the selected rule interface.",
+            "bindings": "Only match packets on the selected rule interfaces or groups. Interfaces that aren't "
+            "mapped on a firewall are left out when pushing to it. No selection makes a floating rule "
+            "for all interfaces.",
+            "origin_not": "Match packets that were not received on the selected interface.",
+            "origin_bindings": "Only match packets that were initially received on the selected interfaces or "
+            "groups. This is mostly relevant for out direction rules when creating a security zone ruleset.",
+            "quick": "If a packet matches a rule specifying quick, then that rule is considered the last matching "
+            "rule and the specified action is taken. When a rule does not have quick enabled, the last matching "
+            "rule wins.",
+            "action": "Choose what to do with packets that match the criteria specified below. Hint: the "
+            "difference between block and reject is that with reject, a packet (TCP RST or ICMP port unreachable "
+            "for UDP) is returned to the sender, whereas with block the packet is dropped silently. In either "
+            "case, the original packet is discarded.",
+            "direction": "Direction of the traffic. The default policy is to filter inbound traffic, which sets "
+            "the policy to the interface originally receiving the traffic.",
+            "ip_version": "",
+            "protocol": "",
+            "icmp_types": "",
+            "icmp6_types": "",
+            "source_not": "Use this option to invert the sense of the match.",
+            "source": "",
+            "source_port": "Source port number or well known name (imap, imaps, http, https, ...), "
+            "for ranges use a dash",
+            "destination_not": "Use this option to invert the sense of the match.",
+            "destination": "",
+            "destination_port": "Destination port number or well known name (imap, imaps, http, https, ...), "
+            "for ranges use a dash",
+            "log": "Log packets that are handled by this rule",
+            "state_type": "State tracking mechanism to use, default is full stateful tracking, sloppy ignores "
+            "sequence numbers, use none for stateless rules.",
+            "gateway": "Leave as 'default' to use the system routing table. Or choose a gateway to utilize "
+            "policy based routing. The name must exist on every firewall the rule is pushed to.",
+            "scope": "All targets every enabled firewall, including new devices. Selected uses the firewalls "
+            "and groups below.",
+            "firewalls": "Direct targets when Scope is Selected.",
             "firewall_groups": "Targets include enabled firewalls in these groups, including devices added later.",
         }
         for name, text in help_texts.items():
             self.fields[name].help_text = text
-        self.fields["interface_not"].label = "Invert rule interfaces"
-        for name, placeholder in {
-            "interfaces": "Any (all interfaces)",
-            "interface_groups": "No interface groups",
-            "origin_interfaces": "Any origin",
-            "origin_interface_groups": "No origin groups",
-            "source_port": "Any port",
-            "destination_port": "Any port",
-        }.items():
-            widget = self.fields[name].widget
-            getattr(widget, "widget", widget).attrs["data-placeholder"] = placeholder
-        self.fields[
-            "protocol"
-        ].help_text = "Refresh interface inventory to load the complete protocol catalog from your OPNsense devices."
-        choices = protocol_choices()
-        self.fields["protocol"].allowed = {value for value, label in choices}
-        self.fields["protocol"].widget.choices = choices
-        for name in ("action", "direction", "ip_version"):
-            old = self.fields[name].widget.choices
-            self.fields[name].widget = SearchSelect(choices=old)
-        addresses = [("any", "Any"), ("(self)", "This firewall"), ("bogons", "Bogons"), ("bogonsv6", "Bogons IPv6")]
-        addresses += [(a.name, a.name + " · alias") for a in Alias.objects.exclude(type="port")]
-        for interface in LogicalInterface.objects.all():
-            addresses += [
-                (f"@{interface.name}:net", interface.name + " network"),
-                (f"@{interface.name}:ip", interface.name + " address"),
+
+        choices = binding_choices()
+        for name in ("bindings", "origin_bindings"):
+            self.fields[name].choices = choices
+        self.fields["bindings"].widget.attrs["data-placeholder"] = "any"
+        self.fields["origin_bindings"].widget.attrs["data-placeholder"] = "any"
+        self.fields["categories"].widget.attrs["data-placeholder"] = "Nothing selected"
+        if self.instance.pk and not self.is_bound:
+            rule = self.instance
+            self.initial["bindings"] = [f"interface:{i.pk}" for i in rule.bound_interfaces()] + [
+                f"group:{g.pk}" for g in rule.interface_groups.all()
             ]
-        addresses += [(g.name, g.name + " group network") for g in InterfaceGroup.objects.all()]
+            self.initial["origin_bindings"] = [f"interface:{i.pk}" for i in rule.origin_interfaces.all()] + [
+                f"group:{g.pk}" for g in rule.origin_interface_groups.all()
+            ]
+
+        protocols = protocol_choices()
+        self.fields["protocol"].widget.choices = protocols
+        self._protocols = {value for value, label in protocols}
+        # Rules saved before Protocol became single-valued keep their list until edited.
+        if "," in (self.instance.protocol or ""):
+            self.fields["protocol"].widget = TokenWidget(choices=protocols)
+        for name in ("action", "direction", "ip_version", "state_type", "scope"):
+            self.fields[name].widget = SearchSelect(choices=self.fields[name].widget.choices)
+        self.fields["state_type"].required = False
+
+        aliases = sorted(Alias.objects.exclude(type="port").values_list("name", flat=True), key=str.lower)
+        networks = [("any", "any"), ("(self)", "This Firewall")]
+        for interface in LogicalInterface.objects.order_by("name"):
+            networks += [
+                (f"@{interface.name}:net", f"{interface.name} network"),
+                (f"@{interface.name}:ip", f"{interface.name} address"),
+            ]
+        networks += [(g.name, f"{g.name} network") for g in InterfaceGroup.objects.order_by("name")]
+        networks += [("bogons", "bogons"), ("bogonsv6", "bogonsv6")]
         for name in ("source", "destination"):
-            self.fields[name].widget.choices = addresses
-        ports = [("", "Any")] + PORTS + [(a.name, a.name + " · port alias") for a in Alias.objects.filter(type="port")]
+            widget = self.fields[name].widget
+            widget.choices = [("Aliases", [(a, a) for a in aliases]), ("Networks", networks)]
+            widget.attrs["data-selector"] = "net"
+
+        port_aliases = sorted(Alias.objects.filter(type="port").values_list("name", flat=True), key=str.lower)
+        self._port_aliases = set(port_aliases)
+        well_known = [(name, label.upper()) for name, label in PORTS]
         for name in ("source_port", "destination_port"):
-            self.fields[name].widget.choices = ports
+            self.fields[name].widget.choices = [
+                ("Aliases", [(a, a) for a in port_aliases]),
+                ("Ports", [("", "any")] + well_known),
+            ]
+        self.fields["gateway"].widget.choices = [("", "default")] + [(g, g) for g in observed_gateways()]
+
+    def advanced_has_values(self):
+        """Advanced fields set away from their defaults; the editor opens in advanced mode then."""
+        if self.is_bound:
+            return any(self.data.get(name) for name in self.ADVANCED)
+        return any(getattr(self.instance, name) for name in self.ADVANCED)
+
+    def clean_protocol(self):
+        value = self.cleaned_data["protocol"]
+        values = [v for v in value.split(",") if v]
+        legacy = "," in (self.instance.protocol or "")
+        if len(values) != 1 and not (legacy and values):
+            raise forms.ValidationError("Choose one protocol.")
+        if any(v not in self._protocols for v in values):
+            raise forms.ValidationError("Choose a supported protocol.")
+        return value
 
     def clean(self):
         data = super().clean()
-        count = len(data.get("interfaces", [])) + len(data.get("interface_groups", []))
-        self.instance.floating = count != 1
+        for prefix in ("", "origin_"):
+            chosen = data.get(prefix + "bindings") or []
+            interface_ids = [int(v.split(":")[1]) for v in chosen if v.startswith("interface:")]
+            group_ids = [int(v.split(":")[1]) for v in chosen if v.startswith("group:")]
+            data[prefix + "interface_ids"], data[prefix + "group_ids"] = interface_ids, group_ids
+        self.instance.floating = len(data["interface_ids"]) + len(data["group_ids"]) != 1
+        data["state_type"] = data.get("state_type") or "keep"
         for field in ("source", "destination"):
             values = (data.get(field) or "").split(",")
             if "any" in values and len(values) > 1:
                 self.add_error(field, "Any cannot be combined with other addresses.")
         for field in ("source_port", "destination_port"):
-            if data.get(field) == "any":
-                data[field] = ""
-            if "," in (data.get(field) or ""):
+            value = data.get(field) or ""
+            if value == "any":
+                data[field] = value = ""
+            if "," in value:
                 self.add_error(
                     field, "OPNsense accepts one port, range or port alias here. Use a port alias for multiple ports."
                 )
+            elif value and not port_is_valid(value, self._port_aliases):
+                self.add_error(field, "Please specify a valid portnumber, name, alias or range.")
         import ipaddress
 
         allowed = set(Alias.objects.exclude(type="port").values_list("name", flat=True)) | {
@@ -250,6 +355,25 @@ class RuleForm(forms.ModelForm):
     def save(self, commit=True):
         self.instance.interface = None
         return super().save(commit)
+
+    def _save_m2m(self):
+        super()._save_m2m()
+        data = self.cleaned_data
+        self.instance.interfaces.set(data["interface_ids"])
+        self.instance.interface_groups.set(data["group_ids"])
+        self.instance.origin_interfaces.set(data["origin_interface_ids"])
+        self.instance.origin_interface_groups.set(data["origin_group_ids"])
+
+
+def observed_gateways():
+    """Gateway names already used by rules in each firewall's newest snapshot."""
+    names = set()
+    for firewall in Firewall.objects.all():
+        snapshot = firewall.snapshots.first()
+        rules = (snapshot.data or {}).get("rules", []) if snapshot else []
+        names.update(row.get("gateway", "") for row in rules if isinstance(row, dict))
+    names.discard("")
+    return sorted(names, key=str.lower)
 
 
 class CredentialsForm(forms.Form):

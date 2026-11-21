@@ -62,20 +62,10 @@ class RuleAdmin(admin.ModelAdmin):
 
     form = RuleForm
     change_form_template = "admin/fleet/rule/change_form.html"
+    # Sections and field order follow OPNsense's Firewall: Rules dialog; Deployment is manager-only.
     fieldsets = [
-        ("Organization", {"fields": ("enabled", "categories", "name")}),
-        (
-            "Interface",
-            {
-                "fields": (
-                    "interfaces",
-                    "interface_groups",
-                    "origin_interfaces",
-                    "origin_interface_groups",
-                    "interface_not",
-                )
-            },
-        ),
+        ("Organisation", {"fields": ("enabled", "sequence", "categories", "name")}),
+        ("Interface", {"fields": ("interface_not", "bindings", "origin_not", "origin_bindings")}),
         (
             "Filter",
             {
@@ -97,14 +87,16 @@ class RuleAdmin(admin.ModelAdmin):
                 )
             },
         ),
-        ("Deployment", {"fields": ("sequence", "scope", "firewalls", "firewall_groups")}),
+        ("Stateful firewall", {"fields": ("state_type",)}),
+        ("Source Routing", {"fields": ("gateway",)}),
+        ("Deployment", {"fields": ("scope", "firewalls", "firewall_groups")}),
     ]
-    list_display = ["name", "sequence", "bindings", "action", "protocol", "scope", "enabled"]
+    list_display = ["name", "sequence", "rule_bindings", "action", "protocol", "scope", "enabled"]
     list_filter = ["scope", "interfaces", "interface_groups", "categories", "floating", "action", "enabled"]
     search_fields = ["name", "source", "destination"]
 
     @admin.display(description="Interfaces / groups")
-    def bindings(self, obj):
+    def rule_bindings(self, obj):
         return (
             ", ".join([i.name for i in obj.bound_interfaces()] + [g.name for g in obj.interface_groups.all()])
             or "Floating / global"

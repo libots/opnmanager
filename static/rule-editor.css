@@ -1,54 +1,74 @@
-body.model-rule.change-form #content{max-width:1350px;margin:0 auto;padding-bottom:24px}
-body.model-rule.change-form #content h1{font-size:26px;letter-spacing:-.5px;color:var(--body-fg);margin:0 0 20px}
-body.model-rule.change-form #content-main{float:none}
-#rule_form .rule-editor-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 16px;background:#fff;border:1px solid var(--border-color);border-bottom:0;border-radius:6px 6px 0 0}
-#rule_form [hidden]{display:none!important}
-#rule_form .rule-form-search{display:flex;gap:12px;align-items:center;margin:0;font-size:12px;font-weight:600}
-#rule_form .rule-form-search input{width:250px;min-height:34px;padding:7px 10px;font-size:13px}
-#rule_form .rule-full-help{display:flex;align-items:center;gap:6px;margin:0 0 0 auto;font-size:12px;font-weight:400}
-#rule-search-status{font-size:11px;color:var(--body-quiet-color)}
-#rule_form .rule-editor-sections{border:1px solid var(--border-color);border-radius:0 0 6px 6px;overflow:hidden}
-#rule_form .rule-editor-section{border:0;border-radius:0;margin:0;background:#fff}
-#rule_form .rule-editor-section summary{padding:11px 16px;border-top:1px solid var(--hairline-color);background:#f0f3f5;color:var(--body-fg);font-size:14px;font-weight:650;cursor:pointer}
-#rule_form .rule-editor-section:first-child summary{border-top:0}
-#rule_form .rule-editor-row{display:grid;grid-template-columns:225px minmax(0,1fr);gap:18px;padding:9px 20px;border-bottom:1px solid var(--hairline-color);overflow:visible;align-items:start}
-#rule_form .rule-editor-row:nth-child(even){background:#fafbfc}
-#rule_form .rule-editor-row:last-child{border-bottom:0}
-#rule_form .rule-field-label{display:flex;flex-direction:row;align-items:center;gap:7px;padding-top:6px;min-width:0}
-#rule_form .rule-field-label label{float:none;width:auto;padding:0;margin:0;color:var(--body-fg);font-size:13px;font-weight:600;line-height:1.5}
-#rule_form .rule-field-label label:after{content:none}
-#rule_form .rule-help-toggle{border:0;background:#647b8b;color:#fff;font-size:10px;font-weight:700;line-height:16px;width:16px;height:16px;padding:0;border-radius:50%;cursor:pointer;order:-1;flex-shrink:0}
-#rule_form .rule-field-control{display:block;min-width:0;max-width:670px}
-#rule_form .rule-field-control input:not([type=checkbox]),#rule_form .rule-field-control select,#rule_form .rule-field-control textarea{width:100%;min-width:0;max-width:100%;box-sizing:border-box;font-size:13px;padding:7px 10px;min-height:34px}
-#rule_form .rule-field-control input[type=number]{max-width:160px}
-#rule_form .rule-field-control input[type=checkbox]{margin:7px 0;accent-color:#137b66;width:15px;height:15px}
-#rule_form .related-widget-wrapper{min-width:0;gap:4px}
-#rule_form .related-widget-wrapper .select2,#rule_form .select2{min-width:0!important;width:100%!important;flex-basis:100%}
-#rule_form .related-widget-wrapper>a{display:inline-flex;margin:0 2px 2px}
-#rule_form .select2-selection--multiple{min-height:34px;border-color:#c4ced5}
-#rule_form .select2-selection__rendered{font-size:12px;line-height:1.6}
-#rule_form .select2-selection--single{height:34px;border-color:#c4ced5}
-#rule_form .select2-selection--single .select2-selection__rendered{line-height:32px}
-#rule_form .select2-selection--single .select2-selection__arrow{height:32px}
-#rule_form .select2-search__field{min-height:22px!important;padding:0!important;font-size:13px!important}
-#rule_form .rule-field-help{margin:6px 0 0;padding:0;line-height:1.6;font-size:11px;color:var(--body-quiet-color)}
-#rule_form.rule-editor-enhanced .rule-field-help{display:none}
-#rule_form.rule-editor-enhanced .rule-help-open .rule-field-help,#rule_form.rule-full-help-visible .rule-field-help,#rule_form .errors .rule-field-help{display:block}
-#rule_form .rule-placement-row{font-size:12px}
-#rule-placement{display:block;font-weight:600;margin:6px 0}
-#rule_form .rule-placement-row .help{margin:5px 0 0;padding:0;line-height:1.6}
-#rule_form .opn-bulk-editor{margin:3px 0 0!important}
-#rule_form .opn-bulk-editor>button,#rule_form .rule-editor-toolbar>button,#rule_form .rule-editor-empty button{border:0;background:none;color:#137b66;padding:2px 8px 2px 0;margin:0 10px 0 0;font:11px/1.6 system-ui;cursor:pointer}
-#rule_form .opn-bulk-editor>button:hover{text-decoration:underline}
-#rule_form .opn-bulk-editor>a{font:11px/1.6 system-ui;color:#137b66;margin-right:12px}
-#rule_form .opn-bulk-editor p{margin:6px 0;font-size:12px}
-#rule_form .rule-editor-row.errors{border-left:3px solid #ba4545}
-#rule_form .rule-field-control .errorlist{margin:0 0 6px;padding:0;color:#ba4545}
-#rule_form .rule-save-note{margin:16px 0;font-size:12px;color:var(--body-quiet-color)}
-#rule_form .rule-editor-footer{position:sticky;bottom:0;z-index:10;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:12px 16px;background:#fff;box-shadow:0 -2px 10px #192b3c12;border:1px solid var(--border-color);border-radius:5px}
-#rule_form .rule-editor-footer input[type=submit]{margin:0;padding:9px 18px;font-size:12px;min-height:36px;background:#137b66;border:1px solid #137b66;border-radius:4px;color:#fff;text-transform:none;cursor:pointer}
-#rule_form .rule-editor-footer .button{padding:8px 15px;font-size:12px;font-weight:400;background:#fff;color:#192b3c}
-#rule_form .rule-secondary-actions{display:flex;gap:14px;margin-right:auto;font-size:12px}
-#rule_form .rule-secondary-actions .rule-delete{color:#ba4545}
-@media(max-width:1000px){#rule_form .rule-editor-row{grid-template-columns:175px minmax(0,1fr);gap:10px;padding:9px 14px}}
-@media(max-width:650px){#rule_form .rule-editor-row{grid-template-columns:1fr;gap:4px}#rule_form .rule-full-help{margin-left:0}#rule_form .rule-form-search{flex:1;flex-wrap:wrap}#rule_form .rule-form-search input{width:100%}#rule_form .rule-editor-footer{padding:10px}}
+/* Rule editor laid out like OPNsense's "Edit rule" dialog. */
+body.model-rule.change-form #content { max-width: 1100px; padding-top: 16px; }
+body.model-rule.change-form #content-main { float: none; }
+#rule_form { background: #fff; border: 1px solid var(--opn-border); }
+#rule_form [hidden] { display: none !important; }
+
+/* Dialog head: title left, search box right */
+#rule_form .rule-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--opn-border); }
+#rule_form .rule-dialog-head h1 { margin: 0; font-size: 20px; font-weight: 600; }
+#rule_form .rule-form-search { display: flex; align-items: stretch; margin: 0; }
+#rule_form .rule-search-icon { display: inline-flex; align-items: center; padding: 0 11px; border: 1px solid var(--opn-border-strong); border-right: 0; border-radius: 3px 0 0 3px; background: #EEE; color: var(--opn-text); }
+#rule_form .rule-search-icon .icon { width: 15px; height: 15px; fill: currentColor; }
+#rule_form .rule-form-search input { width: 240px; border-radius: 0 3px 3px 0; }
+
+/* Toolbar: advanced mode (left) and full help (right) switches */
+#rule_form .rule-editor-toolbar { display: flex; align-items: center; gap: 14px; padding: 6px 12px; background: var(--opn-bg-head); border-bottom: 1px solid var(--opn-border); }
+#rule_form .rule-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: none; color: var(--opn-text); font: 400 14px/1.4 var(--opn-font); cursor: pointer; }
+#rule_form #rule-full-help { margin-left: auto; }
+#rule_form .rule-toggle .switch { position: relative; width: 20px; height: 12px; border: 2px solid #D9534F; border-radius: 7px; }
+#rule_form .rule-toggle .switch::after { content: ""; position: absolute; top: 1px; left: 1px; width: 6px; height: 6px; border-radius: 50%; background: #D9534F; transition: left .15s; }
+#rule_form .rule-toggle[aria-checked=true] .switch { border-color: #5CB85C; background: #5CB85C; }
+#rule_form .rule-toggle[aria-checked=true] .switch::after { left: 9px; background: #fff; }
+#rule_form .rule-toggle .gear { width: 14px; height: 14px; fill: #F0AD4E; }
+#rule_form .info-icon, #rule_form .rule-help-toggle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--opn-primary); color: #fff; font: 700 11px/1 Georgia, serif; padding: 0; }
+#rule-search-status { font-size: 13px; color: var(--opn-muted); }
+
+/* Sections: OPNsense header rows with a chevron */
+#rule_form .rule-editor-sections { border: 0; }
+#rule_form .rule-editor-section { margin: 0; padding: 0; border: 0; border-radius: 0; background: #fff; }
+#rule_form .rule-editor-section summary { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--opn-bg); border-bottom: 1px solid var(--opn-border); color: var(--opn-text); font-size: 17px; font-weight: 600; cursor: pointer; list-style: none; }
+#rule_form .rule-editor-section summary::-webkit-details-marker { display: none; }
+#rule_form .rule-editor-section summary::before { content: ""; width: 7px; height: 7px; margin: 0 4px 3px 3px; border-right: 2px solid var(--opn-text); border-bottom: 2px solid var(--opn-text); transform: rotate(45deg); transition: transform .15s; }
+#rule_form .rule-editor-section details:not([open]) summary::before { transform: rotate(-45deg); margin-bottom: 0; }
+
+/* Rows: label with info icon | control with help underneath */
+#rule_form .rule-editor-row { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 10px; padding: 6px 12px; border-bottom: 1px solid #EEE; background: #fff; align-items: start; overflow: visible; float: none; }
+#rule_form .rule-editor-row:nth-child(even) { background: #FCFCFC; }
+#rule_form .rule-editor-row > .rule-field-label { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 7px; min-height: 34px; min-width: 0; }
+#rule_form .rule-editor-row > .rule-field-control { display: block; }
+#rule_form .rule-field-label label { float: none; width: auto; margin: 0; padding: 0; font-size: 15px; font-weight: 600; color: var(--opn-text); line-height: 1.3; }
+#rule_form .rule-field-label label::after { content: none; }
+#rule_form .rule-help-toggle { cursor: pointer; }
+#rule_form .rule-help-toggle.no-help { background: #999; cursor: default; }
+#rule_form .rule-field-control { display: block; min-width: 0; max-width: 520px; padding-top: 0; }
+#rule_form .rule-field-control > input[type=text], #rule_form .rule-field-control > input[type=number], #rule_form .rule-field-control > textarea { width: 100%; max-width: 390px; }
+#rule_form .rule-field-control input[type=checkbox] { margin: 9px 0; }
+#rule_form .rule-field-help { display: none; margin: 4px 0 2px; font-size: 13px; color: var(--opn-muted); }
+#rule_form.rule-full-help-visible .rule-field-help, #rule_form .rule-help-open .rule-field-help { display: block; }
+#rule_form .errors .rule-field-label label { color: var(--opn-danger); }
+#rule_form .errorlist { margin: 4px 0 0; padding: 0; list-style: none; }
+#rule_form .rule-placement-row output { display: block; padding-top: 7px; font-size: 14px; }
+#rule_form .rule-placement-row .rule-field-help { display: block; }
+#rule_form .related-widget-wrapper { max-width: 520px; }
+#rule_form .readonly { padding-top: 7px; }
+
+/* Footer: note, secondary links, Cancel / Save (btn-default / btn-primary) */
+#rule_form .rule-editor-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--opn-border); background: #fff; position: sticky; bottom: 0; z-index: 5; }
+#rule_form .rule-save-note { margin: 0; font-size: 13px; color: var(--opn-muted); flex: 1 1 260px; }
+#rule_form .rule-secondary-actions { display: flex; gap: 14px; font-size: 14px; }
+#rule_form .rule-delete { color: #D9534F; }
+#rule_form .rule-cancel { min-height: 34px; padding: 6px 14px; border: 1px solid var(--opn-border); border-radius: 3px; background: #fff; color: #444; font-size: 14px; }
+#rule_form .rule-cancel:hover { background: #E5E5E5; text-decoration: none; }
+#rule_form .rule-editor-footer input[type=submit] { min-height: 34px; padding: 6px 16px; border: 1px solid var(--opn-primary); border-radius: 3px; background: var(--opn-primary); color: #fff; font: 400 14px var(--opn-font); cursor: pointer; }
+#rule_form .rule-editor-footer input[type=submit]:hover { background: var(--opn-primary-dark); }
+#rule_form .rule-editor-empty { padding: 16px; }
+body.model-rule.change-form .submit-row { display: none; }
+
+@media (max-width: 760px) {
+  #rule_form .rule-dialog-head { flex-wrap: wrap; }
+  #rule_form .rule-form-search { flex: 1 1 100%; }
+  #rule_form .rule-form-search input { width: 100%; }
+  #rule_form .rule-editor-row { grid-template-columns: 1fr; gap: 2px; }
+  #rule_form .rule-field-label { min-height: 0; }
+}

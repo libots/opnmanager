@@ -13,7 +13,6 @@ from .rule_identity import is_managed
 SUPPORTED = set(RULE_DEFAULTS) | {"uuid", "description", "interface", "sequence", "icmptype", "icmp6type"}
 IGNORED = {"sort_order", "prio_group", "audit", "created", "updated", "category", "category_colors"}
 SAFE_DEFAULTS = {
-    "statetype": "keep",
     "state-policy": "",
     "allowopts": "0",
     "tcpflags_any": "0",
@@ -173,6 +172,8 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
             "destination": address(row.get("destination_net", "any")),
             "icmp_types": row.get("icmptype", ""),
             "icmp6_types": row.get("icmp6type", ""),
+            "state_type": row.get("statetype") or "keep",
+            "gateway": row.get("gateway", ""),
         }
         if any(v not in dict(ICMP_TYPES) for v in tokens(values["icmp_types"])) or any(
             v not in dict(ICMP6_TYPES) for v in tokens(values["icmp6_types"])
@@ -189,6 +190,7 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
             ("source_not", "source_not"),
             ("destination_not", "destination_not"),
             ("interface_not", "interfacenot"),
+            ("origin_not", "received-on-not"),
         ]:
             values[key] = row.get(source_key, RULE_DEFAULTS[source_key]) == "1"
         for field in ("source_port", "destination_port"):
@@ -219,8 +221,6 @@ def import_rules(snapshot, indices, scope, targets, firewall_groups=()):
                 rule.origin_interface_groups.add(ensure_group(local))
             else:
                 raise ValidationError(f"Map origin interface {local} before importing.")
-        if row.get("received-on-not", "0") not in ("", "0"):
-            raise ValidationError("Inverted origin interfaces are not supported.")
         RuleOrigin.objects.create(firewall=firewall, rule=rule, remote_uuid=uid)
         imported.append(rule)
     return imported

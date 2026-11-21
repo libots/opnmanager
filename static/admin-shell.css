@@ -1,4 +1,65 @@
-html,body{background:#f5f6f8;color:#192b3c;color-scheme:light}body{--body-bg:#f5f6f8;--body-fg:#192b3c;--darkened-bg:#eef2f5;--hairline-color:#e4e9ed;--border-color:#d5dfe5;--link-fg:#137b66;--primary:#137b66;--secondary:#142b3d;--body-quiet-color:#6d7e8e;--body-loud-color:#192b3c;--header-color:#fff;--selected-row:#e5f3ed;--object-tools-bg:#137b66;--object-tools-hover-bg:#105d4e;--breadcrumbs-bg:#eef2f5;--breadcrumbs-fg:#192b3c;--breadcrumbs-link-fg:#137b66}#container{width:auto;margin-left:244px;min-width:0}.opn-admin-header{display:flex;justify-content:space-between;gap:15px;padding:28px 40px;font-size:11px;border-bottom:1px solid #e4e9ed}#content{padding:30px 40px}#content-main{min-width:0}main.content{margin:0;padding:0;max-width:none}#content-related{background:#fff}.module{background:#fff;border:1px solid #e4e9ed;border-radius:7px}.module h2,.module caption{background:#eef2f5;color:#192b3c}div.breadcrumbs{background:#eef2f5;color:#192b3c;padding:14px 40px}aside a{color:#b9ccd8}aside nav a:first-child{background:transparent}aside .brand{color:#fff}.form-row{display:block;overflow:visible}.form-row>div{display:flex;flex-direction:column;align-items:stretch}.form-row .flex-container{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}.form-row .flex-container>div{flex:1;min-width:260px}.related-widget-wrapper{float:none!important;display:flex;flex-wrap:wrap;align-items:center;max-width:100%;width:100%;gap:5px}.related-widget-wrapper .select2{flex:1;min-width:260px}.opn-bulk-editor{display:block!important;float:none!important;clear:both;flex:0 0 100%!important;width:100%!important;max-width:none!important;box-sizing:border-box}.opn-bulk-editor textarea{width:100%!important;min-height:180px;max-width:none!important;box-sizing:border-box}.opn-bulk-editor [hidden]{display:none!important}.opn-bulk-editor button{margin:4px 8px 4px 0;padding:8px 12px;cursor:pointer}.submit-row{background:#fff}#changelist{background:#fff}#changelist-filter{background:#eef2f5}.select2-container{max-width:100%}@media(max-width:650px){#container{margin-left:0}.opn-admin-header{padding:16px;flex-wrap:wrap}#content{padding:20px 16px}aside{position:static}div.breadcrumbs{padding:12px 16px}}
-aside{top:0!important;bottom:0!important;left:0!important;position:fixed!important;z-index:20}aside nav a:link,aside nav a:visited{color:#b9ccd8}aside .brand:link,aside .brand:visited{color:#fff}nav[aria-label="Breadcrumbs"] a{display:inline;padding:0;margin:0;background:none}select:not(.opn-select){height:auto;min-height:38px;padding:8px}.submit-row a.deletelink{height:auto;line-height:20px;padding:10px 15px}@media(max-width:650px){aside{position:static!important}}
-.popup #container{margin-left:0}.popup aside,.popup .opn-admin-header{display:none}
-.form-row[hidden]{display:none!important}
+/* Django admin inside the OPNmanager shell: OPNsense colors, font and spacing. */
+html, body { background: var(--opn-bg); color: var(--opn-text); color-scheme: light; }
+body {
+  font-family: var(--opn-font); font-size: 15px;
+  --font-family-primary: var(--opn-font);
+  --body-bg: var(--opn-bg); --body-fg: var(--opn-text); --body-quiet-color: var(--opn-muted); --body-loud-color: var(--opn-text);
+  --darkened-bg: var(--opn-bg-head); --hairline-color: #EEE; --border-color: var(--opn-border);
+  --link-fg: var(--opn-primary); --link-hover-color: var(--opn-primary-dark); --link-selected-fg: var(--opn-primary-dark);
+  --primary: var(--opn-primary); --secondary: var(--opn-primary); --accent: var(--opn-primary); --primary-fg: #fff;
+  --header-color: var(--opn-text); --selected-row: #FCF1ED; --selected-bg: #F5F5F5;
+  --button-bg: var(--opn-primary); --button-hover-bg: var(--opn-primary-dark); --default-button-bg: var(--opn-primary); --default-button-hover-bg: var(--opn-primary-dark);
+  --close-button-bg: #fff; --close-button-hover-bg: #E5E5E5; --delete-button-bg: #D9534F; --delete-button-hover-bg: #C9302C;
+  --object-tools-bg: #fff; --object-tools-fg: #444; --object-tools-hover-bg: #E5E5E5;
+  --breadcrumbs-bg: var(--opn-bg-head); --breadcrumbs-fg: var(--opn-muted); --breadcrumbs-link-fg: var(--opn-primary);
+  --message-success-bg: var(--opn-success-bg); --message-warning-bg: var(--opn-warning-bg); --message-error-bg: var(--opn-danger-bg);
+}
+#container { width: auto; min-width: 0; margin-left: var(--opn-sidebar); padding-top: var(--opn-topbar); transition: margin-left .2s; }
+#header { display: none; }
+#content { padding: 16px 24px 24px; }
+#content-main { min-width: 0; }
+main.content, #main { margin: 0; padding: 0; max-width: none; }
+#content h1 { font-size: 25px; font-weight: 600; margin: 0 0 14px; }
+div.breadcrumbs { padding: 18px 24px 14px; background: var(--opn-bg-head); border-bottom: 1px solid rgba(217, 217, 217, .5); color: var(--opn-muted); font-size: 25px; font-weight: 600; }
+div.breadcrumbs a { color: var(--opn-text); }
+div.breadcrumbs a:hover { color: var(--opn-primary); }
+nav[aria-label="Breadcrumbs"] a { display: inline; padding: 0; margin: 0; background: none; }
+.module { background: #fff; border: 1px solid var(--opn-border); border-radius: 0; }
+.module h2, .module caption, .inline-group h2 { background: var(--opn-bg-head); color: var(--opn-text); font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--opn-border); }
+fieldset.module { padding: 0; }
+.form-row { display: block; overflow: visible; padding: 10px 16px; border-bottom: 1px solid #EEE; }
+.form-row > div { display: flex; flex-direction: column; align-items: stretch; }
+.form-row .flex-container { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.form-row .flex-container > div { flex: 1; min-width: 260px; }
+.form-row[hidden] { display: none !important; }
+.aligned label { font-weight: 600; color: var(--opn-text); }
+form .aligned div.help, form .aligned p.help, .help { color: var(--opn-muted); font-size: 13px; }
+.related-widget-wrapper { float: none !important; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; max-width: 100%; }
+.related-widget-wrapper .opn-picker, .related-widget-wrapper .select2 { flex: 1 1 260px; }
+.related-widget-wrapper > a { font-size: 13px; }
+.opn-bulk-editor { display: block !important; float: none !important; clear: both; flex: 0 0 100% !important; width: 100% !important; max-width: none !important; }
+.opn-bulk-editor textarea { width: 100% !important; max-width: none !important; }
+select:not(.opn-select) { height: auto; min-height: 34px; padding: 6px 8px; }
+input[type=submit], .button, a.button, .submit-row input, .submit-row a { font-family: var(--opn-font); border-radius: 3px; }
+.submit-row { background: #fff; border: 1px solid var(--opn-border); border-radius: 0; padding: 12px 16px; }
+.submit-row a.deletelink { height: auto; line-height: 20px; padding: 8px 14px; border-radius: 3px; }
+.object-tools a:link, .object-tools a:visited { border: 1px solid var(--opn-border); border-radius: 3px; font-size: 13px; text-transform: none; letter-spacing: 0; }
+.object-tools a.addlink { background: var(--opn-primary); color: #fff; border-color: var(--opn-primary); }
+.object-tools a.addlink:hover { background: var(--opn-primary-dark); }
+#changelist { background: #fff; border: 1px solid var(--opn-border); }
+#changelist .actions { background: var(--opn-bg-head); border-bottom: 1px solid var(--opn-border); }
+#changelist-filter { background: #fff; border: 1px solid var(--opn-border); border-radius: 0; }
+#changelist-filter h2 { background: var(--opn-bg-head); color: var(--opn-text); text-transform: none; letter-spacing: 0; font-size: 15px; }
+#changelist table thead th { background: #fff; color: var(--opn-text); font-size: 14px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 2px solid #DDD; }
+#changelist table tbody td, #changelist table tbody th { font-size: 14px; border-top: 1px solid #DDD; border-bottom: 0; }
+#changelist table tbody tr:hover td, #changelist table tbody tr:hover th { background: #F5F5F5; }
+#toolbar { background: var(--opn-bg-head); border-bottom: 1px solid var(--opn-border); }
+.paginator { border-top: 1px solid var(--opn-border); }
+ul.messagelist li { font-size: 14px; }
+.dashboard .module table th, .dashboard .module table td { font-size: 14px; }
+.popup #container { margin-left: 0; padding-top: 0; }
+.popup .opn-topbar, .popup .opn-sidebar { display: none; }
+@media (max-width: 760px) {
+  #content { padding: 12px 16px 20px; }
+  div.breadcrumbs { padding: 14px 16px 12px; font-size: 20px; }
+}

@@ -28,6 +28,8 @@ RULE_DEFAULTS = {
     "interfacenot": "0",
     "source_not": "0",
     "destination_not": "0",
+    "statetype": "keep",
+    "gateway": "",
 }
 
 
@@ -332,6 +334,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             fields = {
                 **RULE_DEFAULTS,
                 "received-on": origin_binding,
+                "received-on-not": str(int(rule.origin_not)),
+                "statetype": rule.state_type,
+                "gateway": rule.gateway,
                 "description": rule.name + " " + marker,
                 "sequence": str(rule.sequence),
                 "interface": ",".join(bindings),
