@@ -34,6 +34,7 @@ class RulesTableTests(TestCase):
         self.assertEqual(response.context["rows"][0]["origin_display"], "WAN")
         self.assertEqual(response.context["rows"][0]["protocol"], "UDP")
         self.assertEqual(response.context["rows"][0]["source_display"], "! 192.0.2.0/24")
+        self.assertEqual(response.context["rows"][0]["source_lines"], ["! 192.0.2.0/24"])
         self.assertEqual(len(self.client.get("/rules/?q=  DNS  ").context["rows"]), 1)
         self.assertEqual(len(self.client.get("/rules/?q=" + str(one.pk)).context["rows"]), 0)
 

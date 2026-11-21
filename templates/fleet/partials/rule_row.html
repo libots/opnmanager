@@ -6,5 +6,5 @@
 <td>{% if row.interfacenot == '1' %}! {% endif %}{{ row.interface_display|default:'*' }}</td><td>{{ row.origin_display|default:'*' }}</td>
 <td>{% if row.ipprotocol == 'inet6' %}IPv6{% elif row.ipprotocol == 'inet46' %}IPv4+IPv6{% else %}IPv4{% endif %}</td>
 <td>{{ row.protocol|default:'*' }}{% if row.icmptype %}<small>{{ row.icmptype }}</small>{% endif %}{% if row.icmp6type %}<small>{{ row.icmp6type }}</small>{% endif %}</td>
-<td>{{ row.source_display }}</td><td>{{ row.source_port|default:'*' }}</td><td>{{ row.destination_display }}</td><td>{{ row.destination_port|default:'*' }}</td><td>{{ row.gateway|default:'*' }}</td>
+<td class="rule-addresses">{% for line in row.source_lines %}<div>{{ line }}</div>{% endfor %}</td><td>{{ row.source_port|default:'*' }}</td><td class="rule-addresses">{% for line in row.destination_lines %}<div>{{ line }}</div>{% endfor %}</td><td>{{ row.destination_port|default:'*' }}</td><td>{{ row.gateway|default:'*' }}</td>
 <td class="rule-description">{{ row.description }}</td><td class="rule-commands">{% if row.manager_id and perms.fleet.change_rule %}<a class="button" href="/admin/fleet/rule/{{ row.manager_id }}/change/" title="Edit manager rule">Edit</a>{% elif can_import %}<span>Select to import</span>{% endif %}</td></tr>

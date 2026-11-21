@@ -56,7 +56,8 @@ class LogicalInterfacePageTests(TestCase):
         html = response.content.decode()
         self.assertIn(f'name="map_{self.one.pk}_{self.lan.pk}"', html)
         self.assertIn('<option value="opt1" data-label="iot"', html)
-        self.assertIn("igb1.30 · 10.0.30.1/24 · up", html)
+        self.assertIn('data-detail="igb1.30 · up" data-addresses="10.0.30.1/24"', html)
+        self.assertIn('<div class="li-address">10.0.0.1/24</div>', html)
         self.assertIn('<option value="lan" data-label="lan"', html)  # from Two's snapshot
         self.assertIn("1 rule · 1 group", html)
         self.assertIn('class="li-corner"', html)

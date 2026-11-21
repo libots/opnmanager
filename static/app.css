@@ -348,7 +348,7 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .li-scroll { max-height: calc(100vh - var(--opn-topbar, 60px) - 210px); min-height: 240px; overflow: auto; }
 .li-matrix { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
 .li-matrix th, .li-matrix td { padding: 8px 10px; border-right: 1px solid #E5E5E5; border-bottom: 1px solid #E5E5E5; vertical-align: top; text-align: left; background: #fff; font-size: 14px; }
-.li-matrix thead th { position: sticky; top: 0; z-index: 3; min-width: 210px; background: #F7F7F7; border-bottom: 2px solid #DDD; }
+.li-matrix thead th { position: sticky; top: 0; z-index: 3; min-width: 200px; max-width: 280px; background: #F7F7F7; border-bottom: 2px solid #DDD; }
 .li-matrix .li-corner, .li-matrix .li-name { position: sticky; left: 0; z-index: 2; min-width: 190px; max-width: 240px; background: #FAFAFA; }
 .li-matrix .li-corner { z-index: 4; background: #F7F7F7; vertical-align: bottom; }
 .li-matrix tfoot th, .li-matrix tfoot td { background: #FCFCFC; border-top: 2px solid #DDD; }
@@ -360,8 +360,10 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .li-name a { font-weight: 600; color: var(--opn-text); }
 .li-name a:hover { color: var(--opn-primary); }
 .li-usage { margin-top: 2px; }
-.li-cell select, .li-cell input { width: 100%; min-width: 190px; min-height: 32px; padding: 4px 6px; }
-.li-detail { margin-top: 3px; font-size: 12px; color: var(--opn-muted); overflow-wrap: anywhere; }
+.li-cell { max-width: 280px; }
+.li-cell select, .li-cell input { width: 100%; min-width: 180px; min-height: 32px; padding: 4px 6px; }
+.li-detail { margin-top: 3px; font-size: 12px; line-height: 1.45; color: var(--opn-muted); overflow-wrap: anywhere; }
+.li-detail .li-address { font-variant-numeric: tabular-nums; }
 .li-cell.is-unmapped select, .li-cell.is-unmapped input { color: var(--opn-muted); background: #FAFAFA; }
 .li-cell.is-missing .li-detail, .li-warn { color: #A94442; }
 .li-cell.is-changed { box-shadow: inset 3px 0 0 var(--opn-primary); background: #FFF8F5; }
@@ -380,3 +382,5 @@ select.opn-native { position: absolute !important; width: 1px !important; height
   .li-add-form { left: 0; right: auto; width: min(300px, calc(100vw - 32px)); }
   .li-matrix .li-corner, .li-matrix .li-name { min-width: 130px; }
 }
+.opn-rules .rule-addresses { min-width: 120px; max-width: 260px; overflow-wrap: anywhere; }
+.opn-rules .rule-addresses > div + div { margin-top: 1px; }

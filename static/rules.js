@@ -101,7 +101,10 @@ document.addEventListener('DOMContentLoaded', function () {
     bindingCell(row,rule.origin_count,rule.origin_display,rule['received-on-not']==='1');
     cell(row,rule.ipprotocol==='inet6'?'IPv6':rule.ipprotocol==='inet46'?'IPv4+IPv6':'IPv4');
     const protocol=cell(row,!rule.protocol||rule.protocol==='any'?'*':rule.protocol);if(rule.icmptype || rule.icmp6type)protocol.append(element('small',rule.icmptype || rule.icmp6type));
-    for (const name of ['source_display','source_port','destination_display','destination_port','gateway']) cell(row,rule[name] || '*');
+    const addresses=lines=>{const td=cell(row,undefined,'rule-addresses');for(const line of lines||['*'])td.append(element('div',line));};
+    addresses(rule.source_lines);cell(row,rule.source_port || '*');
+    addresses(rule.destination_lines);cell(row,rule.destination_port || '*');
+    cell(row,rule.gateway || '*');
     cell(row,rule.description,'rule-description');
     const commands=cell(row,undefined,'rule-commands');
     if (manager) {
