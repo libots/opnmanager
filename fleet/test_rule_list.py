@@ -75,6 +75,34 @@ class RuleListCommandTests(TestCase):
         self.assertEqual(selected(bulk, "source_port"), [""])
         self.assertEqual(selected(bulk, "action"), ["pass"])
 
+    def test_every_single_value_picker_has_exactly_one_option_selected(self):
+        # A single-value picker with nothing selected falls back to its first option in the browser.
+        import re
+
+        from .forms import RuleForm, SearchSelect
+
+        Alias.objects.create(name="PrinterPorts", type="port", content="9100")
+        empty = Rule.objects.create(name="Empty", sequence=7, gateway="")
+        pickers = [name for name, field in RuleForm().fields.items() if isinstance(field.widget, SearchSelect)]
+        self.assertIn("source_port", pickers)
+        pages = [
+            f"/admin/fleet/rule/{empty.pk}/change/",
+            f"/admin/fleet/rule/add/?clone={empty.pk}",
+            f"/admin/fleet/rule/add/?clone={self.dns.pk}",
+            "/admin/fleet/rule/add/",
+            f"/admin/fleet/rule/bulk-edit/?ids={empty.pk}&ids={self.dns.pk}",
+        ]
+        for url in pages:
+            response = self.client.get(url)
+            html = response.content.decode()
+            mixed = set(response.context.get("bulk_mixed") or [])
+            for name in pickers:
+                if name in mixed:
+                    continue
+                with self.subTest(url=url, field=name):
+                    select = re.search(rf'<select name="{name}".*?</select>', html, re.S).group(0)
+                    self.assertEqual(len(re.findall(r"<option [^>]*\sselected(?=[\s>])", select)), 1, select[:300])
+
     def test_bulk_toggles_and_delete(self):
         self.bulk("disable", self.dns, self.web, _next="/rules/?q=x")
         self.assertFalse(Rule.objects.filter(enabled=True).exists())
