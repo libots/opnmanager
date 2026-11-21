@@ -83,15 +83,29 @@ def canonical(row, fields, kind):
     return result
 
 
-def resolve_address(value, mappings):
-    if "," in value:
-        return ",".join(resolve_address(token.strip(), mappings) for token in value.split(","))
+def _resolve_token(value, mappings, bad):
     if not value.startswith("@"):
         return value
     match = re.fullmatch(r"@([A-Za-z_][A-Za-z0-9_]*):(net|ip)", value)
     if not match or match[1] not in mappings:
-        raise ValueError(f"Unmapped or invalid logical address {value}.")
+        bad.append(value)
+        return value
     return mappings[match[1]] + ("ip" if match[2] == "ip" else "")
+
+
+def resolve_addresses(*values, mappings):
+    """Resolve logical @Interface:net/ip tokens in each value.
+
+    Every unmapped or invalid token across all values is reported in one error,
+    so a rule that references several missing interfaces names all of them.
+    """
+    bad = []
+    resolved = [",".join(_resolve_token(t.strip(), mappings, bad) for t in value.split(",")) for value in values]
+    if bad:
+        noun = "address" if len(bad) == 1 else "addresses"
+        raise ValueError(f"Unmapped or invalid logical {noun} {', '.join(dict.fromkeys(bad))}.")
+    return resolved
+
 
 
 def _matches_identity(kind, identity, row, origin_uuids):
@@ -330,6 +344,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             )
             if skipped:
                 continue
+            source_net, destination_net = resolve_addresses(rule.source, rule.destination, mappings=mappings)
             origin_binding = ",".join(sorted([mappings[i.name] for i in origins] + [g.name for g in origin_groups]))
             fields = {
                 **RULE_DEFAULTS,
@@ -345,9 +360,9 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
                 "direction": rule.direction,
                 "ipprotocol": rule.ip_version,
                 "protocol": rule.protocol,
-                "source_net": resolve_address(rule.source, mappings),
+                "source_net": source_net,
                 "source_port": rule.source_port,
-                "destination_net": resolve_address(rule.destination, mappings),
+                "destination_net": destination_net,
                 "destination_port": rule.destination_port,
                 "log": str(int(rule.log)),
                 "quick": str(int(rule.quick)),

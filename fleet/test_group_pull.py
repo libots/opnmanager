@@ -84,6 +84,12 @@ class GroupPullTests(TestCase):
         Rule.objects.create(name="Address", interface=self.lan, source="@WAN:net")
         self.assertTrue(any("Unmapped or invalid logical address" in error for error in plan_for(self.fw)["errors"]))
 
+    def test_every_unmapped_logical_address_is_named(self):
+        LogicalInterface.objects.create(name="DMZ")
+        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:net,@LAN:net", destination="@DMZ:ip")
+        errors = plan_for(self.fw)["errors"]
+        self.assertIn("Unmapped or invalid logical addresses @WAN:net, @DMZ:ip.", errors)
+
     @patch("fleet.views.OPNsenseClient")
     def test_json_pull_updates_snapshot_mappings_and_audit(self, client):
         client.return_value.snapshot.return_value = {**EMPTY, "interfaces": [{"name": "opt4", "label": "WAN"}]}
