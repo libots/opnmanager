@@ -2,6 +2,20 @@ import json
 
 from django import forms
 
+from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, PROTOCOLS, protocol_choices
+from .models import (
+    Alias,
+    AuthenticationServer,
+    Category,
+    DNSProfile,
+    Firewall,
+    FirewallAdministration,
+    FirewallGroup,
+    InterfaceGroup,
+    LogicalInterface,
+    Rule,
+    VirtualIP,
+)
 from .reconcile import validate_snapshot
 
 
@@ -15,11 +29,7 @@ class SnapshotImportForm(forms.Form):
         try:
             return validate_snapshot(json.load(upload))
         except (ValueError, UnicodeDecodeError, RecursionError) as exc:
-            raise forms.ValidationError("Invalid snapshot JSON: " + str(exc))
-
-
-from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, PROTOCOLS, protocol_choices
-from .models import Alias, Category, Firewall, FirewallGroup, InterfaceGroup, LogicalInterface, Rule
+            raise forms.ValidationError("Invalid snapshot JSON: " + str(exc)) from exc
 
 
 class TokenWidget(forms.SelectMultiple):
@@ -374,9 +384,6 @@ class InterfaceGroupForm(forms.ModelForm):
         model = InterfaceGroup
         fields = "__all__"
         widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups", "members")}
-
-
-from .models import AuthenticationServer, DNSProfile, FirewallAdministration, VirtualIP
 
 
 class AuthenticationServerForm(forms.ModelForm):

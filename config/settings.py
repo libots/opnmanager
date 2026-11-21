@@ -95,7 +95,7 @@ if os.getenv("DJANGO_TRUST_PROXY", "0") == "1":
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
-from fleet.oidc_storage import load as load_oidc_configuration
+from fleet.oidc_storage import load as load_oidc_configuration  # noqa: E402 (needs DATA_DIR)
 
 try:
     _oidc_ui = load_oidc_configuration(DATA_DIR)

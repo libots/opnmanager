@@ -373,7 +373,7 @@ class VirtualIP(ScopedPolicy):
         try:
             interface = ipaddress.ip_interface(self.network)
         except ValueError:
-            raise ValidationError("Enter an IP address with a valid prefix length.")
+            raise ValidationError("Enter an IP address with a valid prefix length.") from None
         if self.mode == "proxyarp" and interface.version != 4:
             raise ValidationError("Proxy ARP requires IPv4.")
 

@@ -70,7 +70,7 @@ class RuleDependencyTests(TestCase):
         self.assertEqual(client.save_definition.call_count, 2)
 
     def test_excluded_required_alias_still_blocks_even_if_device_has_it(self):
-        alias = Alias.objects.create(name="Excluded", content="10.0.0.1", scope="selected")
+        Alias.objects.create(name="Excluded", content="10.0.0.1", scope="selected")
         self.rule.source = "Excluded"
         self.rule.save()
         self.assertTrue(deployment_plan(self.fw)["rows"][0]["errors"])

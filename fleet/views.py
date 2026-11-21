@@ -1,13 +1,22 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
+from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
-from .forms import SnapshotImportForm
-from .models import Alias, AuditEvent, Firewall, LogicalInterface, Rule, Snapshot
+from .credentials import encrypt_credentials
+from .definition_sync import definition_plan, execute_definition_plan
+from .deployment import deployment_plan, execute_deployment
+from .forms import CredentialsForm, ImportRulesForm, SnapshotImportForm
+from .import_rules import import_rules
+from .mappings import apply_default_mappings
+from .models import Alias, AuditEvent, Category, Firewall, InterfaceGroup, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import plan_for
+from .rule_filters import SEARCH_FIELDS, filter_rows
 
 
 @login_required
@@ -135,19 +144,6 @@ def settings_page(request):
     return render(request, "fleet/settings.html", {"central_login": settings.OIDC_ENABLED})
 
 
-from django.core.exceptions import ValidationError
-from django.db import transaction
-from django.views.decorators.debug import sensitive_post_parameters
-
-from .credentials import encrypt_credentials
-from .definition_sync import definition_plan, execute_definition_plan
-from .forms import CredentialsForm, ImportRulesForm
-from .import_rules import import_rules
-from .mappings import apply_default_mappings
-from .models import Category, InterfaceGroup
-from .rule_filters import SEARCH_FIELDS, filter_rows
-
-
 @login_required
 @permission_required(("fleet.view_firewall", "fleet.manage_credentials", "fleet.change_firewall"), raise_exception=True)
 @sensitive_post_parameters("api_key", "api_secret")
@@ -181,7 +177,7 @@ def sync_definitions(request, pk):
         except ValueError:
             from django.http import Http404
 
-            raise Http404("Invalid rule identifier")
+            raise Http404("Invalid rule identifier") from None
     rule = get_object_or_404(Rule, pk=rule_id) if rule_id else None
     if rule and not rule.applies_to(fw):
         from django.http import Http404
@@ -393,9 +389,6 @@ def adopt_rules(request, pk):
     else:
         messages.error(request, "Invalid selection or stale snapshot. Select rules and target firewalls again.")
     return redirect("/rules/?firewall=" + str(fw.pk))
-
-
-from .deployment import deployment_plan, execute_deployment
 
 
 @login_required

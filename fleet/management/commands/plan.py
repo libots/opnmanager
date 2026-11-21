@@ -16,7 +16,7 @@ class Command(BaseCommand):
         try:
             fw = Firewall.objects.get(name=options["firewall"])
         except Firewall.DoesNotExist:
-            raise CommandError("Unknown firewall")
+            raise CommandError("Unknown firewall") from None
         result = plan_for(fw)
         self.stdout.write(json.dumps(result, indent=2))
         if result["errors"]:

@@ -224,7 +224,7 @@ def review_vip(request, pk, vip_id):
             try:
                 approved = signing.loads(request.POST.get("approval", ""), salt="vip-review", max_age=600)
             except signing.BadSignature:
-                raise DeviceError("Virtual IP review expired or is invalid. Review again.")
+                raise DeviceError("Virtual IP review expired or is invalid. Review again.") from None
             if approved != {"firewall": fw.pk, "vip": vip.pk, "digest": fingerprint}:
                 raise DeviceError("Device or desired VIP changed. Review again.")
             from urllib.parse import quote
@@ -278,6 +278,7 @@ def oidc_options(request):
         zip(
             ("issuer", "client_id", "authorization_endpoint", "token_endpoint", "user_endpoint", "jwks_endpoint"),
             FIELDS,
+            strict=True,
         )
     )
     initial = {field: stored.get(key, getattr(settings, key, "")) for field, key in mapping.items()}
@@ -393,7 +394,7 @@ def delete_vip(request, pk, uuid):
             try:
                 approved = signing.loads(request.POST.get("approval", ""), salt="vip-delete", max_age=600)
             except signing.BadSignature:
-                raise DeviceError("Deletion review expired. Review again.")
+                raise DeviceError("Deletion review expired. Review again.") from None
             if approved != expected:
                 raise DeviceError("Virtual IP configuration changed. Review again.")
             AuditEvent.objects.create(

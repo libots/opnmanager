@@ -24,7 +24,7 @@ class Command(BaseCommand):
         )
         vl10 = LogicalInterface.objects.create(name="VL10", description="Trusted clients")
         vl20 = LogicalInterface.objects.create(name="VL20", description="Services")
-        dns = Alias.objects.create(
+        Alias.objects.create(
             name="CorporateDNS", type="host", content="10.20.0.53\n10.20.0.54", description="Shared recursive resolvers"
         )
         Rule.objects.create(

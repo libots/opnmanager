@@ -6,7 +6,9 @@ from unittest.mock import Mock, patch
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import TestCase, override_settings
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.test import TestCase, TransactionTestCase, override_settings
 
 from .credentials import encrypt_credentials, get_credentials
 from .definition_sync import definition_plan, execute_definition_plan
@@ -192,7 +194,7 @@ class FeatureTests(TestCase):
         self.assertFalse(plan_for(self.fw)["errors"])
 
     def test_rule_form_autocomplete_multi_selections_and_port_restrictions(self):
-        alias = Alias.objects.create(name="Servers", content="10.0.0.1")
+        Alias.objects.create(name="Servers", content="10.0.0.1")
         data = {
             "name": "Multi",
             "sequence": "400",
@@ -429,11 +431,6 @@ class FeatureTests(TestCase):
         self.assertEqual(imported.source, "TRUSTED")
         self.assertEqual(InterfaceGroup.objects.get(name="TRUSTED").members.get(), self.logical)
         self.assertIn("TRUSTED", str(RuleForm(instance=imported)["source"]))
-
-
-from django.db import connection
-from django.db.migrations.executor import MigrationExecutor
-from django.test import TransactionTestCase
 
 
 class MigrationUpgradeTests(TransactionTestCase):

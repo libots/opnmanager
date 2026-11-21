@@ -23,7 +23,7 @@ class RulesTableTests(TestCase):
             source_not=True,
             source="192.0.2.0/24",
         )
-        two = Rule.objects.create(name="Ping", floating=True, protocol="ICMP", icmp_types="echoreq", sequence=200)
+        Rule.objects.create(name="Ping", floating=True, protocol="ICMP", icmp_types="echoreq", sequence=200)
         one.origin_interfaces.add(self.origin)
         response = self.client.get("/rules/?q=DNS")
         self.assertEqual(len(response.context["rows"]), 1)
@@ -38,7 +38,7 @@ class RulesTableTests(TestCase):
         self.assertEqual(len(self.client.get("/rules/?q=" + str(one.pk)).context["rows"]), 0)
 
     def test_snapshot_import_indices_and_categories_preserved(self):
-        snapshot = Snapshot.objects.create(
+        Snapshot.objects.create(
             firewall=self.fw,
             data={
                 "schema_version": 1,

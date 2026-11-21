@@ -2,17 +2,22 @@ from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 
+from .forms import AdministrationForm, AuthenticationServerForm, DNSProfileForm, VirtualIPForm
 from .models import (
     Alias,
     AuditEvent,
+    AuthenticationServer,
     Category,
+    DNSProfile,
     Firewall,
+    FirewallAdministration,
     FirewallGroup,
     InterfaceGroup,
     InterfaceMapping,
     LogicalInterface,
     Rule,
     Snapshot,
+    VirtualIP,
 )
 
 
@@ -157,10 +162,6 @@ class FirewallGroupAdmin(admin.ModelAdmin):
     form = FirewallGroupForm
     list_display = ["name", "description"]
     search_fields = ["name"]
-
-
-from .forms import AdministrationForm, AuthenticationServerForm, DNSProfileForm, VirtualIPForm
-from .models import AuthenticationServer, DNSProfile, FirewallAdministration, VirtualIP
 
 
 class DesiredProfileAdmin(admin.ModelAdmin):

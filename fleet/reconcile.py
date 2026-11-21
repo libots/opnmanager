@@ -92,6 +92,13 @@ def resolve_address(value, mappings):
     return mappings[match[1]] + ("ip" if match[2] == "ip" else "")
 
 
+def _matches_identity(kind, identity, row, origin_uuids):
+    if kind != "rule":
+        return row.get("ifname" if kind == "group" else "name") == identity
+    description = row.get("description", "")
+    return matches_rule(description, identity) or (bool(row.get("uuid")) and row["uuid"] == origin_uuids.get(identity))
+
+
 def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
     snapshot = snapshot or firewall.snapshots.first()
     plan = {
@@ -280,16 +287,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None):
     collection = {"alias": "aliases", "rule": "rules", "group": "groups", "category": "categories"}
     for kind, identity, label, desired in expected:
         rows = data.get(collection[kind], [])
-
-        def matches_identity(row):
-            if kind != "rule":
-                return row.get("ifname" if kind == "group" else "name") == identity
-            description = row.get("description", "")
-            return matches_rule(description, identity) or (
-                bool(row.get("uuid")) and row["uuid"] == origin_uuids.get(identity)
-            )
-
-        matches = [(i, row) for i, row in enumerate(rows) if matches_identity(row)]
+        matches = [(i, row) for i, row in enumerate(rows) if _matches_identity(kind, identity, row, origin_uuids)]
         item = {"kind": kind, "name": label, "status": "missing", "changes": [], "desired": desired, "actual": None}
         actual = None
         if len(matches) > 1:
