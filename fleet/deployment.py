@@ -5,6 +5,7 @@ import json
 
 from .alias_sync import digest
 from .dependencies import rule_definitions
+from .locks import device_write_lock
 from .models import AuditEvent, Rule, Snapshot
 from .opnsense import DeviceError
 from .reconcile import canonical, plan_for
@@ -171,20 +172,5 @@ def _execute_deployment(firewall, approved, selected, client, actor):
 
 
 def execute_deployment(firewall, approved, selected, client, actor):
-    # Local file lock serializes writes across Gunicorn threads/workers sharing
-    # this data directory. A second request must review the resulting snapshot.
-    import fcntl
-    import os
-
-    from django.conf import settings
-
-    path = settings.DATA_DIR / f".rules-deploy-{firewall.pk}.lock"
-    with open(path, "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise DeviceError("A rule deployment is already running for this firewall.") from exc
-        try:
-            return _execute_deployment(firewall, approved, selected, client, actor)
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with device_write_lock(firewall.pk, "A rule deployment"):
+        return _execute_deployment(firewall, approved, selected, client, actor)

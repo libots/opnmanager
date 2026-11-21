@@ -3,6 +3,7 @@
 import hashlib
 import json
 
+from .locks import device_write_lock
 from .models import AuditEvent, Snapshot
 from .opnsense import DeviceError
 from .reconcile import canonical, plan_for
@@ -44,6 +45,11 @@ def alias_plan(firewall):
 
 
 def execute_alias_plan(firewall, approved_sha, client, actor):
+    with device_write_lock(firewall.pk, "An alias synchronization"):
+        return _execute_alias_plan(firewall, approved_sha, client, actor)
+
+
+def _execute_alias_plan(firewall, approved_sha, client, actor):
     plan = alias_plan(firewall)
     if plan["errors"] or plan["approval_sha256"] != approved_sha:
         raise DeviceError("Plan changed or is blocked. Review a new dry-run plan.")

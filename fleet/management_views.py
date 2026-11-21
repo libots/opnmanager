@@ -1,4 +1,5 @@
 import json
+from functools import wraps
 
 from django.conf import settings
 from django.contrib import messages
@@ -10,34 +11,27 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
 from .alias_sync import digest
+from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, Firewall, FirmwareJob, InterfaceMapping, LogicalInterface, VirtualIP
 from .opnsense import DeviceError, OPNsenseClient
 from .system_management import firmware_action, read_vips, refresh_firmware, refresh_inventory, vip_plan
 
 
 def vip_lock(view):
-    from functools import wraps
+    """Run POSTs to a VIP view under the firewall's shared device write lock."""
 
     @wraps(view)
     def wrapped(request, pk, *args, **kwargs):
         if request.method != "POST":
             return view(request, pk, *args, **kwargs)
-        import fcntl
-        import os
-
-        with open(settings.DATA_DIR / f".vip-{pk}.lock", "a", opener=lambda p, f: os.open(p, f, 0o600)) as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                messages.error(
-                    request,
-                    "Another virtual IP operation is running on this firewall. Review again after it completes.",
-                )
-                return redirect("virtual_ips")
-            try:
+        try:
+            with device_write_lock(pk, "A virtual IP change"):
                 return view(request, pk, *args, **kwargs)
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+        except DeviceError as exc:
+            if "already running" not in str(exc):
+                raise
+            messages.error(request, str(exc))
+            return redirect("virtual_ips")
 
     return wrapped
 

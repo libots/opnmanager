@@ -2,6 +2,7 @@
 
 from .alias_sync import digest
 from .dependencies import rule_definitions
+from .locks import device_write_lock
 from .models import AuditEvent, Snapshot
 from .opnsense import DeviceError
 from .reconcile import canonical, plan_for
@@ -45,6 +46,11 @@ def fingerprint(data):
 
 
 def execute_definition_plan(firewall, approved_sha, client, actor, rule=None):
+    with device_write_lock(firewall.pk, "A definition synchronization"):
+        return _execute_definition_plan(firewall, approved_sha, client, actor, rule)
+
+
+def _execute_definition_plan(firewall, approved_sha, client, actor, rule=None):
     plan = definition_plan(firewall, rule=rule)
     if plan["errors"] or plan["approval_sha256"] != approved_sha:
         raise DeviceError("Plan changed or is blocked. Review a fresh synchronization plan.")

@@ -110,20 +110,44 @@ class DeploymentTests(TestCase):
         client.snapshot.assert_not_called()
 
     def test_second_deployment_is_blocked_while_first_holds_lock(self):
-        import fcntl
-
-        from django.conf import settings
+        from .locks import device_write_lock
 
         plan = deployment_plan(self.fw)
         client = Mock()
-        with open(settings.DATA_DIR / f".rules-deploy-{self.fw.pk}.lock", "a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            try:
-                with self.assertRaisesMessage(DeviceError, "already running"):
-                    execute_deployment(self.fw, plan["approval_sha256"], [str(self.first.pk)], client, "test")
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+        with device_write_lock(self.fw.pk, "A rule deployment"):
+            with self.assertRaisesMessage(DeviceError, "A rule deployment is already running"):
+                execute_deployment(self.fw, plan["approval_sha256"], [str(self.first.pk)], client, "test")
         client.snapshot.assert_not_called()
+
+    def test_every_device_write_workflow_shares_one_lock(self):
+        from .alias_sync import execute_alias_plan
+        from .definition_sync import execute_definition_plan
+        from .locks import device_write_lock
+        from .system_management import firmware_action
+
+        client = Mock()
+        calls = {
+            "alias sync": lambda: execute_alias_plan(self.fw, "x", client, "test"),
+            "definition sync": lambda: execute_definition_plan(self.fw, "x", client, "test"),
+            "firmware": lambda: firmware_action(self.fw, "check", client, "test"),
+            "rule deploy": lambda: execute_deployment(self.fw, "x", [], client, "test"),
+        }
+        with device_write_lock(self.fw.pk, "A rule deployment"):
+            for name, call in calls.items():
+                with self.subTest(name), self.assertRaisesMessage(DeviceError, "A rule deployment is already running"):
+                    call()
+        self.assertEqual(client.method_calls, [])
+        other = Firewall.objects.create(name="Other", base_url="https://other.test", credential_prefix="OTHER")
+        with device_write_lock(self.fw.pk, "A rule deployment"), device_write_lock(other.pk, "A firmware request"):
+            pass  # different firewalls never contend
+
+    def test_lock_is_released_after_failure(self):
+        from .locks import device_write_lock
+
+        with self.assertRaises(RuntimeError), device_write_lock(self.fw.pk, "A rule deployment"):
+            raise RuntimeError
+        with device_write_lock(self.fw.pk, "A firmware request"):
+            pass
 
     @patch.dict("os.environ", {"TEST_API_KEY": "key", "TEST_API_SECRET": "secret"})
     @patch("fleet.opnsense.requests.Session")

@@ -1,3 +1,4 @@
+from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, FirmwareJob
 from .opnsense import DeviceError, flatten
 
@@ -148,21 +149,7 @@ def read_vips(client):
 
 
 def firmware_action(firewall, action, client, actor):
-    import fcntl
-    import os
-
-    from django.conf import settings
-
-    with open(
-        settings.DATA_DIR / f".firmware-{firewall.pk}.lock", "a", opener=lambda p, f: os.open(p, f, 0o600)
-    ) as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise DeviceError("Another firmware request is being queued for this device.") from exc
-        try:
-            if FirmwareJob.objects.filter(firewall=firewall, status__in=["running", "starting", "uncertain"]).exists():
-                raise DeviceError("Refresh and resolve the existing firmware task before starting another.")
-            return _firmware_action(firewall, action, client, actor)
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    with device_write_lock(firewall.pk, "A firmware request"):
+        if FirmwareJob.objects.filter(firewall=firewall, status__in=["running", "starting", "uncertain"]).exists():
+            raise DeviceError("Refresh and resolve the existing firmware task before starting another.")
+        return _firmware_action(firewall, action, client, actor)
