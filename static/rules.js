@@ -1,12 +1,26 @@
+/* Firewall: Rules grid, laid out like OPNsense's rule list. */
 document.addEventListener('DOMContentLoaded', function () {
   const dataNode=document.getElementById('rule-data'),form=document.getElementById('rule-filters');
   if (!dataNode || !form) return;
   const data=JSON.parse(dataNode.textContent),rows=data.rows,groups=new Map(Object.entries(data.groups));
   const body=document.getElementById('rule-table-body'),table=document.getElementById('rules-table');
+  const manager=data.manager,canSelect=manager?(data.can_edit||data.can_delete):data.can_import;
+  // Manager rules are selected by id for bulk commands; snapshot rows by index for import.
+  const key=rule=>manager?rule.id:rule.index;
   const selected=new Set(),collapsed=new Set();let matching=[];
   const split=value=>new Set(String(value || '').split(',').map(v=>v.trim()).filter(Boolean));
   const element=(tag,text,className)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(className)el.className=className;return el;};
   const value=name=>form.elements.namedItem(name).value;
+  const icons=document.getElementById('rule-icons').content;
+  function icon(name,className,title) {
+    const svg=icons.querySelector(`[data-icon="${name}"] svg`).cloneNode(true);
+    const wrap=element('span',undefined,'rule-icon'+(className?' '+className:''));wrap.append(svg);
+    if(title){wrap.title=title;wrap.setAttribute('role','img');wrap.setAttribute('aria-label',title);}
+    return wrap;
+  }
+  const here=()=>location.pathname+location.search;
+  const editURL=id=>'/admin/fleet/rule/'+encodeURIComponent(id)+'/change/?_next='+encodeURIComponent(here());
+
   function matches(row) {
     if (value('placement') && value('placement')!==row.placement) return false;
     const bindings=split(row.interface),iface=value('interface');
@@ -20,54 +34,87 @@ document.addEventListener('DOMContentLoaded', function () {
     const query=value('q').trim().toLocaleLowerCase();
     return !query || data.search_fields.map(key=>String(row[key] || '')).join(' ').toLocaleLowerCase().includes(query);
   }
+
+  // --- commands (manager policy): one hidden form posts every toggle/delete ---
+  function command(action,ids) {
+    if (!ids.length) return;
+    if (action==='edit') {
+      if (ids.length===1) { location.href=editURL(ids[0]); return; }
+      const url=new URL('/admin/fleet/rule/bulk-edit/',location.origin);
+      for (const id of ids) url.searchParams.append('ids',id);
+      url.searchParams.set('_next',here());location.href=url;return;
+    }
+    if (action==='delete' && !confirm(ids.length===1?'Delete this rule from manager policy?':`Delete ${ids.length} rules from manager policy?`)) return;
+    const bulk=document.getElementById('rule-bulk-form');
+    bulk.elements.action.value=action;bulk.elements._next.value=here();
+    document.getElementById('rule-bulk-ids').replaceChildren(...ids.map(id=>Object.assign(element('input'),{type:'hidden',name:'ids',value:id})));
+    bulk.submit();
+  }
+  function commandButton(name,title,action,ids,className) {
+    const button=element('button',undefined,'rule-command'+(className?' '+className:''));button.type='button';button.title=title;button.setAttribute('aria-label',title);
+    button.append(icon(name));button.addEventListener('click',()=>command(action,ids));return button;
+  }
+
   function selectionStatus() {
-    document.getElementById('rule-selection-status').textContent=data.can_import?`${selected.size} selected for import (${matching.filter(row=>selected.has(row.index)).length} matching filters)`:'';
+    const count=selected.size,shown=matching.filter(row=>selected.has(key(row))).length;
+    document.getElementById('rule-selection-status').textContent=!canSelect||!count?'':manager?`${count} selected${shown!==count?` (${count-shown} hidden by filters)`:''}`:`${count} selected for import (${shown} matching filters)`;
     const toggle=document.getElementById('rule-select-all');
     if (toggle) {
-      toggle.checked=matching.length>0 && matching.every(row=>selected.has(row.index));
-      toggle.indeterminate=matching.some(row=>selected.has(row.index)) && !toggle.checked;
+      toggle.checked=matching.length>0 && matching.every(row=>selected.has(key(row)));
+      toggle.indeterminate=matching.some(row=>selected.has(key(row))) && !toggle.checked;
       toggle.disabled=!matching.length;
-      toggle.title='Select all / none of the matching rules, including collapsed sections';
     }
+    for (const button of document.querySelectorAll('#rule-bulk-bar [data-bulk]')) button.disabled=!count;
   }
   function cell(row,text,cls){const td=element('td',text,cls);row.append(td);return td;}
+  function bindingCell(row,count,display,inverted) {
+    const td=cell(row);
+    if (!count) { td.textContent=inverted?'! *':'*'; return; }
+    if (count===1) { td.textContent=(inverted?'! ':'')+display; return; }
+    // Several interfaces: a count and the network icon, as OPNsense does; names in the tooltip.
+    const span=element('span',(inverted?'! ':'')+count+' ','rule-binding-count');span.title=display;span.append(icon('network-wired'));td.append(span);
+  }
   function renderRow(rule) {
-    const row=element('tr',undefined,'rule-row'+(rule.enabled==='0'?' rule-disabled':''));
-    if (form.elements.firewall.value) {
-      const td=cell(row);
-      if (data.can_import) {
-        const box=element('input');box.type='checkbox';box.name='rule_indices';box.value=rule.index;box.checked=selected.has(rule.index);
-        box.setAttribute('aria-label','Import '+rule.description);
-        box.addEventListener('change',()=>{if(box.checked)selected.add(rule.index);else selected.delete(rule.index);selectionStatus();});td.append(box);
-      }
+    const row=element('tr',undefined,'rule-row'+(rule.enabled==='0'?' rule-disabled':'')),id=key(rule);
+    const check=cell(row,undefined,'rule-check');
+    if (canSelect) {
+      const box=element('input');box.type='checkbox';box.checked=selected.has(id);
+      if (!manager) { box.name='rule_indices';box.value=rule.index; }
+      box.setAttribute('aria-label',(manager?'Select ':'Import ')+rule.description);
+      box.addEventListener('change',()=>{if(box.checked)selected.add(id);else selected.delete(id);row.classList.toggle('rule-selected',box.checked);selectionStatus();});
+      row.classList.toggle('rule-selected',box.checked);check.append(box);
     }
-    const categories=cell(row,undefined,'rule-tags');
-    for (const badge of rule.category_badges) {
-      const tag=element('span',badge.name,'rule-category');tag.style.setProperty('--category-color','#'+badge.color);categories.append(tag);
-    }
-    const state=cell(row,rule.enabled==='0'?'—':'✓');state.title=rule.enabled==='0'?'Disabled':'Enabled';
-    const flags=cell(row,undefined,'rule-flags');
-    const action=rule.action || 'pass',direction=rule.direction||'in';
-    const icon=element('span',action==='block'?'⊘':action==='reject'?'↩':'▶︎',action);icon.title=action;flags.append(icon,document.createTextNode(' '));
-    const arrow=element('span',direction==='out'?'←':direction==='any'?'↔':'→');arrow.title='Direction: '+direction;flags.append(arrow);
-    if(rule.quick!=='0'){const quick=element('span',' ⚡︎');quick.title='Quick';flags.append(quick);}
-    if(rule.log==='1'){const log=element('span',' ●');log.title='Logging enabled';flags.append(log);}
-    flags.append(element('small',rule.sequence || ''));
-    cell(row,(rule.interface_display || '*')+(rule.interfacenot==='1'?' (inverted)':''));
-    cell(row,rule.origin_display || '*');cell(row,rule.ipprotocol==='inet6'?'IPv6':rule.ipprotocol==='inet46'?'Any':'IPv4');
-    const protocol=cell(row,rule.protocol || 'any');if(rule.icmptype || rule.icmp6type)protocol.append(element('small',rule.icmptype || rule.icmp6type));
-    for (const key of ['source_display','source_port','destination_display','destination_port','gateway']) {
-      const raw=rule[key] || '*',display=raw==='(self)'?'This Firewall':raw==='any'?'*':raw;
-      cell(row,display);
-    }
+    const tags=cell(row,undefined,'rule-tags');
+    for (const badge of rule.category_badges) { const tag=icon('tag','rule-category-tag',badge.name);tag.style.color='#'+badge.color;tags.append(tag); }
+    const enabled=rule.enabled!=='0',state=cell(row,undefined,'rule-state');
+    if (manager && data.can_edit) state.append(commandButton(enabled?'square-check-regular':'square-regular',enabled?'Disable rule':'Enable rule',enabled?'disable':'enable',[rule.id],'rule-toggle'));
+    else state.append(icon(enabled?'square-check-regular':'square-regular','',enabled?'Enabled':'Disabled'));
+    const flags=cell(row,undefined,'rule-flags'),action=rule.action || 'pass',direction=rule.direction||'in';
+    flags.append(
+      icon({block:'xmark',reject:'circle-xmark',match:'sliders'}[action]||'play','action-'+action,action[0].toUpperCase()+action.slice(1)),
+      icon({out:'arrow-left-long',any:'right-left'}[direction]||'arrow-right-long','direction','Direction: '+({out:'out',any:'both'}[direction]||'in')),
+      icon('bolt',rule.quick!=='0'?'quick':'off',rule.quick!=='0'?'Quick':'Not quick (last match wins)'),
+      icon('circle-info',rule.log==='1'?'log':'off',rule.log==='1'?'Logging enabled':'Logging disabled'),
+    );
+    const sequence=element('span',rule.sequence||'','rule-sequence');sequence.title='Sequence';flags.append(sequence);
+    bindingCell(row,rule.binding_count,rule.interface_display,rule.interfacenot==='1');
+    bindingCell(row,rule.origin_count,rule.origin_display,rule['received-on-not']==='1');
+    cell(row,rule.ipprotocol==='inet6'?'IPv6':rule.ipprotocol==='inet46'?'IPv4+IPv6':'IPv4');
+    const protocol=cell(row,!rule.protocol||rule.protocol==='any'?'*':rule.protocol);if(rule.icmptype || rule.icmp6type)protocol.append(element('small',rule.icmptype || rule.icmp6type));
+    for (const name of ['source_display','source_port','destination_display','destination_port','gateway']) cell(row,rule[name] || '*');
     cell(row,rule.description,'rule-description');
     const commands=cell(row,undefined,'rule-commands');
-    if (rule.manager_id && data.can_edit) {
-      const link=element('a','✎ Edit','button');link.href='/admin/fleet/rule/'+encodeURIComponent(rule.manager_id)+'/change/';link.title='Edit manager rule';commands.append(link);
+    if (manager) {
+      if (data.can_edit) commands.append(commandButton(rule.log==='1'?'bell':'bell-slash',rule.log==='1'?'Logging on: click to turn off':'Logging off: click to turn on',rule.log==='1'?'nolog':'log',[rule.id]));
+      if (data.can_edit) { const edit=element('a',undefined,'rule-command');edit.href=editURL(rule.id);edit.title='Edit';edit.setAttribute('aria-label','Edit '+rule.description);edit.append(icon('pencil'));commands.append(edit); }
+      if (data.can_add) { const clone=element('a',undefined,'rule-command');clone.href='/admin/fleet/rule/add/?clone='+encodeURIComponent(rule.id)+'&_next='+encodeURIComponent(here());clone.title='Clone';clone.setAttribute('aria-label','Clone '+rule.description);clone.append(icon('copy-regular'));commands.append(clone); }
+      if (data.can_delete) commands.append(commandButton('trash-can','Delete','delete',[rule.id],'danger'));
+    } else if (rule.manager_id && data.can_edit) {
+      const edit=element('a',undefined,'rule-command');edit.href=editURL(rule.manager_id);edit.title='Edit manager rule';edit.setAttribute('aria-label','Edit manager rule '+rule.description);edit.append(icon('pencil'));commands.append(edit);
     } else if (data.can_import) {
-      const button=element('button','Select to import','button');button.type='button';
+      const button=element('button',undefined,'rule-command');button.type='button';button.title='Select to import';button.setAttribute('aria-label','Select '+rule.description+' to import');button.append(icon('plus'));
       button.addEventListener('click',()=>{selected.add(rule.index);render();document.getElementById('rule-import-options').scrollIntoView({behavior:'smooth'});});commands.append(button);
-    } else commands.textContent='Read-only';
+    }
     return row;
   }
   function updateURL() {
@@ -77,24 +124,35 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     history.replaceState(null,'',url);
   }
+  let sectionNames=[];
+  const expandAll=document.getElementById('rule-expand-all');
   function render() {
     matching=rows.filter(matches);body.replaceChildren();
     const sections=new Map();
     for(const rule of matching){if(!sections.has(rule.section_label))sections.set(rule.section_label,[]);sections.get(rule.section_label).push(rule);}
-    const ordered=Array.from(sections).sort((a,b)=>{
-      const rank=section=>section[1][0].placement==='floating'?0:section[1][0].placement==='group'?1:2;
-      return rank(a)-rank(b)||a[0].localeCompare(b[0]);
-    });
+    const rank=section=>section[1][0].placement==='floating'?0:section[1][0].placement==='group'?1:2;
+    const ordered=Array.from(sections).sort((a,b)=>rank(a)-rank(b)||a[0].localeCompare(b[0]));
+    sectionNames=ordered.map(([name])=>name);
     for(const [name,sectionRows] of ordered) {
+      const open=!collapsed.has(name),placement=sectionRows[0].placement;
       const section=element('tr',undefined,'rule-section'),td=cell(section);td.colSpan=table.tHead.rows[0].cells.length;
-      const button=element('button',(collapsed.has(name)?'▸ ':'▾ ')+name+' ('+sectionRows.length+')');button.type='button';button.setAttribute('aria-expanded',String(!collapsed.has(name)));
+      const button=element('button');button.type='button';button.setAttribute('aria-expanded',String(open));
+      button.append(icon(open?'square-minus-regular':'square-plus-regular','fold'),icon({floating:'layer-group',group:'sitemap'}[placement]||'ethernet','kind'),document.createTextNode(` ${name} (${sectionRows.length})`));
       button.addEventListener('click',()=>{if(collapsed.has(name))collapsed.delete(name);else collapsed.add(name);render();});td.append(button);body.append(section);
-      if(!collapsed.has(name))for(const rule of sectionRows)body.append(renderRow(rule));
+      if(open)for(const rule of sectionRows)body.append(renderRow(rule));
     }
     if(!matching.length){const row=element('tr'),td=cell(row,'No matching rules. Clear filters or pull a firewall snapshot.','empty');td.colSpan=table.tHead.rows[0].cells.length;body.append(row);}
     document.getElementById('rule-count').textContent=`${matching.length} of ${rows.length} rules`;
+    const allCollapsed=sectionNames.length>0&&sectionNames.every(name=>collapsed.has(name));
+    expandAll.hidden=!sectionNames.length;expandAll.replaceChildren(icon(allCollapsed?'angles-down':'angles-up'));
+    expandAll.title=expandAll.ariaLabel=allCollapsed?'Expand all sections':'Collapse all sections';
     selectionStatus();
   }
+  expandAll.addEventListener('click',()=>{
+    const allCollapsed=sectionNames.every(name=>collapsed.has(name));
+    for(const name of sectionNames){if(allCollapsed)collapsed.delete(name);else collapsed.add(name);}
+    render();
+  });
   form.addEventListener('input',event=>{if(event.target.name==='q'){render();updateURL();}});
   form.addEventListener('change',event=>{
     if(event.target.name==='firewall'){
@@ -110,8 +168,12 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('rule-filter-submit').hidden=true;
   document.getElementById('rule-reload').addEventListener('click',()=>location.reload());
   document.getElementById('rule-select-all')?.addEventListener('change',event=>{
-    for(const row of matching){if(event.target.checked)selected.add(row.index);else selected.delete(row.index);}render();
+    for(const row of matching){if(event.target.checked)selected.add(key(row));else selected.delete(key(row));}render();
   });
+  for (const button of document.querySelectorAll('#rule-bulk-bar [data-bulk]')) {
+    button.addEventListener('click',()=>command(button.dataset.bulk,Array.from(selected)));
+  }
+  document.getElementById('rule-add')?.addEventListener('click',event=>{event.currentTarget.href='/admin/fleet/rule/add/?_next='+encodeURIComponent(here());});
   document.getElementById('clear-rule-selection')?.addEventListener('click',()=>{selected.clear();render();});
   document.getElementById('rule-import-form')?.addEventListener('submit',()=>{
     // Include selections hidden by filters/collapsed sections exactly once.

@@ -12,10 +12,18 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!boxes().length) return;
     const label = document.createElement('label'), toggle = document.createElement('input');
     toggle.type = 'checkbox';toggle.setAttribute('aria-label','Select all or none');
-    label.append(toggle, document.createTextNode(' All / none'));label.style.margin='12px';
-    root.before(label);
+    const head = root.tagName === 'TABLE' && root.tHead && root.tHead.rows[0] && root.tHead.rows[0].cells[0];
+    if (head) {
+      // OPNsense puts the select-all checkbox in the checkbox column's header.
+      head.replaceChildren(toggle);
+    } else {
+      label.append(toggle, document.createTextNode(' All / none'));label.style.margin='12px';
+      root.before(label);
+    }
     function update() {const all=boxes();toggle.checked=all.every(box=>box.checked);toggle.indeterminate=all.some(box=>box.checked)&&!toggle.checked;}
-    toggle.addEventListener('change',()=>{boxes().forEach(box=>{box.checked=toggle.checked;box.dispatchEvent(new Event('change',{bubbles:true}));});update();});
+    toggle.addEventListener('change',()=>{
+      // Read the wanted state once: each box's change event re-runs update(), which resets the toggle.
+      const on=toggle.checked;boxes().forEach(box=>{box.checked=on;box.dispatchEvent(new Event('change',{bubbles:true}));});update();});
     root.addEventListener('change',update);update();
   });
 });

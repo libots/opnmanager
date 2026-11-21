@@ -5,11 +5,9 @@ from django import forms
 from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, protocol_choices
 from .models import (
     Alias,
-    AuthenticationServer,
     Category,
     DNSProfile,
     Firewall,
-    FirewallAdministration,
     FirewallGroup,
     InterfaceGroup,
     LogicalInterface,
@@ -250,7 +248,7 @@ class RuleForm(forms.ModelForm):
         self.fields["bindings"].widget.attrs["data-placeholder"] = "any"
         self.fields["origin_bindings"].widget.attrs["data-placeholder"] = "any"
         self.fields["categories"].widget.attrs["data-placeholder"] = "Nothing selected"
-        if self.instance.pk and not self.is_bound:
+        if not self.instance._state.adding and not self.is_bound:
             rule = self.instance
             self.initial["bindings"] = [f"interface:{i.pk}" for i in rule.bound_interfaces()] + [
                 f"group:{g.pk}" for g in rule.interface_groups.all()
@@ -510,37 +508,6 @@ class InterfaceGroupForm(forms.ModelForm):
         widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups", "members")}
 
 
-class AuthenticationServerForm(forms.ModelForm):
-    secret = forms.CharField(
-        required=False,
-        widget=forms.PasswordInput(render_value=False),
-        help_text="Optional replacement bind/shared secret. Empty keeps the saved value.",
-    )
-
-    class Meta:
-        model = AuthenticationServer
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("firewalls", "firewall_groups")}
-
-    def save(self, commit=True):
-        from .credentials import cipher
-
-        obj = super().save(commit=False)
-        if self.cleaned_data.get("secret"):
-            obj.encrypted_secret = cipher().encrypt(self.cleaned_data["secret"].encode()).decode()
-        if commit:
-            obj.save()
-            self.save_m2m()
-        return obj
-
-
-class AdministrationForm(forms.ModelForm):
-    class Meta:
-        model = FirewallAdministration
-        fields = "__all__"
-        widgets = {key: MultiSelectWidget() for key in ("authentication_servers", "firewalls", "firewall_groups")}
-
-
 class DNSProfileForm(forms.ModelForm):
     class Meta:
         model = DNSProfile
@@ -590,3 +557,41 @@ class OIDCSettingsForm(forms.Form):
                 if url.scheme != "https" or url.username or url.password:
                     self.add_error(field, "Use an HTTPS URL without embedded credentials.")
         return data
+
+
+def rule_form_data(rule):
+    """A saved rule as the POST data its editor would submit, for re-validating partial edits."""
+    from django.utils.datastructures import MultiValueDict
+
+    data = MultiValueDict()
+    for field in RuleForm(instance=rule):
+        widget, value = field.field.widget, field.value()
+        if isinstance(widget, forms.CheckboxInput):
+            if value:
+                data[field.name] = "on"
+        elif isinstance(widget, forms.SelectMultiple):
+            data.setlist(field.name, [str(v) for v in widget.format_value(value) if v not in (None, "")])
+        else:
+            data[field.name] = "" if value is None else str(value)
+    return data
+
+
+def comparable(data, name):
+    """One field's submitted value in a form that compares equal across rules."""
+    values = data.getlist(name)
+    return tuple(sorted(values)) if len(values) > 1 else (values[0] if values else "")
+
+
+def bulk_rule_forms(rules, posted, changed):
+    """Re-validate each rule with only the fields in `changed` taken from `posted`."""
+    forms_ = []
+    for rule in rules:
+        data = rule_form_data(rule)
+        for name in changed:
+            values = posted.getlist(name)
+            if values:
+                data.setlist(name, values)
+            else:
+                data.pop(name, None)
+        forms_.append(RuleForm(data, instance=rule))
+    return forms_

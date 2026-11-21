@@ -206,30 +206,65 @@ ins { color: var(--opn-success); background: #EDF8EF; text-decoration: none; }
 /* ---------- Rules table (Firewall: Rules) ---------- */
 .rules-title { margin: 0 0 18px; }
 .rules-panel { overflow: visible; }
-.rules-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--opn-border); background: var(--opn-bg-head); }
+.rules-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--opn-border); background: #fff; }
 .rules-toolbar label { flex: 1; min-width: 120px; margin: 0; font-size: 13px; color: var(--opn-muted); }
 .rules-toolbar select, .rules-toolbar input { display: block; width: 100%; }
 .rules-toolbar .rule-search { flex: 2; min-width: 220px; }
 .rules-toolbar [hidden] { display: none !important; }
-.rules-status { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; padding: 8px 16px; font-size: 13px; color: var(--opn-muted); }
-.rules-scroll { max-height: 70vh; overflow: auto; }
-.opn-rules { min-width: 1250px; }
-.opn-rules th, .opn-rules td { padding: 6px 8px; font-size: 14px; vertical-align: top; }
-.opn-rules thead th { position: sticky; top: 0; z-index: 2; background: #fff; }
-.opn-rules .rule-row:nth-child(even) > td { background: #F9F9F9; }
+.rule-search-box { display: flex; align-items: stretch; }
+.rule-search-box .rule-search-icon { display: inline-flex; align-items: center; padding: 0 11px; border: 1px solid var(--opn-border-strong); border-right: 0; border-radius: 3px 0 0 3px; background: #EEE; color: var(--opn-text); }
+.rule-search-box .rule-search-icon .icon { width: 15px; height: 15px; }
+.rule-search-box input { border-radius: 0 3px 3px 0; }
+.button.icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; }
+.button.icon-button .icon { width: 15px; height: 15px; fill: currentColor; }
+.button.icon-button.danger { color: #D9534F; }
+.button.icon-button:disabled { opacity: .45; cursor: not-allowed; }
+.rules-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--opn-border); background: #fff; }
+.rule-bulk-bar { display: flex; flex-wrap: wrap; gap: 4px; }
+.rule-bulk-bar .button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.rules-status { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; font-size: 13px; color: var(--opn-muted); }
+.rules-scroll { max-height: 72vh; overflow: auto; }
+.opn-rules { min-width: 1250px; border-collapse: separate; border-spacing: 0; }
+.opn-rules th, .opn-rules td { padding: 8px 6px; font-size: 15px; vertical-align: top; border-right: 1px solid #E5E5E5; border-bottom: 1px solid #E5E5E5; }
+.opn-rules thead th { position: sticky; top: 0; z-index: 2; background: #fff; font-weight: 600; white-space: nowrap; border-bottom: 1px solid #DDD; }
+.opn-rules thead th .icon { width: 15px; height: 15px; vertical-align: -2px; }
+.opn-rules .rule-row > td { background: #fff; }
+.opn-rules .rule-row:nth-child(odd) > td { background: #F9F9F9; }
 .opn-rules .rule-row:hover > td { background: #F0F0F0; }
-.opn-rules .rule-commands { position: sticky; right: 0; min-width: 100px; z-index: 1; background: #fff; }
+.opn-rules .rule-row.rule-selected > td { background: #FCF1ED; }
+.opn-rules .rule-check, .opn-rules .rule-tags, .opn-rules .rule-state { width: 1%; white-space: nowrap; text-align: center; }
+.opn-rules .rule-check input { margin: 3px 4px; }
+.opn-rules .rule-commands { position: sticky; right: 0; z-index: 1; width: 1%; white-space: nowrap; border-left: 2px solid #999; background: #fff; text-align: center; }
 .opn-rules thead .rule-commands { z-index: 3; }
 .opn-rules small { display: block; font-size: 12px; color: var(--opn-muted); }
-.opn-rules .button { min-height: 26px; padding: 2px 8px; font-size: 13px; }
+.rule-icon { display: inline-flex; align-items: center; justify-content: center; }
+.rule-icon .icon { width: 16px; height: 16px; fill: currentColor; }
+.rule-flags { white-space: nowrap; }
+.rule-flags .rule-icon { margin-right: 6px; }
+.rule-flags .action-pass { color: #8BC34A; }
+.rule-flags .action-block, .rule-flags .action-reject { color: #D9534F; }
+.rule-flags .action-match { color: #5BC0DE; }
+.rule-flags .direction { color: #3B6EA5; }
+.rule-flags .quick { color: #F0AD4E; }
+.rule-flags .log { color: #5BC0DE; }
+.rule-flags .off { color: #CCC; }
+.rule-sequence { margin-left: 2px; font-size: 12px; color: var(--opn-muted); }
+.rule-binding-count { white-space: nowrap; cursor: help; }
+.rule-binding-count .icon { width: 17px; height: 17px; vertical-align: -3px; }
+.rule-category-tag { margin: 0 1px; cursor: help; }
+.rule-command { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; margin: 0 1px; padding: 0; border: 1px solid #CCC; border-radius: 3px; background: #fff; color: var(--opn-text); cursor: pointer; vertical-align: middle; }
+.rule-command:hover { background: #E6E6E6; border-color: #ADADAD; color: var(--opn-text); text-decoration: none; }
+.rule-command .icon { width: 14px; height: 14px; }
+.rule-command.danger:hover { color: #D9534F; }
+.rule-state .rule-command { border-color: transparent; background: transparent; }
+.rule-state .rule-command:hover { border-color: #CCC; }
 .rule-description { min-width: 175px; max-width: 320px; overflow-wrap: anywhere; }
 .rule-category { display: inline-block; margin: 1px; padding: 1px 6px; border-left: 4px solid var(--category-color, var(--opn-primary)); background: #F0F0F0; font-size: 12px; white-space: nowrap; }
-.rule-disabled { opacity: .55; }
-.rule-flags { white-space: nowrap; }
-.rule-flags .pass { color: #5CB85C; }
-.rule-flags .block, .rule-flags .reject { color: #D9534F; }
-.rule-section td { background: #EEE !important; font-weight: 600; padding: 6px 10px; }
-.rule-section button { border: 0; background: transparent; color: var(--opn-text); font: inherit; cursor: pointer; }
+.rule-disabled > td:not(.rule-check):not(.rule-state):not(.rule-commands) { opacity: .5; }
+.rule-section td { background: #F7F7F7 !important; padding: 6px 10px; }
+.rule-section button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--opn-text); font: 600 15px var(--opn-font); cursor: pointer; }
+.rule-section .fold .icon { width: 15px; height: 15px; }
+.rule-section .kind { color: var(--opn-primary); }
 
 /* ---------- OPNsense-style select picker (static/opn-select.js) ---------- */
 select.opn-native { position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important; padding: 0 !important; border: 0 !important; opacity: 0; pointer-events: none; }

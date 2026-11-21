@@ -95,6 +95,12 @@ In the rule editor, categories, rule interfaces, origin interfaces and ICMP type
 
 Floating placement is automatic in the rule editor; there is no Floating checkbox. In the current OPNsense MVC API, one rule-interface or group binding is an interface/group rule, multiple bindings are floating, and no bindings means floating on all interfaces. A live **Placement** preview shows the result. Origin bindings do not determine placement. A single-bound rule cannot be forced into floating placement by a separate API flag. The manager derives filters using this same rule.
 
+### Working with the rule list
+
+**Firewall: Rules** is the place to manage rules; the old admin rule list now redirects there, and saving, cloning or deleting a rule returns you to the list with your filters intact. As in OPNsense, each row has a checkbox, a clickable enabled checkbox, and **log**, **edit**, **clone** and **delete** buttons. **Clone** opens the add dialog filled in from that rule, with the next free sequence number after it. Select rules with the checkboxes (the header checkbox selects every matching rule, including collapsed sections) and use the buttons under the table to enable, disable, turn logging on or off, delete, or **Edit** them together.
+
+**Editing several rules at once** isn't something OPNsense offers. The dialog shows each field's value when every selected rule has the same one. Fields that differ are greyed out with **Multiple values**: click one to set a new value for all the selected rules. Only fields you change are saved; everything else keeps each rule's own value. Every rule is checked before anything is saved, so if the change is invalid for one rule (for example a port on a rule whose protocol is *any*), none of them change and the errors name the rules. Like any rule edit, this changes manager policy only; push it from **Review & push rules**.
+
 ### Adopt existing OPNsense rules
 
 1. Open a firewall's page and **Pull from firewall**. The enriched snapshot reads MVC rules, aliases, interface inventory, groups and categories.
@@ -301,17 +307,19 @@ The connector uses the actual core firmware `running`, `check`, `status`, `updat
 
 **Interfaces → Virtual IPs** reads observed VIPs without retaining CARP passwords, adopts existing IP Alias/Proxy ARP entries into scoped manager definitions, and offers reviewed apply/deletion actions. Logical interface mappings resolve per firewall. A signed review expires after ten minutes and is rejected if the VIP inventory or desired payload changed. Apply/reconfigure is followed by readback. Deletion respects OPNsense's in-use validation and verifies absence. Removing a live VIP does not silently remove a manager desired definition; remove/retarget that separately. CARP entries can be viewed but secrets and mutation remain on-device because their HA dependencies need separate handling. Writes can interrupt access and have no automatic rollback.
 
-### Authentication servers and ordered search-domain profiles — desired configuration only
+### Ordered search-domain profiles — desired configuration only
 
-**Firewall System → Access → Servers** centrally stores LDAP/RADIUS server definitions, scope and encrypted bind/shared secrets. **Settings → Administration** associates those servers with firewall authentication profiles. **Settings → General** manages DNS search-domain profiles with one domain per line in explicit lookup order; the per-firewall overview flags conflicting overlapping profiles.
+**System → Settings → General** manages DNS search-domain profiles with one domain per line in explicit lookup order; the per-firewall overview flags conflicting overlapping profiles.
 
-**These profile editors do not deploy LDAP/RADIUS or DNS search-domain settings.** The inspected upstream core provides no supported API for writing these legacy configuration sections. No guessed endpoint, hidden XML rewrite or unverified remote command is used. Profiles are central desired configuration until a version-compatible firewall-side adapter/extension is supplied and tested. They do not change OPNmanager's own login. Other authentication server types also require such an adapter.
+**These profiles do not deploy DNS search-domain settings.** The inspected upstream core provides no supported API for writing this legacy configuration section. No guessed endpoint, hidden XML rewrite or unverified remote command is used.
+
+**Authentication servers (LDAP/RADIUS) aren't managed.** OPNsense still edits them only on its legacy **System › Access › Servers** page, with no API, so configure them on each firewall. Earlier versions of OPNmanager stored server and administration profiles it could never deploy; upgrading deletes them.
 
 ### OPNmanager OIDC settings from the UI
 
 **Settings → Authentication Options** is restricted to local superusers and configures OPNmanager's OIDC provider. Secret fields are write-only. Configuration is saved atomically in owner-only `.oidc-settings.json` in `OPNMANAGER_DATA_DIR`; its client secret is encrypted with the existing separate credential key. A manager restart activates saved settings, including login routes. UI settings take precedence over environment settings. Keep local administrators available and test the provider before relying on it; existing sessions are not revoked automatically.
 
-Back up this configuration and the credential encryption key privately. If the saved file/key is corrupt and prevents startup, stop the manager, restore the configuration/key backup or move `.oidc-settings.json` aside to return to environment/local login configuration, then restart. Never put secret values in Git or support messages. LDAP/RADIUS profiles under Firewall System are independent of these manager OIDC settings.
+Back up this configuration and the credential encryption key privately. If the saved file/key is corrupt and prevents startup, stop the manager, restore the configuration/key backup or move `.oidc-settings.json` aside to return to environment/local login configuration, then restart. Never put secret values in Git or support messages.
 
 All new live-device operations have mocked API tests but still need acceptance testing against your OPNsense version. Upgrade using the usual `git pull --ff-only`, `./scripts/setup-local.sh`, then `./scripts/run-local.sh`; migrations preserve existing accounts and policy.
 

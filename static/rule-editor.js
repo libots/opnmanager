@@ -119,6 +119,45 @@ document.addEventListener('DOMContentLoaded', function () {
     search.value = '';
     for (const target of form.querySelectorAll('.form-row.errors')) target.closest('details').open = true;
   });
+  // --- editing several rules: track which fields change; differing fields start locked ---
+  const bulk = document.getElementById('rule-bulk');
+  if (bulk) {
+    const changed = new Set(bulk.dataset.changed.split(',').filter(Boolean));
+    const holder = document.getElementById('rule-bulk-changed');
+    const sync = () => {
+      holder.replaceChildren(...Array.from(changed, name => Object.assign(document.createElement('input'), {type: 'hidden', name: '_changed', value: name})));
+      for (const target of form.querySelectorAll('.rule-editor-row[data-field]')) target.classList.toggle('bulk-changed', changed.has(target.dataset.field));
+    };
+    const unlock = target => {
+      target.classList.remove('bulk-mixed');
+      target.querySelector('.rule-bulk-control')?.removeAttribute('inert');
+      target.querySelector('.rule-bulk-unlock')?.remove();
+    };
+    for (const target of form.querySelectorAll('.rule-editor-row.bulk-mixed')) {
+      if (changed.has(target.dataset.field)) { unlock(target); continue; }
+      target.querySelector('.rule-bulk-control')?.setAttribute('inert', '');
+      target.querySelector('.rule-bulk-unlock').addEventListener('click', () => {
+        unlock(target);
+        changed.add(target.dataset.field);
+        sync();
+        target.querySelector('.rule-bulk-control input:not([type=hidden]), .rule-bulk-control select, .rule-bulk-control textarea, .rule-bulk-control button')?.focus();
+      });
+    }
+    // Pickers set up their own values on load; only count edits made afterwards.
+    setTimeout(() => {
+      const mark = event => {
+        const target = event.target.closest?.('.rule-editor-row[data-field]');
+        if (!target || event.target.id === 'rule-form-search') return;
+        unlock(target);
+        changed.add(target.dataset.field);
+        sync();
+      };
+      form.addEventListener('change', mark);
+      form.addEventListener('input', mark);
+    }, 0);
+    sync();
+  }
+
   updatePlacement();
   applyModes();
 });

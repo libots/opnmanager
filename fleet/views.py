@@ -213,6 +213,37 @@ def default_mappings(request, pk):
     return redirect("firewall", pk=pk)
 
 
+# Icons rules.js draws in the OPNsense-style rule grid.
+RULE_ICONS = (
+    "play",
+    "xmark",
+    "circle-xmark",
+    "sliders",
+    "arrow-right-long",
+    "arrow-left-long",
+    "right-left",
+    "bolt",
+    "circle-info",
+    "tag",
+    "square-check-regular",
+    "square-regular",
+    "network-wired",
+    "pencil",
+    "copy-regular",
+    "trash-can",
+    "bell",
+    "bell-slash",
+    "plus",
+    "square-plus-regular",
+    "square-minus-regular",
+    "layer-group",
+    "sitemap",
+    "ethernet",
+    "angles-down",
+    "angles-up",
+)
+
+
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def rules_page(request):
@@ -295,6 +326,8 @@ def rules_page(request):
         row["interface_display"] = ", ".join(
             interface_labels.get(v.strip(), v.strip()) for v in row.get("interface", "").split(",") if v.strip()
         )
+        row["binding_count"] = len(bindings)
+        row["origin_count"] = len({v.strip() for v in row.get("received-on", "").split(",") if v.strip()})
         row["origin_display"] = ", ".join(
             interface_labels.get(v.strip(), v.strip()) for v in row.get("received-on", "").split(",") if v.strip()
         )
@@ -342,6 +375,9 @@ def rules_page(request):
                 "groups": {name: sorted(members) for name, members in groups.items()},
                 "can_import": can_import,
                 "can_edit": request.user.has_perm("fleet.change_rule"),
+                "can_delete": request.user.has_perm("fleet.delete_rule"),
+                "can_add": request.user.has_perm("fleet.add_rule"),
+                "manager": fw is None,
             },
             "can_import": can_import,
             "firewall": fw,
@@ -350,6 +386,7 @@ def rules_page(request):
             "interfaces": interfaces,
             "categories": categories,
             "import_form": ImportRulesForm(snapshot=observed) if observed else None,
+            "rule_icons": RULE_ICONS,
         },
     )
 

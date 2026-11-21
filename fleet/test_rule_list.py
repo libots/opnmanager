@@ -1,0 +1,126 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
+from django.test import TestCase
+
+from .models import Category, LogicalInterface, Rule
+
+
+class RuleListCommandTests(TestCase):
+    """Firewall: Rules commands: clone, bulk toggles/delete, editing several rules, redirects."""
+
+    def setUp(self):
+        self.admin = get_user_model().objects.create_superuser("list-admin", password="Test-only-password")
+        self.client.force_login(self.admin)
+        self.lan = LogicalInterface.objects.create(name="LAN")
+        self.cat = Category.objects.create(name="Infra")
+        self.dns = Rule.objects.create(name="DNS", protocol="UDP", destination_port="53", sequence=100)
+        self.dns.interfaces.add(self.lan)
+        self.dns.categories.add(self.cat)
+        self.web = Rule.objects.create(name="Web", protocol="TCP", destination_port="443", sequence=110, log=True)
+        self.web.interfaces.add(self.lan)
+
+    def bulk(self, action, *rules, **extra):
+        return self.client.post("/admin/fleet/rule/bulk/", {"action": action, "ids": [r.pk for r in rules], **extra})
+
+    def test_admin_changelist_and_saves_return_to_rules_page(self):
+        self.assertRedirects(self.client.get("/admin/fleet/rule/"), "/rules/", fetch_redirect_response=False)
+        url = f"/admin/fleet/rule/{self.web.pk}/change/?_next=/rules/%3Fq%3DWeb"
+        data = {
+            "name": "Web",
+            "sequence": "110",
+            "scope": "all",
+            "enabled": "on",
+            "quick": "on",
+            "action": "pass",
+            "direction": "in",
+            "ip_version": "inet",
+            "protocol": "TCP",
+            "source": "any",
+            "destination": "any",
+            "destination_port": "443",
+            "state_type": "keep",
+            "_save": "Save",
+        }
+        self.assertRedirects(self.client.post(url, data), "/rules/?q=Web", fetch_redirect_response=False)
+        # Only same-site targets are followed.
+        url = f"/admin/fleet/rule/{self.web.pk}/change/?_next=https://evil.test/"
+        self.assertRedirects(self.client.post(url, data), "/rules/", fetch_redirect_response=False)
+
+    def test_clone_opens_prefilled_add_dialog_with_next_free_sequence(self):
+        Rule.objects.create(name="Taken", sequence=101)
+        response = self.client.get(f"/admin/fleet/rule/add/?clone={self.dns.pk}")
+        form = response.context["adminform"].form
+        self.assertEqual(form.initial["name"], "DNS")
+        self.assertEqual(form.initial["sequence"], 102)
+        self.assertEqual(form.initial["bindings"], [f"interface:{self.lan.pk}"])
+        self.assertEqual(form.initial["categories"], [str(self.cat.pk)])
+        self.assertEqual(form.initial["destination_port"], ["53"])
+        self.assertContains(response, f'value="interface:{self.lan.pk}" selected')
+
+    def test_bulk_toggles_and_delete(self):
+        self.bulk("disable", self.dns, self.web, _next="/rules/?q=x")
+        self.assertFalse(Rule.objects.filter(enabled=True).exists())
+        self.bulk("log", self.dns)
+        self.dns.refresh_from_db()
+        self.assertTrue(self.dns.log)
+        self.bulk("nolog", self.dns, self.web)
+        self.assertFalse(Rule.objects.filter(log=True).exists())
+        response = self.bulk("delete", self.web)
+        self.assertRedirects(response, "/rules/", fetch_redirect_response=False)
+        self.assertEqual(list(Rule.objects.all()), [self.dns])
+
+    def test_bulk_commands_need_permissions(self):
+        viewer = get_user_model().objects.create_user("viewer", is_staff=True)
+        viewer.user_permissions.add(Permission.objects.get(codename="view_rule"))
+        viewer.user_permissions.add(Permission.objects.get(codename="change_rule"))
+        self.client.force_login(viewer)
+        self.assertEqual(self.bulk("delete", self.dns).status_code, 403)
+        self.bulk("disable", self.dns)
+        self.dns.refresh_from_db()
+        self.assertFalse(self.dns.enabled)
+
+    def test_editing_several_rules_marks_differing_fields_and_saves_only_changes(self):
+        url = f"/admin/fleet/rule/bulk-edit/?ids={self.dns.pk}&ids={self.web.pk}"
+        response = self.client.get(url)
+        mixed = response.context["bulk_mixed"]
+        for name in ("name", "protocol", "destination_port", "log", "categories", "sequence"):
+            self.assertIn(name, mixed)
+        for name in ("bindings", "action", "direction", "source"):
+            self.assertNotIn(name, mixed)
+        self.assertContains(response, "Multiple values")
+        self.assertContains(response, f'value="interface:{self.lan.pk}" selected')
+        # Log was ticked only on Web; ticking it for both changes nothing else.
+        response = self.client.post(url, {"_changed": ["log"], "log": "on", "name": "ignored", "_save": "Save"})
+        self.assertRedirects(response, "/rules/", fetch_redirect_response=False)
+        self.dns.refresh_from_db()
+        self.web.refresh_from_db()
+        self.assertTrue(self.dns.log and self.web.log)
+        self.assertEqual((self.dns.name, self.web.name), ("DNS", "Web"))
+        self.assertEqual(list(self.dns.categories.all()), [self.cat])
+        self.assertEqual(list(self.web.interfaces.all()), [self.lan])
+        # Clearing a multi-value field and unticking a box apply to every rule.
+        self.client.post(url, {"_changed": ["bindings", "log"]})
+        self.assertFalse(Rule.objects.filter(log=True).exists())
+        self.assertFalse(Rule.objects.filter(interfaces__isnull=False).exists())
+        self.assertTrue(Rule.objects.get(pk=self.dns.pk).floating)
+
+    def test_editing_several_rules_is_all_or_nothing(self):
+        any_rule = Rule.objects.create(name="Any", sequence=5)
+        url = f"/admin/fleet/rule/bulk-edit/?ids={self.dns.pk}&ids={any_rule.pk}"
+        # A destination port is invalid on the "any" protocol rule, so nothing is saved.
+        response = self.client.post(url, {"_changed": ["destination_port"], "destination_port": "80"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any("Any:" in error for error in response.context["bulk_errors"]))
+        self.assertEqual(response.context["bulk_changed"], ["destination_port"])
+        self.dns.refresh_from_db()
+        self.assertEqual(self.dns.destination_port, "53")
+
+    def test_rules_page_offers_selection_and_commands(self):
+        response = self.client.get("/rules/")
+        self.assertContains(response, 'id="rule-select-all"')
+        self.assertContains(response, 'id="rule-bulk-form"')
+        self.assertContains(response, 'data-bulk="edit"')
+        self.assertContains(response, 'data-icon="copy-regular"')
+        data = response.context["rules_data"]
+        self.assertTrue(data["manager"] and data["can_delete"] and data["can_add"])
+        self.assertEqual({row["binding_count"] for row in data["rows"]}, {1})
