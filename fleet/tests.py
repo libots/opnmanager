@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.exceptions import SuspiciousOperation, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from .alias_sync import alias_plan, execute_alias_plan
 from .auth import SubjectOIDCBackend
@@ -420,3 +420,11 @@ class LocalAccountTests(TestCase):
         self.assertContains(response, "Change your password")
         self.assertNotContains(response, 'href="/admin/auth/user/"')
         self.assertNotContains(response, 'href="/admin/fleet/firewall/"')
+
+
+class TestDataDirectoryTests(SimpleTestCase):
+    def test_tests_use_a_temporary_data_directory(self):
+        from django.conf import settings
+
+        self.assertNotEqual(settings.DATA_DIR, settings.BASE_DIR)
+        self.assertTrue(settings.DATA_DIR.name.startswith("opnmanager-test-"))
