@@ -54,7 +54,7 @@ class GroupPullTests(TestCase):
         self.assertEqual(plan["errors"], [])
         payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
         self.assertEqual(payload["interface"], "opt2")
-        self.assertIn("interfaces WAN don't exist on this firewall", " ".join(plan["warnings"]))
+        self.assertIn("interface WAN is not mapped on this firewall", " ".join(plan["warnings"]))
 
     def test_unavailable_group_is_left_out_but_mapped_interface_kept(self):
         only_wan = InterfaceGroup.objects.create(name="WANONLY")
@@ -81,7 +81,11 @@ class GroupPullTests(TestCase):
         rule.interface_groups.add(self.group)
         plan = plan_for(self.fw)
         self.assertEqual(plan["errors"], [])
-        self.assertIn("none of its interfaces (TRUSTED) exist on this firewall", " ".join(plan["warnings"]))
+        self.assertIn(
+            "Rule Group only is not pushed to this firewall. None of its interfaces exist here: "
+            "group TRUSTED is not deployed to Branch: its targets don't include this firewall.",
+            " ".join(plan["warnings"]),
+        )
         self.assertFalse(plan["operations"])
 
     def test_excluded_group_is_left_out_but_mapped_interface_kept(self):
@@ -100,7 +104,9 @@ class GroupPullTests(TestCase):
         rule.origin_interfaces.set([self.wan])
         plan = plan_for(self.fw)
         self.assertFalse([op for op in plan["operations"] if op["kind"] == "rule"])
-        self.assertIn("none of its origin interfaces (WAN)", " ".join(plan["warnings"]))
+        self.assertIn(
+            "None of its origin interfaces exist here: interface WAN is not mapped", " ".join(plan["warnings"])
+        )
         rule.origin_interfaces.add(self.lan)
         payload = next(op for op in plan_for(self.fw)["operations"] if op["kind"] == "rule")["payload"]
         self.assertEqual(payload["received-on"], "opt2")

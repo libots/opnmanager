@@ -190,29 +190,26 @@ class Policy:
         return self._firewalls[key]
 
 
-def _available_bindings(rule, label, interfaces, groups, mappings, unavailable_groups, warnings):
+def _available_bindings(rule, label, interfaces, groups, mappings, group_problems, warnings):
     """Leave out interfaces and groups that don't exist on this firewall, with a warning.
 
     Dropping them keeps the rule's meaning on this firewall, since traffic can't
     arrive on an interface it doesn't have. If every binding is missing, the rule
     is skipped here instead: an empty list would widen it to all interfaces.
+    group_problems maps each group that doesn't exist here to the reason.
     Returns (interfaces, groups, skipped).
     """
-    missing = [i.name for i in interfaces if i.name not in mappings]
-    missing += [g.name for g in groups if g.name in unavailable_groups]
-    if not missing:
+    reasons = [f"interface {i.name} is not mapped on this firewall" for i in interfaces if i.name not in mappings]
+    reasons += [f"group {g.name} {group_problems[g.name]}" for g in groups if g.name in group_problems]
+    if not reasons:
         return interfaces, groups, False
     kept_interfaces = [i for i in interfaces if i.name in mappings]
-    kept_groups = [g for g in groups if g.name not in unavailable_groups]
-    names = ", ".join(sorted(missing))
+    kept_groups = [g for g in groups if g.name not in group_problems]
+    because = "; ".join(sorted(reasons))
     if not kept_interfaces and not kept_groups:
-        warnings.append(
-            f"Rule {rule.name}: none of its {label} ({names}) exist on this firewall, so it is not pushed here."
-        )
+        warnings.append(f"Rule {rule.name} is not pushed to this firewall. None of its {label} exist here: {because}.")
         return kept_interfaces, kept_groups, True
-    warnings.append(
-        f"Rule {rule.name}: {label} {names} don't exist on this firewall and are left out of the pushed rule."
-    )
+    warnings.append(f"Rule {rule.name}: some {label} are left out of the pushed rule: {because}.")
     return kept_interfaces, kept_groups, False
 
 
@@ -299,11 +296,12 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
     # Interfaces can exist on only some firewalls. A group that doesn't target this
     # firewall, or has no member mapped here, doesn't exist here: it isn't created,
     # and rules bound to it leave it out.
-    unavailable_groups = {
-        g.name
-        for g in groups.values()
-        if not g.applies_to(firewall) or not any(i.name in mappings for i in g.members.all())
-    }
+    group_problems = {}
+    for g in groups.values():
+        if not g.applies_to(firewall):
+            group_problems[g.name] = f"is not deployed to {firewall.name}: its targets don't include this firewall"
+        elif not any(i.name in mappings for i in g.members.all()):
+            group_problems[g.name] = "has no members mapped on this firewall"
     for group in groups.values():
         if definition_names is not None and group.name not in definition_names["group"]:
             continue
@@ -351,7 +349,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             bound = rule.bound_interfaces()
             selected_groups = [policy.groups_by_pk[g.pk] for g in rule.interface_groups.all()]
             bound, selected_groups, skipped = _available_bindings(
-                rule, "interfaces", bound, selected_groups, mappings, unavailable_groups, plan["warnings"]
+                rule, "interfaces", bound, selected_groups, mappings, group_problems, plan["warnings"]
             )
             if skipped:
                 continue
@@ -369,7 +367,7 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             origins = list(rule.origin_interfaces.all())
             origin_groups = [policy.groups_by_pk[g.pk] for g in rule.origin_interface_groups.all()]
             origins, origin_groups, skipped = _available_bindings(
-                rule, "origin interfaces", origins, origin_groups, mappings, unavailable_groups, plan["warnings"]
+                rule, "origin interfaces", origins, origin_groups, mappings, group_problems, plan["warnings"]
             )
             if skipped:
                 continue
