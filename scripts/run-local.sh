@@ -13,7 +13,7 @@ fi
 .venv/bin/python manage.py migrate --noinput
 .venv/bin/python manage.py collectstatic --noinput
 .venv/bin/python manage.py bootstrap_admin
-# Device writes (rule deploys, definition syncs) run in this worker, not in web
+# Device writes (rule deploys, definition syncs, virtual IP changes) run in this worker, not in web
 # requests, so a proxy timeout or Gunicorn restart can't cut them off halfway.
 .venv/bin/python manage.py run_jobs &
 WORKER_PID=$!

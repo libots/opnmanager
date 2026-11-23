@@ -261,7 +261,6 @@ class Rule(ScopedPolicy):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=RULE_NAME_MAX)
     sequence = models.PositiveIntegerField(default=100, validators=[MinValueValidator(1), MaxValueValidator(999999)])
-    interface = models.ForeignKey(LogicalInterface, on_delete=models.PROTECT, null=True, blank=True)
     interfaces = models.ManyToManyField(
         LogicalInterface, blank=True, related_name="rules", help_text="Choose one or more mapped interfaces."
     )
@@ -339,10 +338,8 @@ class Rule(ScopedPolicy):
             raise ValidationError("IPv6 ICMP types require the ICMPv6 protocol.")
 
     def bound_interfaces(self):
-        interfaces = list(self.interfaces.all()) if self.pk and not self._state.adding else []
-        if self.interface_id and all(i.pk != self.interface_id for i in interfaces):
-            interfaces.append(self.interface)
-        return interfaces
+        """Logical interfaces the rule is bound to (empty for an unsaved rule)."""
+        return list(self.interfaces.all()) if self.pk and not self._state.adding else []
 
     def __str__(self):
         return self.name
@@ -469,7 +466,14 @@ class DeviceJob(models.Model):
 
     RULES_DEPLOY = "rules.deploy"
     DEFINITIONS_SYNC = "definitions.sync"
-    KINDS = [(RULES_DEPLOY, "Rule deployment"), (DEFINITIONS_SYNC, "Definition synchronization")]
+    VIP_APPLY = "vip.apply"
+    VIP_DELETE = "vip.delete"
+    KINDS = [
+        (RULES_DEPLOY, "Rule deployment"),
+        (DEFINITIONS_SYNC, "Definition synchronization"),
+        (VIP_APPLY, "Virtual IP change"),
+        (VIP_DELETE, "Virtual IP deletion"),
+    ]
     QUEUED, RUNNING, SUCCEEDED, FAILED, INTERRUPTED = "queued", "running", "succeeded", "failed", "interrupted"
     STATUSES = [
         (QUEUED, "Queued"),

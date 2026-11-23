@@ -30,19 +30,17 @@ class Command(BaseCommand):
         Rule.objects.create(
             name="Allow corporate DNS",
             sequence=100,
-            interface=vl10,
             protocol="UDP",
             destination="CorporateDNS",
             destination_port="53",
-        )
+        ).interfaces.add(vl10)
         Rule.objects.create(
             name="Isolate client networks",
             sequence=200,
-            interface=vl10,
             action="block",
             destination="@VL20:net",
             log=True,
-        )
+        ).interfaces.add(vl10)
         for index, name in enumerate(["Amsterdam", "London", "Stockholm"]):
             fw = Firewall.objects.create(
                 name=name,
@@ -56,11 +54,11 @@ class Command(BaseCommand):
                 exception = Rule.objects.create(
                     name="Amsterdam monitoring",
                     sequence=300,
-                    interface=vl20,
                     protocol="TCP",
                     destination_port="9100",
                     scope="selected",
                 )
+                exception.interfaces.add(vl20)
                 exception.firewalls.add(fw)
             snapshot = Snapshot.objects.create(
                 firewall=fw, source="demo", data={"schema_version": 1, "aliases": [], "rules": []}

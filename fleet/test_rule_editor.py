@@ -4,6 +4,7 @@ from django.test import TestCase
 
 from .forms import RuleForm, port_is_valid
 from .models import Alias, InterfaceGroup, LogicalInterface, Rule
+from .testing import make_rule
 
 
 class RuleEditorTests(TestCase):
@@ -87,7 +88,7 @@ class RuleEditorTests(TestCase):
         self.assertEqual(list(saved.origin_interface_groups.all()), [self.group])
 
     def test_existing_bindings_are_preselected_when_opened(self):
-        rule = Rule.objects.create(name="Legacy", interface=self.lan)
+        rule = make_rule(self.lan, name="Legacy")
         rule.origin_interface_groups.add(self.group)
         form = RuleForm(instance=rule)
         self.assertIn(self.lan_(), form.initial["bindings"])

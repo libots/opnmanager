@@ -4,8 +4,9 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from .import_rules import import_rules
-from .models import Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
+from .models import Firewall, InterfaceMapping, LogicalInterface, Snapshot
 from .reconcile import plan_for
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "groups": [], "categories": [], "interfaces": []}
 
@@ -17,9 +18,7 @@ class CompactIdentityTests(TestCase):
         InterfaceMapping.objects.create(
             firewall=self.firewall, logical_interface=self.interface, device_interface="lan"
         )
-        self.rule = Rule.objects.create(
-            id=uuid.UUID("6dd1349e-f6bd-4bc3-ac2b-dab08fd9cf42"), name="Allow DNS", interface=self.interface
-        )
+        self.rule = make_rule(self.interface, id=uuid.UUID("6dd1349e-f6bd-4bc3-ac2b-dab08fd9cf42"), name="Allow DNS")
         self.snapshot = Snapshot.objects.create(firewall=self.firewall, data=EMPTY)
 
     def payload(self):
@@ -64,12 +63,7 @@ class CompactIdentityTests(TestCase):
         self.assertFalse(plan["operations"])
 
     def test_colliding_uuid_prefixes_are_rejected(self):
-        Rule.objects.create(
-            id=uuid.UUID("6dd1349e-f6bd-4bc3-ac2b-dab08fd9cf43"),
-            name="Collision",
-            interface=self.interface,
-            sequence=200,
-        )
+        make_rule(self.interface, id=uuid.UUID("6dd1349e-f6bd-4bc3-ac2b-dab08fd9cf43"), name="Collision", sequence=200)
         plan = plan_for(self.firewall)
         self.assertTrue(any("identity collision" in e for e in plan["errors"]))
         self.assertFalse(plan["operations"])

@@ -288,7 +288,7 @@ def rules_page(request):
     else:
         rows = []
         groups = {g.name: {i.name for i in g.members.all()} for g in InterfaceGroup.objects.prefetch_related("members")}
-        for rule in Rule.objects.select_related("interface").prefetch_related(
+        for rule in Rule.objects.prefetch_related(
             "interfaces",
             "interface_groups",
             "origin_interfaces",
@@ -525,7 +525,9 @@ def deploy_rules(request, pk):
 @permission_required("fleet.view_firewall", raise_exception=True)
 def job_detail(request, pk):
     job = get_object_or_404(DeviceJob.objects.select_related("firewall"), pk=pk)
-    if job.kind == DeviceJob.RULES_DEPLOY or job.params.get("rule_id"):
+    if job.kind in (DeviceJob.VIP_APPLY, DeviceJob.VIP_DELETE):
+        back = ("Return to Virtual IPs", reverse("virtual_ips"))
+    elif job.kind == DeviceJob.RULES_DEPLOY or job.params.get("rule_id"):
         back = ("Return to rule deployment", reverse("deploy_rules", args=[job.firewall.pk]))
     else:
         back = ("Return to " + job.firewall.name, reverse("firewall", args=[job.firewall.pk]))

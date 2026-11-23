@@ -21,6 +21,7 @@ from .models import (
 )
 from .opnsense import DeviceError
 from .reconcile import plan_for
+from .testing import make_rule
 
 RICH = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -99,7 +100,7 @@ class FirewallTargetTests(TestCase):
 
     def test_dynamic_group_membership_for_every_policy_type(self):
         for model, kwargs in [
-            (Rule, {"name": "Rule", "interface": self.logical}),
+            (Rule, {"name": "Rule"}),
             (Alias, {"name": "Addresses", "content": "10.0.0.1"}),
             (Category, {"name": "Operations"}),
             (InterfaceGroup, {"name": "TRUSTED"}),
@@ -115,7 +116,7 @@ class FirewallTargetTests(TestCase):
             self.assertTrue(policy.applies_to(self.firewall))
 
     def test_all_includes_new_firewalls_and_ignores_selected_lists(self):
-        rule = Rule.objects.create(name="Global rule", interface=self.logical)
+        rule = make_rule(self.logical, name="Global rule")
         new = Firewall.objects.create(name="New", base_url="https://new.test")
         self.assertTrue(rule.applies_to(new))
         rule.firewall_groups.add(self.group)

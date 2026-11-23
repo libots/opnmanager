@@ -269,7 +269,6 @@ class RuleForm(TargetsFormMixin, forms.ModelForm):
         model = Rule
         exclude = [
             *SCOPE_FIELDS,
-            "interface",
             "floating",
             "interfaces",
             "interface_groups",
@@ -454,10 +453,6 @@ class RuleForm(TargetsFormMixin, forms.ModelForm):
                 except ValueError:
                     self.add_error(field, "Choose an existing alias/interface or enter a valid address/network.")
         return data
-
-    def save(self, commit=True):
-        self.instance.interface = None
-        return super().save(commit)
 
     def _save_m2m(self):
         super()._save_m2m()

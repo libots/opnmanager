@@ -62,8 +62,7 @@ def usage():
     counts = {}
     for interface in LogicalInterface.objects.all():
         rules = Rule.objects.filter(
-            Q(interface=interface)
-            | Q(interfaces=interface)
+            Q(interfaces=interface)
             | Q(origin_interfaces=interface)
             | Q(source__contains=f"@{interface.name}:")
             | Q(destination__contains=f"@{interface.name}:")

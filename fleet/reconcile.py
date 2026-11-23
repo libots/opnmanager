@@ -163,7 +163,7 @@ class Policy:
         self.groups_by_pk = {g.pk: g for g in self.groups.values()}
         self.group_markers = {short_marker(g.uid) for g in self.groups.values()}
         self.rules = list(
-            Rule.objects.select_related("interface").prefetch_related(
+            Rule.objects.prefetch_related(
                 "interfaces",
                 "interface_groups",
                 "categories",

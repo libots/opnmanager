@@ -48,6 +48,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 ROOT_URLCONF = "config.urls"
+# Tests get a temporary DATA_DIR so their lock and key files never touch a real installation.
+TEST_RUNNER = "fleet.testing.DataDirTestRunner"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",

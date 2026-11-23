@@ -1,5 +1,4 @@
 import json
-from functools import wraps
 
 from django.conf import settings
 from django.contrib import messages
@@ -12,29 +11,17 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
 from .alias_sync import digest
-from .locks import device_write_lock
-from .models import AuditEvent, DeviceInventory, Firewall, FirmwareJob, VirtualIP
+from .jobs import enqueue
+from .models import AuditEvent, DeviceInventory, DeviceJob, Firewall, FirmwareJob, VirtualIP
 from .opnsense import DeviceError, OPNsenseClient
-from .system_management import firmware_action, read_vips, refresh_firmware, refresh_inventory, vip_plan
-
-
-def vip_lock(view):
-    """Run POSTs to a VIP view under the firewall's shared device write lock."""
-
-    @wraps(view)
-    def wrapped(request, pk, *args, **kwargs):
-        if request.method != "POST":
-            return view(request, pk, *args, **kwargs)
-        try:
-            with device_write_lock(pk, "A virtual IP change"):
-                return view(request, pk, *args, **kwargs)
-        except DeviceError as exc:
-            if "already running" not in str(exc):
-                raise
-            messages.error(request, str(exc))
-            return redirect("virtual_ips")
-
-    return wrapped
+from .system_management import (
+    firmware_action,
+    read_vips,
+    refresh_firmware,
+    refresh_inventory,
+    vip_plan,
+    vip_review_digest,
+)
 
 
 def chosen(request):
@@ -163,53 +150,30 @@ def virtual_ips(request):
 
 @login_required
 @permission_required(("fleet.view_firewall", "fleet.change_virtualip", "fleet.sync_definitions"), raise_exception=True)
-@vip_lock
 def review_vip(request, pk, vip_id):
+    """Review one desired VIP against the device; applying it is queued for the job worker."""
     fw = get_object_or_404(Firewall, pk=pk, enabled=True)
     vip = get_object_or_404(VirtualIP, pk=vip_id)
     if not vip.applies_to(fw):
         return HttpResponseBadRequest("VIP does not target this firewall")
     try:
-        client = OPNsenseClient(fw)
-        observed = read_vips(client)
-        plan = vip_plan(fw, vip, observed)
-        fingerprint = digest({"observed": observed, "plan": plan})
         if request.method == "POST":
             try:
                 approved = signing.loads(request.POST.get("approval", ""), salt="vip-review", max_age=600)
             except signing.BadSignature:
                 raise DeviceError("Virtual IP review expired or is invalid. Review again.") from None
-            if approved != {"firewall": fw.pk, "vip": vip.pk, "digest": fingerprint}:
+            if approved.get("firewall") != fw.pk or approved.get("vip") != vip.pk:
                 raise DeviceError("Device or desired VIP changed. Review again.")
-            from urllib.parse import quote
-
-            endpoint = "set_item/" + quote(plan["uuid"], safe="") if plan["uuid"] else "add_item"
-            AuditEvent.objects.create(
-                actor=request.user.username, action="vip.apply.started", detail=fw.name + " " + vip.name
+            # The worker re-reads the device and must reproduce the reviewed digest before writing.
+            job = enqueue(
+                fw, DeviceJob.VIP_APPLY, {"vip_id": vip.pk, "digest": approved["digest"]}, request.user.username
             )
-            result = client.post("/api/interfaces/vip_settings/" + endpoint, {"vip": plan["payload"]})
-            if result.get("result") != "saved":
-                raise DeviceError("Device rejected the VIP. Inspect validation errors.")
-            if client.post("/api/interfaces/vip_settings/reconfigure", {}).get("status") != "ok":
-                raise DeviceError("VIP saved but reconfiguration failed. Inspect device state.")
-            after = read_vips(client)
-            matches = [r for r in after if r.get("descr") == plan["payload"]["descr"]]
-            import ipaddress
-
-            if (
-                len(matches) != 1
-                or ipaddress.ip_interface(matches[0].get("subnet", "") + "/" + matches[0].get("subnet_bits", ""))
-                != ipaddress.ip_interface(vip.network)
-                or matches[0].get("interface") != plan["payload"]["interface"]
-                or matches[0].get("mode") != vip.mode
-            ):
-                raise DeviceError("VIP readback did not match. Inspect device state.")
-            AuditEvent.objects.create(
-                actor=request.user.username, action="vip.applied", detail=fw.name + " " + vip.name
-            )
-            messages.success(request, "VIP applied and read back.")
-            return redirect("virtual_ips")
-        token = signing.dumps({"firewall": fw.pk, "vip": vip.pk, "digest": fingerprint}, salt="vip-review")
+            return redirect("job", pk=job.pk)
+        observed = read_vips(OPNsenseClient(fw))
+        plan = vip_plan(fw, vip, observed)
+        token = signing.dumps(
+            {"firewall": fw.pk, "vip": vip.pk, "digest": vip_review_digest(observed, plan)}, salt="vip-review"
+        )
         return render(request, "fleet/vip_review.html", {"firewall": fw, "vip": vip, "plan": plan, "approval": token})
     except DeviceError as exc:
         if request.method == "POST":
@@ -332,47 +296,29 @@ def adopt_vip(request, pk, uuid):
 
 @login_required
 @permission_required(("fleet.view_firewall", "fleet.delete_virtualip", "fleet.sync_definitions"), raise_exception=True)
-@vip_lock
 def delete_vip(request, pk, uuid):
+    """Review deleting one device VIP; the deletion is queued for the job worker."""
     fw = get_object_or_404(Firewall, pk=pk, enabled=True)
     try:
-        client = OPNsenseClient(fw)
-        rows = read_vips(client)
+        if request.method == "POST":
+            try:
+                approved = signing.loads(request.POST.get("approval", ""), salt="vip-delete", max_age=600)
+            except signing.BadSignature:
+                raise DeviceError("Deletion review expired. Review again.") from None
+            if approved.get("firewall") != fw.pk or approved.get("uuid") != str(uuid):
+                raise DeviceError("Virtual IP configuration changed. Review again.")
+            # The worker re-reads the device and must reproduce the reviewed digest before deleting.
+            job = enqueue(
+                fw, DeviceJob.VIP_DELETE, {"uuid": str(uuid), "digest": approved["digest"]}, request.user.username
+            )
+            return redirect("job", pk=job.pk)
+        rows = read_vips(OPNsenseClient(fw))
         row = next((r for r in rows if r.get("uuid") == str(uuid)), None)
         if not row:
             raise DeviceError("Virtual IP no longer exists. Refresh inventory.")
         if row.get("mode") == "carp":
             raise DeviceError("CARP deletion is device-local because of HA dependencies.")
         expected = {"firewall": fw.pk, "uuid": str(uuid), "digest": digest(rows)}
-        if request.method == "POST":
-            try:
-                approved = signing.loads(request.POST.get("approval", ""), salt="vip-delete", max_age=600)
-            except signing.BadSignature:
-                raise DeviceError("Deletion review expired. Review again.") from None
-            if approved != expected:
-                raise DeviceError("Virtual IP configuration changed. Review again.")
-            AuditEvent.objects.create(
-                actor=request.user.username, action="vip.delete.started", detail=fw.name + " " + str(uuid)
-            )
-            result = client.post("/api/interfaces/vip_settings/del_item/" + str(uuid), {})
-            if result.get("result") != "deleted":
-                raise DeviceError("The device refused deletion, possibly because the VIP is in use.")
-            if client.post("/api/interfaces/vip_settings/reconfigure", {}).get("status") != "ok":
-                raise DeviceError("VIP removed from saved config but reconfiguration failed; inspect device state.")
-            after = read_vips(client)
-            if any(r.get("uuid") == str(uuid) for r in after):
-                raise DeviceError("Deleted VIP is still present on readback.")
-            inventory, _ = DeviceInventory.objects.get_or_create(firewall=fw)
-            inventory.data = {**inventory.data, "vips": after}
-            inventory.save()
-            AuditEvent.objects.create(
-                actor=request.user.username, action="vip.delete.completed", detail=fw.name + " " + str(uuid)
-            )
-            messages.success(
-                request,
-                "Virtual IP deleted and absence verified. Retarget or remove any desired definition separately.",
-            )
-            return redirect("virtual_ips")
         return render(
             request,
             "fleet/vip_delete.html",

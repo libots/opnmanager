@@ -3,6 +3,7 @@ from django.test import TestCase
 
 from .models import Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
 from .rule_identity import short_marker
+from .testing import make_rule
 
 
 class RulesTableTests(TestCase):
@@ -15,13 +16,8 @@ class RulesTableTests(TestCase):
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=self.logical, device_interface="lan")
 
     def test_dense_columns_live_script_and_complete_filter_dataset(self):
-        one = Rule.objects.create(
-            name="DNS",
-            interface=self.logical,
-            protocol="UDP",
-            destination_port="53",
-            source_not=True,
-            source="192.0.2.0/24",
+        one = make_rule(
+            self.logical, name="DNS", protocol="UDP", destination_port="53", source_not=True, source="192.0.2.0/24"
         )
         Rule.objects.create(name="Ping", floating=True, protocol="ICMP", icmp_types="echoreq", sequence=200)
         one.origin_interfaces.add(self.origin)
@@ -62,7 +58,7 @@ class RulesTableTests(TestCase):
         self.assertContains(response, "rule-hidden-selections")
 
     def test_managed_snapshot_rules_link_to_editor_without_origin_record(self):
-        rule = Rule.objects.create(name="Managed", interface=self.logical)
+        rule = make_rule(self.logical, name="Managed")
         Snapshot.objects.create(
             firewall=self.fw,
             data={

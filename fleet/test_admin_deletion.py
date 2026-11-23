@@ -3,6 +3,7 @@ from django.contrib.auth.models import Permission
 from django.test import TestCase
 
 from .models import AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Rule, RuleOrigin, Snapshot
+from .testing import make_rule
 
 
 class FirewallDeletionTests(TestCase):
@@ -18,7 +19,7 @@ class FirewallDeletionTests(TestCase):
     def test_delete_confirmation_and_cascade_preserve_shared_policy_and_audit(self):
         interface = LogicalInterface.objects.create(name="VL10")
         InterfaceMapping.objects.create(firewall=self.firewall, logical_interface=interface, device_interface="opt2")
-        rule = Rule.objects.create(name="Shared policy", interface=interface)
+        rule = make_rule(interface, name="Shared policy")
         RuleOrigin.objects.create(firewall=self.firewall, rule=rule, remote_uuid="source-rule")
         url = f"/admin/fleet/firewall/{self.firewall.pk}/delete/"
         response = self.client.get(url)

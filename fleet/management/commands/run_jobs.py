@@ -7,7 +7,7 @@ from fleet.jobs import claim_next, recover_interrupted, run_job
 
 
 class Command(BaseCommand):
-    help = "Run queued device jobs (rule deploys, definition syncs). Run exactly one worker per data directory."
+    help = "Run queued device jobs (rule deploys, definition syncs, virtual IP changes). Run exactly one worker per data directory."
 
     def add_arguments(self, parser):
         parser.add_argument("--once", action="store_true", help="Drain the queue once and exit.")

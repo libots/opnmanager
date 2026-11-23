@@ -4,9 +4,10 @@ from unittest.mock import Mock
 from django.test import SimpleTestCase, TestCase
 
 from .deployment import deployment_plan, execute_deployment
-from .models import Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
+from .models import Firewall, InterfaceMapping, LogicalInterface, Snapshot
 from .opnsense import DeviceError
 from .snapshot_compare import configuration_changes
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -164,7 +165,7 @@ class PreflightTests(TestCase):
         self.fw = Firewall.objects.create(name="Test", base_url="https://test.example")
         interface = LogicalInterface.objects.create(name="LAN")
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=interface, device_interface="lan")
-        self.rule = Rule.objects.create(name="Managed", interface=interface)
+        self.rule = make_rule(interface, name="Managed")
         self.data = {
             **EMPTY,
             "rules": [
