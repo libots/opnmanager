@@ -50,6 +50,7 @@ class MappingInline(PlainRelationsMixin, admin.TabularInline):
     verbose_name = "Interface mapping"
     verbose_name_plural = "Interface mappings"
     fields = ["logical_interface", "device_interface"]
+    ordering = ["logical_interface__sort_key", "logical_interface__name"]
 
     def get_formset(self, request, obj=None, **kwargs):
         from .interface_views import device_interfaces

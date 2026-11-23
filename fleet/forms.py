@@ -120,7 +120,7 @@ class CSVChoicesField(forms.CharField):
 def binding_choices():
     """Interface (rule/origin) options in OPNsense's order: groups, then interfaces."""
     groups = [(f"group:{g.pk}", g.name) for g in InterfaceGroup.objects.order_by("name")]
-    interfaces = [(f"interface:{i.pk}", i.name) for i in LogicalInterface.objects.order_by("name")]
+    interfaces = [(f"interface:{i.pk}", i.name) for i in LogicalInterface.objects.all()]
     return [("Groups", groups), ("Interfaces", interfaces)]
 
 
@@ -373,7 +373,7 @@ class RuleForm(TargetsFormMixin, forms.ModelForm):
 
         aliases = sorted(Alias.objects.exclude(type="port").values_list("name", flat=True), key=str.lower)
         networks = [("any", "any"), ("(self)", "This Firewall")]
-        for interface in LogicalInterface.objects.order_by("name"):
+        for interface in LogicalInterface.objects.all():
             networks += [
                 (f"@{interface.name}:net", f"{interface.name} network"),
                 (f"@{interface.name}:ip", f"{interface.name} address"),

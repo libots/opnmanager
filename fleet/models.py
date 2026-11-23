@@ -6,6 +6,8 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator, MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models, transaction
 
+from .sorting import natural_key
+
 identifier = RegexValidator(
     r"^[A-Za-z_][A-Za-z0-9_]*$", "Use letters, digits and underscores; start with a letter or underscore."
 )
@@ -73,11 +75,16 @@ class Firewall(models.Model):
 class LogicalInterface(models.Model):
     name = models.CharField(max_length=50, unique=True, validators=[identifier])
     description = models.CharField(max_length=200, blank=True)
+    # Natural order (VL49 before VL100_Parents) as OPNsense lists interfaces; kept in sync by save().
+    sort_key = models.CharField(max_length=100, editable=False, default="", db_index=True)
 
     def __str__(self):
         return self.name
 
     def save(self, *args, **kwargs):
+        self.sort_key = natural_key(self.name)
+        if kwargs.get("update_fields") is not None and "name" in kwargs["update_fields"]:
+            kwargs["update_fields"] = {*kwargs["update_fields"], "sort_key"}
         previous = None
         if self.pk:
             previous = LogicalInterface.objects.filter(pk=self.pk).values_list("name", flat=True).first()
@@ -100,7 +107,7 @@ class LogicalInterface(models.Model):
                         rule.save()
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["sort_key", "name"]
 
 
 class InterfaceMapping(models.Model):

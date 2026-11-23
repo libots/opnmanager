@@ -210,14 +210,14 @@ document.addEventListener('DOMContentLoaded', function () {
         const name=(rule.category_display||'').split(', ')[0]||'Uncategorized';
         if(!byCategory.has(name))byCategory.set(name,[]);byCategory.get(name).push(rule);
       }
-      return Array.from(byCategory).sort((a,b)=>(a[0]==='Uncategorized')-(b[0]==='Uncategorized')||a[0].localeCompare(b[0]))
+      return Array.from(byCategory).sort((a,b)=>(a[0]==='Uncategorized')-(b[0]==='Uncategorized')||a[0].localeCompare(b[0],undefined,{numeric:true,sensitivity:'base'}))
         .map(([name,list])=>({name,kind:'category',rules:list.sort(evaluationOrder)}));
     }
     // Inspect: one list in the order the firewall evaluates it (floating, group, then interface rules).
     if (toggles.inspect) return [{name:null,rules:[...rules].sort(evaluationOrder)}];
     const byLabel=new Map();
     for (const rule of rules) { if(!byLabel.has(rule.section_label))byLabel.set(rule.section_label,[]);byLabel.get(rule.section_label).push(rule); }
-    return Array.from(byLabel).sort((a,b)=>RANK[a[1][0].placement]-RANK[b[1][0].placement]||a[0].localeCompare(b[0]))
+    return Array.from(byLabel).sort((a,b)=>RANK[a[1][0].placement]-RANK[b[1][0].placement]||a[0].localeCompare(b[0],undefined,{numeric:true,sensitivity:'base'}))
       .map(([name,list])=>({name,kind:list[0].placement,rules:list}));
   }
 

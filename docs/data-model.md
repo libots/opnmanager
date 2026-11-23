@@ -50,6 +50,13 @@ to avoid N queries per object). The UI edits this as one "Deploy to" field
   chars) and OPNsense allows 255. Alias/group descriptions share the same limit.
 - `Rule.clean()` enforces protocol/port/ICMP/address-family compatibility.
 
+### Natural order of logical interfaces
+
+`LogicalInterface.sort_key` (set in `save()` from `fleet.sorting.natural_key`) is the default
+ordering, so every queryset lists `VL49` before `VL100_Parents`, as OPNsense does. Don't add
+`order_by("name")` for logical interfaces; it brings back plain text order. `QuerySet.update(name=...)`
+leaves the key stale.
+
 ### Renames rewrite references
 
 `Alias.save()`, `InterfaceGroup.save()` and `LogicalInterface.save()` detect a name change and
