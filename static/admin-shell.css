@@ -79,3 +79,8 @@ ul.messagelist li { font-size: 14px; }
 .inline-group .tabular tr.empty-form { display: none; }
 .inline-group .tabular table tr.has_original > td { padding-top: 8px; }
 .inline-group .module h2, .inline-group h2 { background: var(--opn-bg-head); color: var(--opn-text); font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--opn-border); }
+/* Admin pages framed in a Firewall: Rules dialog (?_modal=1): no shell around them. */
+body.opn-modal { background: #fff; }
+body.opn-modal #container { margin-left: 0; padding-top: 0; }
+body.opn-modal #content { padding: 0; max-width: none; }
+body.opn-modal.delete-confirmation #content { padding: 16px; }

@@ -3,7 +3,8 @@ from django.contrib import admin, messages
 from django.contrib.admin import helpers
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, JsonResponse
+from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -131,9 +132,11 @@ class RuleAdmin(admin.ModelAdmin):
 
     form = RuleForm
     change_form_template = "admin/fleet/rule/change_form.html"
-    # Sections and field order follow OPNsense's Firewall: Rules dialog; Deployment is manager-only.
+    # Sections and field order follow OPNsense's Firewall: Rules dialog. Deployment is
+    # manager-only, and sits under Organisation so a rule's reach is visible up front.
     fieldsets = [
         ("Organisation", {"fields": ("enabled", "sequence", "categories", "name")}),
+        ("Deployment", {"fields": ("targets",)}),
         ("Interface", {"fields": ("interface_not", "bindings", "origin_not", "origin_bindings")}),
         (
             "Filter",
@@ -158,7 +161,6 @@ class RuleAdmin(admin.ModelAdmin):
         ),
         ("Stateful firewall", {"fields": ("state_type",)}),
         ("Source Routing", {"fields": ("gateway",)}),
-        ("Deployment", {"fields": ("targets",)}),
     ]
     list_display = ["name", "sequence", "rule_bindings", "action", "protocol", "scope", "enabled"]
     list_filter = ["scope", "interfaces", "interface_groups", "categories", "floating", "action", "enabled"]
@@ -200,25 +202,56 @@ class RuleAdmin(admin.ModelAdmin):
 
     def render_change_form(self, request, context, *args, **kwargs):
         context["rules_return"] = self.return_url(request)
+        context["modal"] = self.is_modal(request)
         return super().render_change_form(request, context, *args, **kwargs)
 
     def response_add(self, request, obj, post_url_continue=None):
         if "_continue" in request.POST or "_addanother" in request.POST or self.is_popup(request):
             return super().response_add(request, obj, post_url_continue)
+        if self.is_modal(request):
+            return self.modal_done(request, f"Rule “{obj}” added.")
         messages.success(request, f"Rule “{obj}” added.")
         return HttpResponseRedirect(self.return_url(request))
 
     def response_change(self, request, obj):
         if "_continue" in request.POST or "_addanother" in request.POST or self.is_popup(request):
             return super().response_change(request, obj)
+        if self.is_modal(request):
+            return self.modal_done(request, f"Rule “{obj}” saved.")
         messages.success(request, f"Rule “{obj}” saved.")
         return HttpResponseRedirect(self.return_url(request))
 
     def response_delete(self, request, obj_display, obj_id):
         if self.is_popup(request):
             return super().response_delete(request, obj_display, obj_id)
+        if self.is_modal(request):
+            return self.modal_done(request, f"Rule “{obj_display}” deleted.")
         messages.success(request, f"Rule “{obj_display}” deleted.")
         return HttpResponseRedirect(self.return_url(request))
+
+    # Firewall: Rules opens the rule dialog in a frame with ?_modal=1. Saving answers
+    # with a page that tells the rules page to close the dialog and refresh its table.
+    MODAL_VAR = "_modal"
+
+    @classmethod
+    def is_modal(cls, request):
+        return cls.MODAL_VAR in request.GET or cls.MODAL_VAR in request.POST
+
+    def modal_done(self, request, message):
+        return TemplateResponse(request, "admin/fleet/rule/modal_done.html", {"result": {"message": message}})
+
+    def framed(self, request, response):
+        # Only the rules page, on this origin, may frame the dialog; everything else stays DENY.
+        if self.is_modal(request):
+            response["X-Frame-Options"] = "SAMEORIGIN"
+        return response
+
+    def changeform_view(self, request, *args, **kwargs):
+        return self.framed(request, super().changeform_view(request, *args, **kwargs))
+
+    def delete_view(self, request, object_id, extra_context=None):
+        extra_context = {**(extra_context or {}), "modal": self.is_modal(request)}
+        return self.framed(request, super().delete_view(request, object_id, extra_context))
 
     @staticmethod
     def is_popup(request):
@@ -251,21 +284,28 @@ class RuleAdmin(admin.ModelAdmin):
     def bulk_action_view(self, request):
         action = request.POST.get("action")
         rules = self.selected_rules(request)
-        back = HttpResponseRedirect(self.return_url(request))
+        wants_json = "application/json" in request.headers.get("Accept", "")
+
+        def back(level, text):
+            # Firewall: Rules posts with fetch and refreshes its table; forms get a redirect.
+            if wants_json:
+                return JsonResponse(
+                    {"ok": level == "success", "message": text}, status=200 if level == "success" else 400
+                )
+            getattr(messages, level)(request, text)
+            return HttpResponseRedirect(self.return_url(request))
+
         if not rules:
-            messages.warning(request, "Select one or more rules first.")
-            return back
+            return back("warning", "Select one or more rules first.")
         if action == "delete":
             if not self.has_delete_permission(request):
                 raise PermissionDenied
             queryset = Rule.objects.filter(pk__in=[r.pk for r in rules])
             self.log_deletions(request, queryset)
             self.delete_queryset(request, queryset)
-            messages.success(request, f"Deleted {len(rules)} rule{'s' if len(rules) != 1 else ''}.")
-            return back
+            return back("success", f"Deleted {len(rules)} rule{'s' if len(rules) != 1 else ''}.")
         if action not in self.BULK_ACTIONS:
-            messages.error(request, "Unknown rule action.")
-            return back
+            return back("error", "Unknown rule action.")
         if not self.has_change_permission(request):
             raise PermissionDenied
         field, value = self.BULK_ACTIONS[action]
@@ -281,19 +321,22 @@ class RuleAdmin(admin.ModelAdmin):
             "log": "Turned on logging for",
             "nolog": "Turned off logging for",
         }
-        messages.success(request, f"{label[action]} {len(changed)} rule{'s' if len(changed) != 1 else ''}.")
-        return back
+        return back("success", f"{label[action]} {len(changed)} rule{'s' if len(changed) != 1 else ''}.")
 
     def bulk_edit_view(self, request):
         """Edit several rules at once. Fields that differ start greyed out; only changed fields are saved."""
-        from .forms import RuleForm, bulk_rule_forms, comparable, rule_form_data, rule_form_initial
-
         if not self.has_change_permission(request):
             raise PermissionDenied
+        return self.framed(request, self._bulk_edit(request))
+
+    def _bulk_edit(self, request):
+        from .forms import RuleForm, bulk_rule_forms, comparable, rule_form_data, rule_form_initial
+
         rules = self.selected_rules(request)
         if len(rules) < 2:
             if rules:
-                return HttpResponseRedirect(reverse("admin:fleet_rule_change", args=[rules[0].pk]))
+                url = reverse("admin:fleet_rule_change", args=[rules[0].pk])
+                return HttpResponseRedirect(url + ("?_modal=1" if self.is_modal(request) else ""))
             messages.warning(request, "Select two or more rules to edit them together.")
             return HttpResponseRedirect(self.return_url(request))
         datas = [rule_form_data(rule) for rule in rules]
@@ -303,6 +346,8 @@ class RuleAdmin(admin.ModelAdmin):
         bulk_errors = []
         if request.method == "POST":
             if not changed:
+                if self.is_modal(request):
+                    return self.modal_done(request, "Nothing was changed.")
                 messages.info(request, "Nothing was changed.")
                 return HttpResponseRedirect(self.return_url(request))
             edits = bulk_rule_forms(rules, request.POST, changed)
@@ -316,6 +361,8 @@ class RuleAdmin(admin.ModelAdmin):
                     for rule, form in zip(rules, edits, strict=True):
                         form.save()
                         self.log_change(request, rule, [{"changed": {"fields": labels}}])
+                if self.is_modal(request):
+                    return self.modal_done(request, f"Updated {', '.join(labels)} on {len(rules)} rules.")
                 messages.success(request, f"Updated {', '.join(labels)} on {len(rules)} rules.")
                 return HttpResponseRedirect(self.return_url(request))
         # The dialog shows shared values; differing fields start empty and greyed out.

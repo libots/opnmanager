@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.test import TestCase
 
-from .models import Alias, Category, LogicalInterface, Rule
+from .models import Alias, Category, Firewall, LogicalInterface, Rule
 
 
 class RuleListCommandTests(TestCase):
@@ -170,3 +170,87 @@ class RuleListCommandTests(TestCase):
         data = response.context["rules_data"]
         self.assertTrue(data["manager"] and data["can_delete"] and data["can_add"])
         self.assertEqual({row["binding_count"] for row in data["rows"]}, {1})
+
+    def web_form(self, **changes):
+        return {
+            "name": "Web",
+            "sequence": "110",
+            "scope": "all",
+            "enabled": "on",
+            "quick": "on",
+            "action": "pass",
+            "direction": "in",
+            "ip_version": "inet",
+            "protocol": "TCP",
+            "source": "any",
+            "destination": "any",
+            "destination_port": "443",
+            "state_type": "keep",
+            "_save": "Save",
+            **changes,
+        }
+
+    def test_dialog_mode_frames_the_editor_and_reports_saves_to_the_rules_page(self):
+        url = f"/admin/fleet/rule/{self.web.pk}/change/?_modal=1"
+        response = self.client.get(url)
+        self.assertEqual(response["X-Frame-Options"], "SAMEORIGIN")
+        self.assertContains(response, "opn-modal")
+        self.assertContains(response, "data-dialog-close")
+        self.assertNotContains(response, 'class="opn-sidebar"')
+        # Outside the dialog the editor keeps the app shell and can't be framed.
+        response = self.client.get(f"/admin/fleet/rule/{self.web.pk}/change/")
+        self.assertEqual(response["X-Frame-Options"], "DENY")
+        self.assertContains(response, 'class="opn-sidebar"')
+        # Saving answers with the page that closes the dialog, not a redirect.
+        response = self.client.post(url, self.web_form(name="Web secure"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "admin/fleet/rule/modal_done.html")
+        self.assertContains(response, "opn-rule-dialog")
+        self.assertContains(response, "Web secure")
+        self.assertEqual(Rule.objects.get(pk=self.web.pk).name, "Web secure")
+        # A refused save stays in the dialog with its errors.
+        response = self.client.post(url, self.web_form(name=""))
+        self.assertTemplateNotUsed(response, "admin/fleet/rule/modal_done.html")
+        self.assertContains(response, "This field is required.")
+        self.assertEqual(response["X-Frame-Options"], "SAMEORIGIN")
+
+    def test_dialog_mode_delete_and_bulk_edit(self):
+        url = f"/admin/fleet/rule/{self.web.pk}/delete/?_modal=1"
+        response = self.client.get(url)
+        self.assertEqual(response["X-Frame-Options"], "SAMEORIGIN")
+        self.assertNotContains(response, 'class="opn-sidebar"')
+        response = self.client.post(url, {"post": "yes"})
+        self.assertTemplateUsed(response, "admin/fleet/rule/modal_done.html")
+        self.assertFalse(Rule.objects.filter(pk=self.web.pk).exists())
+        other = Rule.objects.create(name="Other", sequence=120)
+        url = f"/admin/fleet/rule/bulk-edit/?ids={self.dns.pk}&ids={other.pk}&_modal=1"
+        self.assertEqual(self.client.get(url)["X-Frame-Options"], "SAMEORIGIN")
+        response = self.client.post(url, {"_changed": ["log"], "log": "on"})
+        self.assertTemplateUsed(response, "admin/fleet/rule/modal_done.html")
+        self.assertEqual(Rule.objects.filter(log=True).count(), 2)
+
+    def test_rule_dialog_lists_deployment_right_under_organisation(self):
+        names = [fieldset.name for fieldset in self.client.get("/admin/fleet/rule/add/").context["adminform"]]
+        self.assertEqual(names[:2], ["Organisation", "Deployment"])
+
+    def test_bulk_commands_answer_fetch_with_json(self):
+        response = self.client.post(
+            "/admin/fleet/rule/bulk/", {"action": "disable", "ids": [self.dns.pk]}, HTTP_ACCEPT="application/json"
+        )
+        self.assertEqual(response.json(), {"ok": True, "message": "Disabled 1 rule."})
+        self.assertFalse(Rule.objects.get(pk=self.dns.pk).enabled)
+        response = self.client.post("/admin/fleet/rule/bulk/", {"action": "disable"}, HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
+
+    def test_rules_page_data_refreshes_as_json(self):
+        firewall = Firewall.objects.create(name="Edge", base_url="https://edge.invalid")
+        self.web.scope = Rule.SELECTED
+        self.web.save()
+        self.web.firewalls.add(firewall)
+        data = self.client.get("/rules/", HTTP_ACCEPT="application/json").json()
+        self.assertTrue(data["manager"])
+        rows = {row["description"]: row for row in data["rows"]}
+        self.assertEqual(rows["DNS"]["targets_display"], "All enabled firewalls")
+        self.assertEqual(rows["Web"]["targets_display"], "Edge")
+        self.assertEqual(rows["DNS"]["category_display"], "Infra")
