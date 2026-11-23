@@ -6,6 +6,8 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator, MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models, transaction
 
+from .sorting import natural_key
+
 identifier = RegexValidator(
     r"^[A-Za-z_][A-Za-z0-9_]*$", "Use letters, digits and underscores; start with a letter or underscore."
 )
@@ -73,12 +75,39 @@ class Firewall(models.Model):
 class LogicalInterface(models.Model):
     name = models.CharField(max_length=50, unique=True, validators=[identifier])
     description = models.CharField(max_length=200, blank=True)
+    # Natural order (VL49 before VL100_Parents) as OPNsense lists interfaces; kept in sync by save().
+    sort_key = models.CharField(max_length=100, editable=False, default="", db_index=True)
 
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        self.sort_key = natural_key(self.name)
+        if kwargs.get("update_fields") is not None and "name" in kwargs["update_fields"]:
+            kwargs["update_fields"] = {*kwargs["update_fields"], "sort_key"}
+        previous = None
+        if self.pk:
+            previous = LogicalInterface.objects.filter(pk=self.pk).values_list("name", flat=True).first()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if previous and previous != self.name:
+                # Bindings, groups and mappings follow the foreign key; addresses name it as text.
+                for rule in Rule.objects.filter(
+                    models.Q(source__contains=f"@{previous}:") | models.Q(destination__contains=f"@{previous}:")
+                ):
+                    changed = False
+                    for field in ("source", "destination"):
+                        value = getattr(rule, field)
+                        for kind in ("net", "ip"):
+                            value, _ = _replace_token(value, f"@{previous}:{kind}", f"@{self.name}:{kind}", ",")
+                        if value != getattr(rule, field):
+                            setattr(rule, field, value)
+                            changed = True
+                    if changed:
+                        rule.save()
+
     class Meta:
-        ordering = ["name"]
+        ordering = ["sort_key", "name"]
 
 
 class InterfaceMapping(models.Model):

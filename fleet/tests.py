@@ -60,6 +60,23 @@ class FleetTests(TestCase):
         self.assertEqual(rule["source_net"], "opt4")
         self.assertEqual(rule["destination_net"], "opt4ip")
 
+    def test_renaming_a_logical_interface_rewrites_rule_addresses(self):
+        self.rule.source = "@VL10:net,10.0.0.0/8"
+        self.rule.destination = "@VL10:ip"
+        self.rule.save()
+        untouched = make_rule(self.interface, name="Other", sequence=200, source="@VL100:net")
+        LogicalInterface.objects.create(name="VL100")
+        self.interface.name = "VL10_Network"
+        self.interface.save()
+        self.rule.refresh_from_db()
+        untouched.refresh_from_db()
+        self.assertEqual(self.rule.source, "@VL10_Network:net,10.0.0.0/8")
+        self.assertEqual(self.rule.destination, "@VL10_Network:ip")
+        self.assertEqual(untouched.source, "@VL100:net")
+        plan = plan_for(self.other)
+        sources = [op["payload"].get("source_net") for op in plan["operations"]]
+        self.assertIn("opt4,10.0.0.0/8", sources)
+
     def test_alias_order_and_duplicate_content_are_not_drift(self):
         alias = Alias.objects.create(name="DNS", content="10.0.0.2\n10.0.0.1\n10.0.0.1")
         snapshot = self.fw.snapshots.first()

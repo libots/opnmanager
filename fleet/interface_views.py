@@ -12,6 +12,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .models import AuditEvent, Firewall, InterfaceGroup, InterfaceMapping, LogicalInterface, Rule, VirtualIP
+from .sorting import natural_key
 
 
 def chosen(request):
@@ -54,7 +55,7 @@ def device_interfaces(firewall):
     for row in (snapshot.data or {}).get("interfaces", []) if snapshot else []:
         if row.get("name") and row["name"] not in found:
             found[row["name"]] = {"name": row["name"], "label": row.get("label") or row["name"], "observed": False}
-    return sorted(found.values(), key=lambda r: (r["name"] not in ("wan", "lan"), r["label"].lower(), r["name"]))
+    return sorted(found.values(), key=lambda r: (r["name"] not in ("wan", "lan"), natural_key(r["label"]), r["name"]))
 
 
 def usage():

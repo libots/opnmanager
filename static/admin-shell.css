@@ -66,7 +66,9 @@ ul.messagelist li { font-size: 14px; }
 }
 /* Tabular inlines (e.g. a firewall's interface mappings): keep real table rows. */
 .inline-group .tabular table { width: 100%; }
-.inline-group .tabular tr.form-row { display: table-row; padding: 0; border: 0; }
+/* #content outranks the `#content .form-row { display: block }` rule above, which would turn
+   each table row into a block and squeeze every cell into the first column. */
+#content .inline-group .tabular tr.form-row { display: table-row; padding: 0; border: 0; overflow: visible; }
 .inline-group .tabular tr.form-row > td, .inline-group .tabular thead th { padding: 8px 12px; vertical-align: middle; border-bottom: 1px solid #EEE; }
 .inline-group .tabular thead th { background: #fff; color: var(--opn-text); font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 .inline-group .tabular td.original { width: 1%; padding: 0 !important; }
@@ -76,7 +78,7 @@ ul.messagelist li { font-size: 14px; }
 .inline-group .tabular td.delete { width: 1%; text-align: center; }
 .inline-group .tabular tr.add-row td { padding: 10px 12px; }
 .inline-group h2 { padding: 10px 14px; }
-.inline-group .tabular tr.empty-form { display: none; }
+#content .inline-group .tabular tr.empty-form { display: none; }
 .inline-group .tabular table tr.has_original > td { padding-top: 8px; }
 .inline-group .module h2, .inline-group h2 { background: var(--opn-bg-head); color: var(--opn-text); font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--opn-border); }
 /* Admin pages framed in a Firewall: Rules dialog (?_modal=1): no shell around them. */
