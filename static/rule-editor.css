@@ -83,3 +83,8 @@ body.model-rule.change-form .submit-row { display: none; }
 #rule_form .rule-bulk-unlock:hover { color: var(--opn-text); border-color: var(--opn-primary); }
 #rule_form .rule-editor-row.bulk-changed { box-shadow: inset 3px 0 0 var(--opn-primary); }
 #rule_form .rule-editor-row.bulk-changed .rule-field-label label::after { content: " (changed)"; font-weight: 400; color: var(--opn-primary); }
+/* In the Firewall: Rules dialog the form is the whole frame; the footer stays in view. */
+body.opn-modal.model-rule.change-form #content { max-width: none; padding: 0; }
+#rule_form .rule-dialog-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-left: 4px; border: 0; border-radius: 3px; background: transparent; color: var(--opn-muted); cursor: pointer; }
+#rule_form .rule-dialog-close:hover { background: #EEE; color: var(--opn-text); }
+#rule_form .rule-dialog-close .icon { width: 16px; height: 16px; }

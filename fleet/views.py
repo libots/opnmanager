@@ -267,6 +267,8 @@ RULE_ICONS = (
     "ethernet",
     "angles-down",
     "angles-up",
+    "expand",
+    "compress",
 )
 
 
@@ -287,7 +289,13 @@ def rules_page(request):
         rows = []
         groups = {g.name: {i.name for i in g.members.all()} for g in InterfaceGroup.objects.prefetch_related("members")}
         for rule in Rule.objects.select_related("interface").prefetch_related(
-            "interfaces", "interface_groups", "origin_interfaces", "origin_interface_groups", "categories"
+            "interfaces",
+            "interface_groups",
+            "origin_interfaces",
+            "origin_interface_groups",
+            "categories",
+            "firewalls",
+            "firewall_groups",
         ):
             rows.append(
                 {
@@ -321,6 +329,13 @@ def rules_page(request):
                     "gateway": rule.gateway,
                     "statetype": rule.state_type,
                     "received-on-not": str(int(rule.origin_not)),
+                    "targets_display": "All enabled firewalls"
+                    if rule.scope == Rule.ALL
+                    else ", ".join(
+                        [g.name + " (group)" for g in rule.firewall_groups.all()]
+                        + [f.name for f in rule.firewalls.all()]
+                    )
+                    or "None",
                 }
             )
         interfaces = [(i.name, i.name) for i in LogicalInterface.objects.all()] + [(g, g + " (group)") for g in groups]
@@ -393,21 +408,25 @@ def rules_page(request):
             ["fleet.add_rule", "fleet.add_alias", "fleet.add_category", "fleet.add_interfacegroup"]
         )
     )
+    rules_data = {
+        "rows": all_rows,
+        "search_fields": SEARCH_FIELDS,
+        "groups": {name: sorted(members) for name, members in groups.items()},
+        "can_import": can_import,
+        "can_edit": request.user.has_perm("fleet.change_rule"),
+        "can_delete": request.user.has_perm("fleet.delete_rule"),
+        "can_add": request.user.has_perm("fleet.add_rule"),
+        "manager": fw is None,
+    }
+    # The rules grid refreshes itself with this after saving a rule or running a command.
+    if "application/json" in request.headers.get("Accept", ""):
+        return JsonResponse(rules_data)
     return render(
         request,
         "fleet/rules.html",
         {
             "rows": rows,
-            "rules_data": {
-                "rows": all_rows,
-                "search_fields": SEARCH_FIELDS,
-                "groups": {name: sorted(members) for name, members in groups.items()},
-                "can_import": can_import,
-                "can_edit": request.user.has_perm("fleet.change_rule"),
-                "can_delete": request.user.has_perm("fleet.delete_rule"),
-                "can_add": request.user.has_perm("fleet.add_rule"),
-                "manager": fw is None,
-            },
+            "rules_data": rules_data,
             "can_import": can_import,
             "firewall": fw,
             "snapshot": observed,

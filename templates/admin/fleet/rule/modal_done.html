@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Saved · OPNmanager</title></head><body>
+{{ result|json_script:"modal-result" }}
+<script>
+/* Tells Firewall: Rules (the framing page, same origin only) to close the dialog and refresh its table. */
+window.parent.postMessage({type: 'opn-rule-dialog', done: true, message: JSON.parse(document.getElementById('modal-result').textContent).message}, window.location.origin);
+</script>
+<p>Saved. You can close this dialog.</p>
+</body></html>

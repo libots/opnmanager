@@ -1,5 +1,13 @@
 /* Rule editor behavior mirroring OPNsense's Firewall: Rules dialog. */
 document.addEventListener('DOMContentLoaded', function () {
+  // Framed in the Firewall: Rules dialog: Close/Cancel/Escape ask that page to close it.
+  if (window.parent !== window && document.body.classList.contains('opn-modal')) {
+    const close = () => window.parent.postMessage({type: 'opn-rule-dialog', close: true}, window.location.origin);
+    for (const button of document.querySelectorAll('[data-dialog-close]')) button.addEventListener('click', close);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('.select2-container--open')) close();
+    });
+  }
   const form = document.getElementById('rule_form');
   if (!form) return;
   form.classList.add('rule-editor-enhanced');

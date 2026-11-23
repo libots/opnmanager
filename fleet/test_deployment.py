@@ -465,7 +465,7 @@ class InterfaceWarningDeployTests(TestCase):
     def test_deploy_page_leaves_warned_rules_unchecked_and_offers_confirmation(self):
         self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
         response = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
-        self.assertContains(response, "DMZ are not mapped on this firewall")
+        self.assertContains(response, "interface DMZ is not mapped on this firewall")
         self.assertContains(response, 'name="accept_warnings"')
         self.assertNotContains(response, f'value="{self.rule.pk}" checked')
 

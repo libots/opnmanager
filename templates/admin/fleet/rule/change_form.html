@@ -1,9 +1,12 @@
 {% extends "admin/change_form.html" %}{% load static icons %}
 {% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static 'rule-editor.css' %}">{% endblock %}
 {% block extrahead %}{{ block.super }}<script defer src="{% static 'rule-editor.js' %}"></script>{% endblock %}
+{% block bodyclass %}{{ block.super }}{% if modal %} opn-modal{% endif %}{% endblock %}
+{% block header %}{% if not modal %}{{ block.super }}{% endif %}{% endblock %}
+{% block footer %}{% if not modal %}{{ block.super }}{% endif %}{% endblock %}
 {% block content_title %}{% endblock %}
 {% block content_subtitle %}{% endblock %}
-{% block breadcrumbs %}<div class="breadcrumbs"><a href="{{ rules_return|default:'/rules/' }}">Firewall: Rules</a> › {% if bulk_rules %}Edit {{ bulk_rules|length }} rules{% elif add %}Add rule{% else %}{{ original.name }}{% endif %}</div>{% endblock %}
+{% block breadcrumbs %}{% if not modal %}<div class="breadcrumbs"><a href="{{ rules_return|default:'/rules/' }}">Firewall: Rules</a> › {% if bulk_rules %}Edit {{ bulk_rules|length }} rules{% elif add %}Add rule{% else %}{{ original.name }}{% endif %}</div>{% endif %}{% endblock %}
 {% block object-tools %}{% endblock %}
 {% block form_top %}
 <div class="rule-dialog-head">
@@ -11,6 +14,7 @@
   <label class="rule-form-search" for="rule-form-search"><span class="visually-hidden">Search form</span>
     <span class="rule-search-icon" aria-hidden="true">{% icon "magnifying-glass" %}</span>
     <input type="search" id="rule-form-search" placeholder="Search form" autocomplete="off"></label>
+  {% if modal %}<input type="hidden" name="_modal" value="1"><button type="button" class="rule-dialog-close" data-dialog-close aria-label="Close" title="Close">{% icon "xmark" %}</button>{% endif %}
 </div>
 <div class="rule-editor-toolbar">
   <button type="button" class="rule-toggle" id="rule-advanced" role="switch" aria-checked="{% if adminform.form.advanced_has_values %}true{% else %}false{% endif %}" data-force="{% if adminform.form.advanced_has_values %}true{% endif %}"><span class="switch" aria-hidden="true"></span> advanced mode {% icon "gear" "gear" %}</button>
@@ -51,8 +55,8 @@
 {% block submit_buttons_bottom %}
 <div class="rule-editor-footer">
   <p class="rule-save-note">{% if bulk_rules %}Saves only the fields you changed, on all {{ bulk_rules|length }} rules. {% endif %}Saving changes manager policy only. Push it to firewalls from Fleet Overview → Deployment.</p>
-  <div class="rule-secondary-actions">{% if change and original and not is_popup %}<a href="{% url 'admin:fleet_rule_add' %}?clone={{ original.pk }}&amp;_next={{ rules_return|urlencode }}">Clone rule</a><a href="{% url 'admin:fleet_rule_history' original.pk %}">History</a>{% if has_delete_permission %}<a class="rule-delete" href="{% url 'admin:fleet_rule_delete' original.pk %}">Delete rule</a>{% endif %}{% endif %}</div>
-  <a class="button rule-cancel" href="{{ rules_return|default:'/rules/' }}">{% if has_change_permission or add %}Cancel{% else %}Close{% endif %}</a>
+  <div class="rule-secondary-actions">{% if change and original and not is_popup %}<a href="{% url 'admin:fleet_rule_add' %}?clone={{ original.pk }}&amp;_next={{ rules_return|urlencode }}{% if modal %}&amp;_modal=1{% endif %}">Clone rule</a><a href="{% url 'admin:fleet_rule_history' original.pk %}"{% if modal %} target="_blank" rel="noopener"{% endif %}>History</a>{% if has_delete_permission %}<a class="rule-delete" href="{% url 'admin:fleet_rule_delete' original.pk %}{% if modal %}?_modal=1{% endif %}">Delete rule</a>{% endif %}{% endif %}</div>
+  {% if modal %}<button type="button" class="button rule-cancel" data-dialog-close>{% if has_change_permission or add %}Cancel{% else %}Close{% endif %}</button>{% else %}<a class="button rule-cancel" href="{{ rules_return|default:'/rules/' }}">{% if has_change_permission or add %}Cancel{% else %}Close{% endif %}</a>{% endif %}
   {% if has_change_permission or add and has_add_permission %}<input type="submit" value="Save" class="default" name="_save">{% endif %}
 </div>
 {% endblock %}

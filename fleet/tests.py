@@ -46,7 +46,9 @@ class FleetTests(TestCase):
         self.fw.interface_mappings.all().delete()
         plan = plan_for(self.fw)
         self.assertEqual(plan["errors"], [])
-        self.assertIn("none of its interfaces (VL10) exist on this firewall", plan["warnings"][0])
+        self.assertIn(
+            "None of its interfaces exist here: interface VL10 is not mapped on this firewall.", plan["warnings"][0]
+        )
         self.assertFalse([op for op in plan["operations"] if op["kind"] == "rule"])
 
     def test_logical_network_references_translate(self):
