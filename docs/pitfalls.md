@@ -20,7 +20,7 @@ Short, verified list. Each item names where it bites.
 - **Tag matching for aliases/groups falls back to name** only when the device row's tag isn't owned
   by another manager object. Changing `short_marker` or tag placement changes identity for every
   deployed object.
-- **Renames go through `save()`** (`Alias`, `InterfaceGroup`) to rewrite references; `QuerySet.update`
+- **Renames go through `save()`** (`Alias`, `InterfaceGroup`, `LogicalInterface`) to rewrite references; `QuerySet.update`
   skips it.
 - Adding a pushed rule field: add it to `reconcile.RULE_DEFAULTS` (and `plan_for` payload, import
   `SUPPORTED`, `views.rules_page` rows, `RuleForm`/admin fieldsets, `snapshot_compare.DEFAULTS` if

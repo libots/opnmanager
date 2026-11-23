@@ -52,9 +52,10 @@ to avoid N queries per object). The UI edits this as one "Deploy to" field
 
 ### Renames rewrite references
 
-`Alias.save()` and `InterfaceGroup.save()` detect a name change and rewrite token references in
-every `Rule.source/destination` (and ports / nested alias content for aliases) inside the same
-transaction, mirroring what OPNsense does on the device. `QuerySet.update(name=...)` bypasses this.
+`Alias.save()`, `InterfaceGroup.save()` and `LogicalInterface.save()` detect a name change and
+rewrite token references in every `Rule.source/destination` (and ports / nested alias content for
+aliases; `@NAME:net` / `@NAME:ip` for logical interfaces) inside the same transaction, mirroring
+what OPNsense does on the device. Foreign keys (bindings, mappings, group members) need no rewrite. `QuerySet.update(name=...)` bypasses this.
 
 ### Identity fields
 

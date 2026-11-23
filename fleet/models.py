@@ -77,6 +77,28 @@ class LogicalInterface(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        previous = None
+        if self.pk:
+            previous = LogicalInterface.objects.filter(pk=self.pk).values_list("name", flat=True).first()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if previous and previous != self.name:
+                # Bindings, groups and mappings follow the foreign key; addresses name it as text.
+                for rule in Rule.objects.filter(
+                    models.Q(source__contains=f"@{previous}:") | models.Q(destination__contains=f"@{previous}:")
+                ):
+                    changed = False
+                    for field in ("source", "destination"):
+                        value = getattr(rule, field)
+                        for kind in ("net", "ip"):
+                            value, _ = _replace_token(value, f"@{previous}:{kind}", f"@{self.name}:{kind}", ",")
+                        if value != getattr(rule, field):
+                            setattr(rule, field, value)
+                            changed = True
+                    if changed:
+                        rule.save()
+
     class Meta:
         ordering = ["name"]
 
