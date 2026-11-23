@@ -1,3 +1,7 @@
+import ipaddress
+from urllib.parse import quote
+
+from .alias_sync import digest
 from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, FirmwareJob
 from .opnsense import DeviceError, flatten
@@ -153,3 +157,79 @@ def firmware_action(firewall, action, client, actor):
         if FirmwareJob.objects.filter(firewall=firewall, status__in=["running", "starting", "uncertain"]).exists():
             raise DeviceError("Refresh and resolve the existing firmware task before starting another.")
         return _firmware_action(firewall, action, client, actor)
+
+
+def vip_review_digest(observed, plan):
+    """What a VIP apply review approves: the device's VIP inventory and the planned write."""
+    return digest({"observed": observed, "plan": plan})
+
+
+def _vip_matches(row, vip, payload):
+    try:
+        network = ipaddress.ip_interface(row.get("subnet", "") + "/" + row.get("subnet_bits", ""))
+    except ValueError:
+        return False
+    return (
+        network == ipaddress.ip_interface(vip.network)
+        and row.get("interface") == payload["interface"]
+        and row.get("mode") == vip.mode
+    )
+
+
+def execute_vip_apply(firewall, vip, approved_digest, client, actor):
+    """Write one reviewed virtual IP, reconfigure and read it back. Runs in the job worker."""
+    with device_write_lock(firewall.pk, "A virtual IP change"):
+        try:
+            if not firewall.enabled or not vip.applies_to(firewall):
+                raise DeviceError("This virtual IP no longer targets this firewall. Review again.")
+            observed = read_vips(client)
+            plan = vip_plan(firewall, vip, observed)
+            if vip_review_digest(observed, plan) != approved_digest:
+                raise DeviceError("Device or desired VIP changed. Review again.")
+            endpoint = "set_item/" + quote(plan["uuid"], safe="") if plan["uuid"] else "add_item"
+            AuditEvent.objects.create(actor=actor, action="vip.apply.started", detail=firewall.name + " " + vip.name)
+            result = client.post("/api/interfaces/vip_settings/" + endpoint, {"vip": plan["payload"]})
+            if not isinstance(result, dict) or result.get("result") != "saved":
+                raise DeviceError("Device rejected the VIP. Inspect validation errors.")
+            if client.post("/api/interfaces/vip_settings/reconfigure", {}).get("status") != "ok":
+                raise DeviceError("VIP saved but reconfiguration failed. Inspect device state.")
+            after = read_vips(client)
+            matches = [r for r in after if r.get("descr") == plan["payload"]["descr"]]
+            if len(matches) != 1 or not _vip_matches(matches[0], vip, plan["payload"]):
+                raise DeviceError("VIP readback did not match. Inspect device state.")
+        except DeviceError:
+            AuditEvent.objects.create(actor=actor, action="vip.apply.failed", detail=firewall.name)
+            raise
+        AuditEvent.objects.create(actor=actor, action="vip.applied", detail=firewall.name + " " + vip.name)
+
+
+def execute_vip_delete(firewall, uuid, approved_digest, client, actor):
+    """Delete one reviewed device virtual IP and verify it is gone. Runs in the job worker."""
+    with device_write_lock(firewall.pk, "A virtual IP change"):
+        try:
+            if not firewall.enabled:
+                raise DeviceError("Disabled firewalls cannot receive virtual IP changes.")
+            rows = read_vips(client)
+            row = next((r for r in rows if r.get("uuid") == uuid), None)
+            if not row:
+                raise DeviceError("Virtual IP no longer exists. Refresh inventory.")
+            if row.get("mode") == "carp":
+                raise DeviceError("CARP deletion is device-local because of HA dependencies.")
+            if digest(rows) != approved_digest:
+                raise DeviceError("Virtual IP configuration changed. Review again.")
+            AuditEvent.objects.create(actor=actor, action="vip.delete.started", detail=firewall.name + " " + uuid)
+            result = client.post("/api/interfaces/vip_settings/del_item/" + quote(uuid, safe=""), {})
+            if not isinstance(result, dict) or result.get("result") != "deleted":
+                raise DeviceError("The device refused deletion, possibly because the VIP is in use.")
+            if client.post("/api/interfaces/vip_settings/reconfigure", {}).get("status") != "ok":
+                raise DeviceError("VIP removed from saved config but reconfiguration failed; inspect device state.")
+            after = read_vips(client)
+            if any(r.get("uuid") == uuid for r in after):
+                raise DeviceError("Deleted VIP is still present on readback.")
+        except DeviceError:
+            AuditEvent.objects.create(actor=actor, action="vip.delete.failed", detail=firewall.name)
+            raise
+        inventory, _ = DeviceInventory.objects.get_or_create(firewall=firewall)
+        inventory.data = {**inventory.data, "vips": after}
+        inventory.save()
+        AuditEvent.objects.create(actor=actor, action="vip.delete.completed", detail=firewall.name + " " + uuid)

@@ -7,8 +7,10 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 
 from .forms import CategoryForm, RuleForm
+from .jobs import run_pending
 from .models import (
     DeviceInventory,
+    DeviceJob,
     DNSProfile,
     Firewall,
     InterfaceMapping,
@@ -233,8 +235,36 @@ class SystemManagementTests(TestCase):
                     "vip": {uid: {"subnet": "192.0.2.6", "subnet_bits": "24", "interface": "lan", "mode": "ipalias"}}
                 }
             }
-            self.client.post(f"/interfaces/virtual-ips/{self.fw.pk}/delete/{uid}/", {"approval": token})
+            response = self.client.post(f"/interfaces/virtual-ips/{self.fw.pk}/delete/{uid}/", {"approval": token})
+            job = DeviceJob.objects.get(kind=DeviceJob.VIP_DELETE)
+            self.assertRedirects(response, f"/jobs/{job.pk}/")
+            run_pending(client_factory=lambda fw: device)
             device.post.assert_not_called()
+            job.refresh_from_db()
+            self.assertEqual(job.status, DeviceJob.FAILED)
+            self.assertIn("changed", job.message)
+
+    def test_vip_delete_runs_in_worker_and_verifies_absence(self):
+        import uuid
+
+        uid = str(uuid.uuid4())
+        row = {"subnet": "192.0.2.5", "subnet_bits": "24", "interface": "lan", "mode": "ipalias", "descr": "Old"}
+        with patch("fleet.management_views.OPNsenseClient") as factory:
+            device = factory.return_value
+            device.get.return_value = {"vip": {"vip": {uid: row}}}
+            token = self.client.get(f"/interfaces/virtual-ips/{self.fw.pk}/delete/{uid}/").context["approval"]
+            device.get.reset_mock()
+            self.client.post(f"/interfaces/virtual-ips/{self.fw.pk}/delete/{uid}/", {"approval": token})
+            # The request only queues the deletion; it neither reads nor writes the device.
+            device.get.assert_not_called()
+            device.post.assert_not_called()
+            device.get.side_effect = [{"vip": {"vip": {uid: row}}}, {"vip": {"vip": []}}]
+            device.post.side_effect = [{"result": "deleted"}, {"status": "ok"}]
+            (job,) = run_pending(client_factory=lambda fw: device)
+        self.assertEqual(job.status, DeviceJob.SUCCEEDED, job.message)
+        self.assertEqual(device.post.call_args_list[0].args[0], f"/api/interfaces/vip_settings/del_item/{uid}")
+        self.assertEqual(DeviceInventory.objects.get(firewall=self.fw).data["vips"], [])
+        self.assertContains(self.client.get(f"/jobs/{job.pk}/"), "Return to Virtual IPs")
 
     def test_vip_review_apply_verifies_network_and_interface(self):
         desired = VirtualIP.objects.create(name="Service", interface=self.logical, network="192.0.2.5/24")
@@ -261,7 +291,12 @@ class SystemManagementTests(TestCase):
                 },
             ]
             device.post.side_effect = [{"result": "saved"}, {"status": "ok"}]
-            self.client.post(f"/interfaces/virtual-ips/{self.fw.pk}/{desired.pk}/", {"approval": token})
+            response = self.client.post(f"/interfaces/virtual-ips/{self.fw.pk}/{desired.pk}/", {"approval": token})
+            job = DeviceJob.objects.get(kind=DeviceJob.VIP_APPLY)
+            self.assertRedirects(response, f"/jobs/{job.pk}/")
+            device.post.assert_not_called()
+            (job,) = run_pending(client_factory=lambda fw: device)
+            self.assertEqual(job.status, DeviceJob.SUCCEEDED, job.message)
             self.assertEqual(device.post.call_count, 2)
             self.assertEqual(device.post.call_args_list[0].args[0], "/api/interfaces/vip_settings/add_item")
             from .models import AuditEvent

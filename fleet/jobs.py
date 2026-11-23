@@ -1,4 +1,4 @@
-"""Background execution of device writes.
+"""Background execution of device writes (rule deploys, definition syncs, virtual IP changes).
 
 Web requests only validate input and enqueue a DeviceJob; the `run_jobs`
 worker process claims jobs one at a time and runs them. A deploy therefore
@@ -12,14 +12,14 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
-from .models import AuditEvent, DeviceJob, Rule
+from .models import AuditEvent, DeviceJob, Rule, VirtualIP
 from .opnsense import DeviceError, OPNsenseClient
 
 log = logging.getLogger(__name__)
 
 INTERRUPTED_MESSAGE = (
     "The job worker stopped while this job was running. Any rules applied but not yet confirmed are "
-    "rolled back automatically by OPNsense; definition changes may be partial. Pull a fresh snapshot and "
+    "rolled back automatically by OPNsense; definition and virtual IP changes may be partial. Pull a fresh snapshot and "
     "review again."
 )
 
@@ -82,7 +82,29 @@ def _sync_definitions(job, client):
     return f"Verified {count} supporting-definition changes. No manager rules were deployed."
 
 
-HANDLERS = {DeviceJob.RULES_DEPLOY: _deploy_rules, DeviceJob.DEFINITIONS_SYNC: _sync_definitions}
+def _apply_vip(job, client):
+    from .system_management import execute_vip_apply
+
+    vip = VirtualIP.objects.filter(pk=job.params.get("vip_id")).first()
+    if vip is None:
+        raise DeviceError("The virtual IP this change was for no longer exists.")
+    execute_vip_apply(job.firewall, vip, job.params.get("digest"), client, job.actor)
+    return "Virtual IP applied and read back."
+
+
+def _delete_vip(job, client):
+    from .system_management import execute_vip_delete
+
+    execute_vip_delete(job.firewall, job.params.get("uuid", ""), job.params.get("digest"), client, job.actor)
+    return "Virtual IP deleted and absence verified. Retarget or remove any desired definition separately."
+
+
+HANDLERS = {
+    DeviceJob.RULES_DEPLOY: _deploy_rules,
+    DeviceJob.DEFINITIONS_SYNC: _sync_definitions,
+    DeviceJob.VIP_APPLY: _apply_vip,
+    DeviceJob.VIP_DELETE: _delete_vip,
+}
 
 
 def enqueue(firewall, kind, params, actor):

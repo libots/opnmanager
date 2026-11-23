@@ -64,7 +64,7 @@ A future container can use the same Gunicorn application and environment variabl
 ```sh
 # Use this after setup when you want the development server instead of Gunicorn.
 DJANGO_DEBUG=1 .venv/bin/python manage.py runserver 127.0.0.1:8000
-# In a second terminal: the worker that runs rule deploys and definition syncs.
+# In a second terminal: the worker that runs rule deploys, definition syncs and virtual IP changes.
 DJANGO_DEBUG=1 .venv/bin/python manage.py run_jobs
 # Optional, only for an empty fleet; never contacts a device:
 OPNMANAGER_LOCAL=1 .venv/bin/python manage.py seed_demo
@@ -289,7 +289,7 @@ The API account needs privileges for `/api/firewall/filter/add_rule`, `/set_rule
 
 **One write at a time per firewall.** Rule deploys, alias and definition syncs, virtual IP changes and firmware requests share a single per-firewall lock (`.device-write-<id>.lock` in the data directory). A second write to the same firewall is refused with the name of the operation already running, so one workflow's "device unchanged" preflight can't be invalidated by another's writes. Different firewalls never block each other. The lock covers one host sharing `OPNMANAGER_DATA_DIR`.
 
-**Background jobs.** Pushing rules or applying a definition sync doesn't run inside the web request. The request checks the form and queues a job, and the browser goes to a job page that refreshes until the job finishes. A separate worker (`manage.py run_jobs`) runs the jobs one at a time. `scripts/run-local.sh` starts it next to Gunicorn and stops it on exit. If you run the app another way, run exactly one worker per data directory, for example as a second systemd service. A reverse-proxy timeout or a closed tab doesn't stop a running job. If the worker itself stops mid-job, the next worker start marks the job **Interrupted**: rules that were applied but not confirmed roll back automatically, and you should pull a fresh snapshot before trying again.
+**Background jobs.** Pushing rules, applying a definition sync, and applying or deleting a virtual IP don't run inside the web request. The request checks the form and queues a job, and the browser goes to a job page that refreshes until the job finishes. A separate worker (`manage.py run_jobs`) runs the jobs one at a time. `scripts/run-local.sh` starts it next to Gunicorn and stops it on exit. If you run the app another way, run exactly one worker per data directory, for example as a second systemd service. A reverse-proxy timeout or a closed tab doesn't stop a running job. If the worker itself stops mid-job, the next worker start marks the job **Interrupted**: rules that were applied but not confirmed roll back automatically, and you should pull a fresh snapshot before trying again.
 
 ## Navigation and fleet system management
 
@@ -313,7 +313,7 @@ The connector uses the actual core firmware `running`, `check`, `status`, `updat
 
 ### Virtual IPs
 
-**Interfaces → Virtual IPs** reads observed VIPs without retaining CARP passwords, adopts existing IP Alias/Proxy ARP entries into scoped manager definitions, and offers reviewed apply/deletion actions. Logical interface mappings resolve per firewall. A signed review expires after ten minutes and is rejected if the VIP inventory or desired payload changed. Apply/reconfigure is followed by readback. Deletion respects OPNsense's in-use validation and verifies absence. Removing a live VIP does not silently remove a manager desired definition; remove/retarget that separately. CARP entries can be viewed but secrets and mutation remain on-device because their HA dependencies need separate handling. Writes can interrupt access and have no automatic rollback.
+**Interfaces → Virtual IPs** reads observed VIPs without retaining CARP passwords, adopts existing IP Alias/Proxy ARP entries into scoped manager definitions, and offers reviewed apply/deletion actions. Logical interface mappings resolve per firewall. A signed review expires after ten minutes. Applying or deleting runs as a background job: the worker re-reads the device and rejects the change if the VIP inventory or desired payload changed since the review. Apply/reconfigure is followed by readback. Deletion respects OPNsense's in-use validation and verifies absence. Removing a live VIP does not silently remove a manager desired definition; remove/retarget that separately. CARP entries can be viewed but secrets and mutation remain on-device because their HA dependencies need separate handling. Writes can interrupt access and have no automatic rollback.
 
 ### Ordered search-domain profiles — desired configuration only
 

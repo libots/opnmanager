@@ -151,14 +151,18 @@ class DeploymentTests(TestCase):
         from .alias_sync import execute_alias_plan
         from .definition_sync import execute_definition_plan
         from .locks import device_write_lock
-        from .system_management import firmware_action
+        from .models import VirtualIP
+        from .system_management import execute_vip_apply, execute_vip_delete, firmware_action
 
         client = Mock()
+        vip = VirtualIP.objects.create(name="Service", interface=self.first.interfaces.get(), network="192.0.2.5/24")
         calls = {
             "alias sync": lambda: execute_alias_plan(self.fw, "x", client, "test"),
             "definition sync": lambda: execute_definition_plan(self.fw, "x", client, "test"),
             "firmware": lambda: firmware_action(self.fw, "check", client, "test"),
             "rule deploy": lambda: execute_deployment(self.fw, "x", [], client, "test"),
+            "vip apply": lambda: execute_vip_apply(self.fw, vip, "x", client, "test"),
+            "vip delete": lambda: execute_vip_delete(self.fw, "x", "x", client, "test"),
         }
         with device_write_lock(self.fw.pk, "A rule deployment"):
             for name, call in calls.items():

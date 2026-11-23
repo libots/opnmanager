@@ -466,7 +466,14 @@ class DeviceJob(models.Model):
 
     RULES_DEPLOY = "rules.deploy"
     DEFINITIONS_SYNC = "definitions.sync"
-    KINDS = [(RULES_DEPLOY, "Rule deployment"), (DEFINITIONS_SYNC, "Definition synchronization")]
+    VIP_APPLY = "vip.apply"
+    VIP_DELETE = "vip.delete"
+    KINDS = [
+        (RULES_DEPLOY, "Rule deployment"),
+        (DEFINITIONS_SYNC, "Definition synchronization"),
+        (VIP_APPLY, "Virtual IP change"),
+        (VIP_DELETE, "Virtual IP deletion"),
+    ]
     QUEUED, RUNNING, SUCCEEDED, FAILED, INTERRUPTED = "queued", "running", "succeeded", "failed", "interrupted"
     STATUSES = [
         (QUEUED, "Queued"),
