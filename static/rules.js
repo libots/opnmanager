@@ -19,6 +19,81 @@ document.addEventListener('DOMContentLoaded', function () {
     return wrap;
   }
   const here=()=>location.pathname+location.search;
+
+  // --- columns: visibility and order, kept per browser. Select and Commands stay first and last. ---
+  const headerRow=table.tHead.rows[0],headers=new Map(Array.from(headerRow.cells,th=>[th.dataset.col,th]));
+  const COLUMNS=Array.from(headers.keys()),movable=COLUMNS.slice(1,-1),COLUMN_STORE='opn.rules.columns';
+  const label=col=>headers.get(col).dataset.label;
+  function loadLayout() {
+    try {
+      const stored=JSON.parse(localStorage.getItem(COLUMN_STORE)||'null');
+      if (stored && Array.isArray(stored.order)) {
+        const order=stored.order.filter(col=>movable.includes(col));
+        for (const col of movable) if (!order.includes(col)) order.splice(movable.indexOf(col),0,col);
+        return {order,hidden:new Set((stored.hidden||[]).filter(col=>movable.includes(col)))};
+      }
+    } catch (e) { /* storage unavailable: use the default layout */ }
+    return {order:[...movable],hidden:new Set()};
+  }
+  let layout=loadLayout();
+  const visibleColumns=()=>[COLUMNS[0],...layout.order.filter(col=>!layout.hidden.has(col)),COLUMNS[COLUMNS.length-1]];
+  function arrange(tr,cells){tr.replaceChildren(...visibleColumns().map(col=>cells.get(col)));}
+  function moveColumn(col,target,after) {
+    if (col===target) return;
+    const order=layout.order.filter(c=>c!==col);
+    order.splice(order.indexOf(target)+(after?1:0),0,col);
+    setLayout({order,hidden:layout.hidden});
+  }
+  function setLayout(next) {
+    layout=next;
+    try { localStorage.setItem(COLUMN_STORE,JSON.stringify({order:layout.order,hidden:[...layout.hidden]})); } catch (e) { /* not kept */ }
+    applyLayout();
+  }
+  const columnList=document.getElementById('rule-columns-list');
+  function buildColumnMenu(focus) {
+    columnList.replaceChildren(...layout.order.map((col,index)=>{
+      const item=element('li'),box=element('input'),name=element('label');
+      box.type='checkbox';box.checked=!layout.hidden.has(col);box.id='rule-column-'+col;
+      box.addEventListener('change',()=>{const hidden=new Set(layout.hidden);if(box.checked)hidden.delete(col);else hidden.add(col);setLayout({order:layout.order,hidden});buildColumnMenu({col});});
+      name.htmlFor=box.id;name.append(box,document.createTextNode(' '+label(col)));item.append(name);
+      for (const [text,step] of [['↑',-1],['↓',1]]) {
+        const button=element('button',text,'rule-column-move');button.type='button';
+        button.setAttribute('aria-label',`Move ${label(col)} ${step<0?'left':'right'}`);
+        const target=layout.order[index+step];button.disabled=!target;
+        button.id=`rule-column-${col}-${step}`;item.append(button);
+        button.addEventListener('click',()=>{moveColumn(col,target,step>0);buildColumnMenu({col,step});});
+      }
+      return item;
+    }));
+    // Keep keyboard focus on the control just used, or on its checkbox once an arrow is disabled.
+    if (focus) { const target=focus.step&&document.getElementById(`rule-column-${focus.col}-${focus.step}`);(target&&!target.disabled?target:document.getElementById('rule-column-'+focus.col)).focus(); }
+  }
+  let dragging=null;
+  function clearDrop(){for(const th of headers.values())th.classList.remove('col-drop-before','col-drop-after','col-dragging');}
+  for (const col of movable) {
+    const th=headers.get(col);th.draggable=true;th.classList.add('col-draggable');th.title=(th.title||label(col))+' · drag to reorder';
+    th.addEventListener('dragstart',event=>{dragging=col;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',col);th.classList.add('col-dragging');});
+    th.addEventListener('dragover',event=>{
+      if (!dragging || dragging===col) return;
+      event.preventDefault();event.dataTransfer.dropEffect='move';
+      const rect=th.getBoundingClientRect(),after=event.clientX>rect.left+rect.width/2;
+      th.classList.toggle('col-drop-after',after);th.classList.toggle('col-drop-before',!after);
+    });
+    th.addEventListener('dragleave',()=>th.classList.remove('col-drop-before','col-drop-after'));
+    th.addEventListener('drop',event=>{
+      event.preventDefault();if(!dragging)return;
+      const after=th.classList.contains('col-drop-after'),moved=dragging;dragging=null;clearDrop();moveColumn(moved,col,after);buildColumnMenu();
+    });
+    th.addEventListener('dragend',()=>{dragging=null;clearDrop();});
+  }
+  const columnToggle=document.getElementById('rule-columns-toggle'),columnMenu=document.getElementById('rule-columns-menu');
+  function showColumnMenu(open){columnMenu.hidden=!open;columnToggle.setAttribute('aria-expanded',String(open));if(open){buildColumnMenu();columnList.querySelector('input')?.focus();}}
+  columnToggle.addEventListener('click',()=>showColumnMenu(columnMenu.hidden));
+  // composedPath, not contains: a menu click rebuilds the list and detaches its target.
+  document.addEventListener('click',event=>{if(!columnMenu.hidden&&!event.composedPath().includes(document.getElementById('rule-columns')))showColumnMenu(false);});
+  columnMenu.addEventListener('keydown',event=>{if(event.key==='Escape'){showColumnMenu(false);columnToggle.focus();}});
+  document.getElementById('rule-columns-reset').addEventListener('click',()=>{setLayout({order:[...movable],hidden:new Set()});buildColumnMenu();});
+  document.getElementById('rule-columns').hidden=false;
   const editURL=id=>'/admin/fleet/rule/'+encodeURIComponent(id)+'/change/?_next='+encodeURIComponent(here());
 
   function matches(row) {
@@ -119,6 +194,7 @@ document.addEventListener('DOMContentLoaded', function () {
       const button=element('button',undefined,'rule-command');button.type='button';button.title='Select to import';button.setAttribute('aria-label','Select '+rule.description+' to import');button.append(icon('plus'));
       button.addEventListener('click',()=>{selected.add(rule.index);render();document.getElementById('rule-import-options').scrollIntoView({behavior:'smooth'});});commands.append(button);
     }
+    arrange(row,new Map(Array.from(row.children,(td,i)=>[COLUMNS[i],td])));
     return row;
   }
   function updateURL() {
@@ -185,5 +261,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const rendered=new Set(Array.from(body.querySelectorAll('input[name=rule_indices]:checked'),box=>box.value));
     for(const index of selected)if(!rendered.has(index)){const input=element('input');input.type='hidden';input.name='rule_indices';input.value=index;hidden.append(input);}
   });
-  render();
+  function applyLayout(){arrange(headerRow,headers);render();}
+  applyLayout();
 });
