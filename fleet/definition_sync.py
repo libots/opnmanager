@@ -68,9 +68,7 @@ def group_removals(firewall, data, mappings, policy):
     but blocked until that rule changes.
     """
     current = [
-        g
-        for g in policy.groups.values()
-        if g.applies_to(firewall) and any(i.name in mappings for i in g.members.all())
+        g for g in policy.groups.values() if g.applies_to(firewall) and any(i.name in mappings for i in g.members.all())
     ]
     markers = {short_marker(g.uid) for g in current}
     names = {g.name for g in current}

@@ -126,6 +126,7 @@ def pull_snapshot(request, pk):
                 if drift
                 else "Managed fields match",
                 attention=bool(plan["errors"] or drift),
+                errors=plan["errors"],
             )
         return finish()
     except DeviceError as exc:
