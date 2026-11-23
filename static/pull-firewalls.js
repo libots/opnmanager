@@ -27,7 +27,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const badge = document.createElement('span');
         badge.className = 'pill ' + (result.attention ? 'warning' : 'good');
         badge.textContent = result.policy;
-        policy.replaceChildren(badge);
+        const reasons = document.createElement('ul');
+        reasons.className = 'attention-reasons';
+        for (const error of result.errors || []) {
+          const item = document.createElement('li');
+          item.textContent = error;
+          reasons.append(item);
+        }
+        policy.replaceChildren(badge, ...(reasons.children.length ? [reasons] : []));
       }
       status.textContent = ' Updated';
       return true;

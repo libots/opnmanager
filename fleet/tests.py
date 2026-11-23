@@ -161,6 +161,13 @@ class FleetTests(TestCase):
         for action in ["import", "pull"]:
             self.assertEqual(self.client.post(f"/firewalls/{self.fw.pk}/{action}/").status_code, 403)
 
+    def test_dashboard_says_why_a_firewall_needs_attention(self):
+        Firewall.objects.create(name="Three", base_url="https://three.example.test", credential_prefix="THREE")
+        self.viewer()
+        page = self.client.get("/").content.decode()
+        self.assertIn("Needs attention", page)
+        self.assertIn("No snapshot. Import or pull current configuration first.", page)
+
     def test_operator_import_audited_and_invalid_json_rejected(self):
         user = self.viewer()
         user.user_permissions.add(Permission.objects.get(codename="refresh_firewall"))
