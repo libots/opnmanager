@@ -211,7 +211,7 @@ def _available_bindings(rule, label, interfaces, groups, mappings, unavailable_g
         )
         return kept_interfaces, kept_groups, True
     warnings.append(
-        f"Rule {rule.name}: {label} {names} are not mapped on this firewall and are left out of the pushed rule."
+        f"Rule {rule.name}: {label} {names} don't exist on this firewall and are left out of the pushed rule."
     )
     return kept_interfaces, kept_groups, False
 
@@ -296,12 +296,13 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
             ("category", category.name, category.name, {"name": category.name, "color": category.color.lower()})
         )
     groups = policy.groups
-    # Interfaces can exist on only some firewalls. A group with no member mapped
-    # here doesn't exist here: it isn't created, and rules leave it out.
+    # Interfaces can exist on only some firewalls. A group that doesn't target this
+    # firewall, or has no member mapped here, doesn't exist here: it isn't created,
+    # and rules bound to it leave it out.
     unavailable_groups = {
         g.name
         for g in groups.values()
-        if g.applies_to(firewall) and not any(i.name in mappings for i in g.members.all())
+        if not g.applies_to(firewall) or not any(i.name in mappings for i in g.members.all())
     }
     for group in groups.values():
         if definition_names is not None and group.name not in definition_names["group"]:
@@ -349,9 +350,6 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
                 )
             bound = rule.bound_interfaces()
             selected_groups = [policy.groups_by_pk[g.pk] for g in rule.interface_groups.all()]
-            for group in selected_groups:
-                if not group.applies_to(firewall):
-                    raise ValueError(f"Rule {rule.name}: group {group.name} is excluded from this firewall.")
             bound, selected_groups, skipped = _available_bindings(
                 rule, "interfaces", bound, selected_groups, mappings, unavailable_groups, plan["warnings"]
             )
@@ -370,8 +368,6 @@ def plan_for(firewall, snapshot=None, *, rule_ids=None, definition_names=None, p
                 raise ValueError(f"Rule {rule.name}: a category is excluded from this firewall.")
             origins = list(rule.origin_interfaces.all())
             origin_groups = [policy.groups_by_pk[g.pk] for g in rule.origin_interface_groups.all()]
-            if any(not g.applies_to(firewall) for g in origin_groups):
-                raise ValueError(f"Rule {rule.name}: origin group excluded from this firewall.")
             origins, origin_groups, skipped = _available_bindings(
                 rule, "origin interfaces", origins, origin_groups, mappings, unavailable_groups, plan["warnings"]
             )

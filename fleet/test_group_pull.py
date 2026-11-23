@@ -54,7 +54,7 @@ class GroupPullTests(TestCase):
         self.assertEqual(plan["errors"], [])
         payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
         self.assertEqual(payload["interface"], "opt2")
-        self.assertIn("interfaces WAN are not mapped on this firewall", " ".join(plan["warnings"]))
+        self.assertIn("interfaces WAN don't exist on this firewall", " ".join(plan["warnings"]))
 
     def test_unavailable_group_is_left_out_but_mapped_interface_kept(self):
         only_wan = InterfaceGroup.objects.create(name="WANONLY")
@@ -68,6 +68,31 @@ class GroupPullTests(TestCase):
         self.assertFalse(
             any(op["kind"] == "group" and op["payload"]["ifname"] == "WANONLY" for op in plan["operations"])
         )
+
+    def exclude_group_from_this_firewall(self):
+        other = Firewall.objects.create(name="Other", base_url="https://other.invalid")
+        self.group.scope = "selected"
+        self.group.save()
+        self.group.firewalls.add(other)
+
+    def test_rule_bound_only_to_an_excluded_group_is_skipped_with_warning(self):
+        self.exclude_group_from_this_firewall()
+        rule = Rule.objects.create(name="Group only")
+        rule.interface_groups.add(self.group)
+        plan = plan_for(self.fw)
+        self.assertEqual(plan["errors"], [])
+        self.assertIn("none of its interfaces (TRUSTED) exist on this firewall", " ".join(plan["warnings"]))
+        self.assertFalse(plan["operations"])
+
+    def test_excluded_group_is_left_out_but_mapped_interface_kept(self):
+        self.exclude_group_from_this_firewall()
+        rule = Rule.objects.create(name="Mixed")
+        rule.interfaces.set([self.lan])
+        rule.interface_groups.add(self.group)
+        plan = plan_for(self.fw)
+        self.assertEqual(plan["errors"], [])
+        payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
+        self.assertEqual(payload["interface"], "opt2")
 
     def test_rule_is_skipped_rather_than_widened_when_all_origins_are_missing(self):
         rule = Rule.objects.create(name="Origin")
