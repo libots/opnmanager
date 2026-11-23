@@ -37,9 +37,9 @@ to avoid N queries per object). The UI edits this as one "Deploy to" field
 
 ### Rule specifics
 
-- `interface` (FK) is a **legacy single binding** kept for old data and tests; migration 0004
-  copied it into `interfaces`. `Rule.bound_interfaces()` merges both. `RuleForm.save()` sets it to
-  `None`. New code should read `bound_interfaces()` + `interface_groups`, never `interface` alone.
+- Bindings are `interfaces` + `interface_groups` (origin: `origin_interfaces` +
+  `origin_interface_groups`). The former single `interface` FK was removed in migration 0018;
+  `bound_interfaces()` is just `interfaces.all()` (empty for an unsaved rule).
 - `floating` is derived by the form (bindings ≠ 1). The planner places by binding count, not by
   this flag, except that zero bindings require `floating=True` or the rule errors.
 - `source` / `destination`: comma-separated tokens — alias names, interface-group names,
@@ -101,6 +101,7 @@ protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware`,
   `approval_sha256`, `selected_rules` (rule UUIDs and retire option ids `disable:<uuid>` /
   `delete:<uuid>`), `remove_definitions` (device UUIDs), `accept_warnings`, `allow_unprotected`.
 - `definitions.sync`: `approval_sha256`, `rule_id` (optional), `remove_definitions`.
+- `vip.apply`: `vip_id`, `digest` (from the signed review). `vip.delete`: `uuid` (device VIP), `digest`.
 - Old jobs may use `remove_aliases`; `jobs._removals()` reads both.
 
 ## Custom permissions
@@ -110,12 +111,14 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 
 ## Migrations
 
-`fleet/migrations/0001`–`0017`. Notable data migrations:
+`fleet/migrations/0001`–`0019`. Notable data migrations:
 - `0004` copies `Rule.interface` into `Rule.interfaces`.
 - `0013` removes stored authentication-server models (never deployable).
 - `0015` converts stored ICMPv6 type numbers to OPNsense option names.
 - `0016` / `0017` add `uid` to Alias / InterfaceGroup: add nullable → `RunPython` fill → make
   unique. Use this three-step pattern for any new unique-with-default column.
+- `0018` copies any remaining `Rule.interface` values into `Rule.interfaces`, then drops the column.
+- `0019` adds the `vip.apply` / `vip.delete` job kinds (choices only).
 
-`fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 to latest with data; keep it
-passing. CI runs `makemigrations --check --dry-run`.
+`fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 (and from 0017) to latest with
+data; keep it passing. CI runs `makemigrations --check --dry-run`.

@@ -1,7 +1,8 @@
 # Device writes: deploys, syncs, rollback, jobs, locks
 
 Files: `fleet/deployment.py`, `fleet/definition_sync.py`, `fleet/alias_sync.py`, `fleet/jobs.py`,
-`fleet/locks.py`, `fleet/management/commands/run_jobs.py`, `sync_aliases.py`.
+`fleet/locks.py`, `fleet/management/commands/run_jobs.py`, `sync_aliases.py`; VIP writes in
+`fleet/system_management.py` (see system-management.md).
 Tests: `test_deployment.py`, `test_jobs.py`, `test_group_identity.py`, `test_alias_identity.py`,
 `tests.py`, `test_snapshot_compare.py`.
 
@@ -88,8 +89,8 @@ removals, `reconfigure_definitions(kinds)`, then verifies readback. Not transact
 ## Jobs (`jobs.py`)
 
 - `enqueue(firewall, kind, params, actor)`: refuses a second active job of the same kind for the
-  firewall; audits `job.queued`. Kinds: `DeviceJob.RULES_DEPLOY`, `DeviceJob.DEFINITIONS_SYNC`
-  (`HANDLERS` maps kind → function).
+  firewall; audits `job.queued`. Kinds: `DeviceJob.RULES_DEPLOY`, `DeviceJob.DEFINITIONS_SYNC`,
+  `DeviceJob.VIP_APPLY`, `DeviceJob.VIP_DELETE` (`HANDLERS` maps kind → function).
 - `claim_next()`: atomic `queued → running` via conditional `UPDATE`.
 - `run_job(job, client_factory=OPNsenseClient)`: `DeviceError` → `failed` with its message; any other
   exception → `failed` with a generic message (logged). Never re-raises.

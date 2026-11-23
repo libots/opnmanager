@@ -23,7 +23,7 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | `/fleet/logical-interfaces/…` | `interface_views.*` | Mapping matrix, save, create |
 | `/fleet/deployment/` | `management_views.deployment_overview` | |
 | `/interfaces/`, `/interfaces/refresh/` | `management_views.interfaces`, `read_interfaces` | Interface inventory |
-| `/interfaces/virtual-ips/…` | `management_views.*vip*` | See system-management.md |
+| `/interfaces/virtual-ips/…` | `management_views.*vip*` | Apply/delete POSTs enqueue jobs; see system-management.md |
 | `/system/firmware/…` | `management_views.firmware*` | |
 | `/system/settings/general/` | `management_views.dns_general` | |
 | `/settings/`, `/settings/authentication/` | `views.settings_page`, `management_views.oidc_options` | |
@@ -57,7 +57,7 @@ field (`forms.TargetsFormMixin`). `templates/admin/base_site.html` wraps admin i
   (`_bulk_edit`): differing fields start greyed; only fields listed in `_changed` are applied; every
   rule is re-validated through `RuleForm` via `bulk_rule_forms` and nothing saves unless all pass.
 - `RuleForm` represents bindings as `interface:<pk>` / `group:<pk>` choices in `bindings` and
-  `origin_bindings`, derives `floating`, clears legacy `Rule.interface`, and validates addresses
+  `origin_bindings`, derives `floating`, and validates addresses
   against aliases, groups, `@IF:net|ip` tokens, builtins and IP networks.
 - Clone: `RuleAdmin.get_changeform_initial_data` copies via `rule_form_data` / `rule_form_initial`
   and picks the next free sequence.

@@ -30,8 +30,9 @@ Why things are the way they are. Each entry: decision → reason → where it li
 10. **Imports are all-or-nothing and lossless.** Any setting the manager can't represent refuses the
     rule (named), rather than importing a weaker rule.
 11. **Device writes run in a separate worker** (`run_jobs`, DB-backed queue) so proxy timeouts or
-    Gunicorn restarts can't cut a deploy in half. No Celery/Redis to keep the single-host install
-    dependency-free.
+    Gunicorn restarts can't cut a deploy in half. This covers rule deploys, definition syncs and VIP
+    apply/delete; firmware requests stay in the request because they only queue a firewall task.
+    No Celery/Redis, to keep the single-host install dependency-free.
 12. **One flock per firewall shared by all write workflows**, so one workflow's preflight can't be
     invalidated by another's concurrent write. Single-host scope (shared `DATA_DIR`).
 13. **Savepoint-protected rule apply**; on OPNsense 26.7+ (savepoint API removed) fall back to

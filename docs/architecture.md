@@ -32,10 +32,11 @@ showing nothing changed since the snapshot, (3) the per-firewall write lock, and
 ## Process model
 
 - **Web**: Gunicorn (`config.wsgi`), 1 worker × 2 threads in `scripts/run-local.sh`. Views plan,
-  render reviews, pull snapshots, and *enqueue* writes. Pulls, inventory/firmware/VIP actions
-  run synchronously in the request.
+  render reviews, pull snapshots, and *enqueue* writes. Pulls, inventory refreshes and firmware
+  requests (which only queue a task on the firewall) run synchronously in the request.
 - **Worker**: `manage.py run_jobs` (`fleet/management/commands/run_jobs.py`). Runs `DeviceJob`s
-  (rule deploys, definition syncs) one at a time. Exactly one worker per data directory.
+  (rule deploys, definition syncs, VIP apply/delete) one at a time. Exactly one worker per data
+  directory.
   On start it marks leftover `running` jobs `interrupted`.
 - **Storage**: SQLite at `DATA_DIR/db.sqlite3`. `DATA_DIR` = `OPNMANAGER_DATA_DIR` or the repo
   root. Lock files, the signing key, the credential key and OIDC settings live there too
@@ -62,7 +63,7 @@ fleet/               The only app. Everything below is in here.
   opnsense_errors.py DeviceError, SavepointUnsupported
   import_rules.py    Adopt snapshot rules into manager policy (atomic, all-or-nothing)
   mappings.py        Auto-map logical interfaces from unique device labels
-  system_management.py Interface inventory, firmware, VIP read/plan helpers
+  system_management.py Interface inventory, firmware, VIP read/plan and worker-side apply/delete
   views.py           Dashboard, firewall page, pull/import, rules grid, deploy review, jobs
   management_views.py Interfaces overview, firmware, VIPs, DNS, OIDC options, deployment overview
   interface_views.py Fleet: Logical Interfaces matrix and mapping saves
@@ -75,8 +76,9 @@ fleet/               The only app. Everything below is in here.
   retention.py       Snapshot pruning (post_save signal wired in apps.py)
   templatetags/icons.py  {% icon "name" %} inlines static/icons/<name>.svg
   management/commands/   bootstrap_admin, run_jobs, plan, sync_aliases, seed_demo
-  migrations/        0001–0017
+  migrations/        0001–0019
   test_*.py, tests.py    Tests (one module per feature area; see testing.md)
+  testing.py         Test runner (temporary DATA_DIR) and make_rule() helper; not a test module
 templates/           base.html/sidebar.html shell; fleet/*; admin overrides; registration/*
 static/              app.css (theme), rules.js (grid), opn-select.js (pickers), rule-editor.*, icons/
 scripts/             setup-local.sh, run-local.sh
@@ -104,5 +106,5 @@ examples/snapshot.json  Normalized snapshot import format
 | Alias CLI | `manage.py sync_aliases` | `alias_sync` |
 | Import rules | `views.adopt_rules` | `import_rules.import_rules` |
 | Map interfaces | `interface_views.save_mappings` | atomic bulk mapping replace |
-| VIP apply/delete | `management_views.review_vip` / `delete_vip` | `system_management.vip_plan`, signed review token |
+| VIP apply/delete | `management_views.review_vip` / `delete_vip` (signed review → job) | `system_management.execute_vip_apply` / `execute_vip_delete` |
 | Firmware | `management_views.firmware_task` | `system_management.firmware_action` |

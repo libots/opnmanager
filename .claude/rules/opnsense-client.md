@@ -16,6 +16,7 @@ Full reference: `docs/subsystems/opnsense-client.md`, `docs/subsystems/system-ma
   or credential values. Read-only POSTs pass `write=False`.
 - Quote path parameters from device data with `quote(value, safe="")`.
 - Device writes (VIP, firmware too) take `locks.device_write_lock(firewall.pk, "<operation>")`.
+  Multi-step writes (save → reconfigure → readback) belong in a `DeviceJob`, not a view.
 - Only use endpoints that exist in OPNsense core; never guess endpoints or rewrite XML. When adding
   one, update the API privilege list in the root `README.md`.
 - Tests mock the client (`Mock`) or patch `requests`; no test may reach a real host.

@@ -1,8 +1,8 @@
 # OPNsense client
 
 Files: `fleet/opnsense.py` (`OPNsenseClient`, `flatten`), `fleet/opnsense_errors.py`,
-`fleet/credentials.py`, plus device calls in `fleet/system_management.py` and
-`fleet/management_views.py` (VIPs). Tests: `test_connection_errors.py`, `test_group_pull.py`,
+`fleet/credentials.py`, plus device calls in `fleet/system_management.py` (inventory, firmware,
+VIPs). Tests: `test_connection_errors.py`, `test_group_pull.py`,
 `test_import.py` (device-shaped rows), `test_system_management.py`.
 
 `OPNsenseClient` is the **only** code that talks HTTP to firewalls. Tests replace it with
@@ -59,8 +59,8 @@ Elsewhere: `POST interfaces/overview/interfaces_info` (`rowCount: -1`, read-only
 `interfaces/vip_settings/{get,add_item,set_item,del_item,reconfigure}`.
 
 `OPNsenseClient` methods encode path parameters taken from device data with
-`urllib.parse.quote(..., safe="")`; keep doing that for new endpoints. (VIP views call
-`client.post` directly; `delete_vip` relies on Django's `<uuid:>` URL converter instead.)
+`urllib.parse.quote(..., safe="")`; keep doing that for new endpoints (the VIP and firmware
+helpers in `system_management.py` call `client.post` directly and quote the same way).
 
 Alias reconfigure reloads the whole filter, and rule apply can activate unrelated pending device
 edits; device operations are never transactional. The root README lists required API privileges —

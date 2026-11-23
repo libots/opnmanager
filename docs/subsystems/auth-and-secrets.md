@@ -27,7 +27,8 @@ Files: `config/settings.py`, `fleet/auth.py`, `fleet/accounts.py`, `fleet/middle
 
 `db.sqlite3`, `.local-secret` (signing key), `.credentials-key` (Fernet), `.oidc-settings.json`
 (+ transient `.oidc-write-*`), `.device-write-<pk>.lock`. Created owner-only (0600) where the code
-creates them. Tests and local runs create these in the repo root by default.
+creates them. Local runs create these in the repo root by default; test runs use a temporary
+directory instead (`fleet.testing.DataDirTestRunner`, set as `TEST_RUNNER`).
 
 ## Local accounts
 

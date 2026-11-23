@@ -11,8 +11,6 @@ Short, verified list. Each item names where it bites.
 - **Use one `Policy()` per request** and pass `policy=` to `plan_for`. Querying inside the per-rule
   loop breaks `PlannerQueryTests` (query count must not grow with rule count). Prefetch any new
   relation in `Policy.__init__` and read via `.all()`.
-- **`Rule.interface` is legacy.** Use `rule.bound_interfaces()`; tests and `seed_demo` still create
-  rules with `interface=` only.
 - **Every snapshot value is a string** after `validate_snapshot` (`"1"`/`"0"`, `"100"`). Compare
   with strings; booleans/ints in payloads must be `str(int(...))`.
 - **Categories in device rule rows are UUIDs**, manager categories are names. Unknown-on-device
@@ -39,7 +37,8 @@ Short, verified list. Each item names where it bites.
   `allow_unprotected` gate; `rollback_mode` is cached in `DeviceInventory.data["rule_rollback"]`.
 - **Alias/group reconfigure and rule apply reload the whole filter** on the device; nothing is
   transactional. Never auto-retry writes.
-- **Jobs need the worker.** In dev, POSTing a deploy only queues it; run
+- **Jobs need the worker.** In dev, POSTing a deploy, definition sync or VIP apply/delete only
+  queues it; run
   `DJANGO_DEBUG=1 .venv/bin/python manage.py run_jobs` (or `--once`). Tests use `run_pending`.
 - A new `DeviceJob` kind needs a `HANDLERS` entry and a migration (choices change).
 
@@ -52,8 +51,9 @@ Short, verified list. Each item names where it bites.
   `SAMEORIGIN`. A new framed page needs the same treatment.
 - **Most editing is in Django admin**, not `views.py`. Look in `admin.py` + `forms.py` first for
   editor behavior.
-- **`DATA_DIR` defaults to the repo root**; tests and dev runs drop `db.sqlite3`, `.local-secret`,
-  lock files there (gitignored).
+- **`DATA_DIR` defaults to the repo root**; dev runs drop `db.sqlite3`, `.local-secret` and lock
+  files there (gitignored). Tests use a temporary `DATA_DIR`; read `settings.DATA_DIR` at call time
+  (as `locks.lock_path` does), never at import time, or tests will write to the real directory.
 - Custom permission checks are per view decorator; when adding a view, copy the decorator stack of a
   similar view (`login_required` + `permission_required(..., raise_exception=True)` + `require_POST`).
 

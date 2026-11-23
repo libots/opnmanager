@@ -39,7 +39,7 @@ DJANGO_DEBUG=1 .venv/bin/python manage.py test                         # full su
 .venv/bin/ruff format --check . && .venv/bin/ruff check .               # CI style + lint
 DJANGO_DEBUG=1 .venv/bin/python manage.py makemigrations --check --dry-run
 DJANGO_DEBUG=1 .venv/bin/python manage.py runserver   # dev server; deploys also need:
-DJANGO_DEBUG=1 .venv/bin/python manage.py run_jobs    # job worker (rule deploys, definition syncs)
+DJANGO_DEBUG=1 .venv/bin/python manage.py run_jobs    # job worker (rule deploys, definition syncs, VIP changes)
 ```
 
 CI (`.github/workflows/test.yml`) runs format check, lint, tests and the migration check.
@@ -55,7 +55,8 @@ CI (`.github/workflows/test.yml`) runs format check, lint, tests and the migrati
 - Missing interfaces/addresses narrow or skip a rule on that firewall — never widen it.
 - Imports are lossless and all-or-nothing.
 - Device identity is the `[om:<12 hex>]` description suffix (rules: `Rule.id`; aliases/groups: `uid`).
-- Tests never contact a device; mock `OPNsenseClient` with `unittest.mock.Mock`.
+- Tests never contact a device; mock `OPNsenseClient` with `unittest.mock.Mock`. They run with a
+  temporary `DATA_DIR` (`fleet/testing.py`), and bind test rules with `fleet.testing.make_rule`.
 
 ## Conventions
 

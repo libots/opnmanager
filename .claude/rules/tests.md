@@ -11,7 +11,7 @@ Full reference: `docs/testing.md`.
   run the full suite plus `ruff format --check .` and `ruff check .` before committing.
 - Never contact a device: use `unittest.mock.Mock` for the client (`snapshot.side_effect =
   [preflight, readback]`) or patch `requests`.
-- Start from `EMPTY` snapshot dicts with `copy.deepcopy`; take approval digests from the same plan
-  function the code path verifies against.
+- Start from `EMPTY` snapshot dicts with `copy.deepcopy`; create rules with `fleet.testing.make_rule`;
+  take approval digests from the same plan function the code path verifies against.
 - Put tests in the existing module for the area (see table in `docs/testing.md`).
 - Do not skip or weaken existing tests to make a change pass.

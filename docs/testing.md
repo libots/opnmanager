@@ -50,7 +50,8 @@ Put new tests in the module for the area; create a new `test_<area>.py` for a ne
 ## Patterns
 
 - Minimal fixture: `Firewall(name=..., base_url="https://fw.test", credential_prefix="TEST")`,
-  a `LogicalInterface` + `InterfaceMapping`, and a `Snapshot` with
+  a `LogicalInterface` + `InterfaceMapping`, a rule from `make_rule(logical, name=..., sequence=...)`
+  (`fleet/testing.py`; binds `Rule.interfaces`), and a `Snapshot` with
   `EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}`
   (always `copy.deepcopy` it).
 - Fake device: `client = Mock(ROLLBACK_SECONDS=60)`; set `client.savepoint.return_value`, and
@@ -59,12 +60,18 @@ Put new tests in the module for the area; create a new `test_<area>.py` for a ne
   Build readback rows from `plan["rows"][i]["operation"]["payload"]` plus a `uuid`.
 - Approvals: get the digest from the same plan function the view uses (`combined_plan(fw)["approval_sha256"]`
   for `/deploy/`, `deployment_plan` for `execute_deployment`).
-- Jobs: POST to the view, then `run_pending(client_factory=lambda fw: client)`.
+- Jobs (deploys, definition syncs, VIP apply/delete): POST to the view, assert nothing was written
+  yet, then `run_pending(client_factory=lambda fw: client)` and check the returned job's status.
+  VIP tests patch `fleet.management_views.OPNsenseClient` for the GET review and pass the same mock
+  to `run_pending`.
 - Views: `self.client.force_login(user)`; superuser has all perms; for permission tests create a
   user and add specific `Permission`s.
 - Settings: `override_settings(DATA_DIR=Path(tmpdir))` for file-writing features (OIDC, keys),
   `override_settings(SNAPSHOT_RETENTION=n)`.
 - `SimpleTestCase` for pure functions (patterns, snapshot comparison).
 
-Tests create `.device-write-*.lock` files (and possibly `.local-secret`, `db.sqlite3`) in the repo
-root; they are gitignored — don't commit or "clean up" code to avoid them.
+`TEST_RUNNER = "fleet.testing.DataDirTestRunner"` points `settings.DATA_DIR` at a temporary
+directory for the whole run, so lock and key files never land in a real data directory
+(`tests.TestDataDirectoryTests` guards this). Loading settings still creates `.local-secret` in the
+configured data directory when `DJANGO_DEBUG=1`; that file is gitignored. `fleet/testing.py` is
+not a test module (the discovery pattern is `test*.py`).

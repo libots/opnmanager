@@ -22,6 +22,7 @@ verify with `canonical()` → new `Snapshot(source="api")` → `AuditEvent`s (st
   OPNsense 26.7+ (`SavepointUnsupported`): config-history revert, only with `allow_unprotected`.
 - Validate every selection before the first write. Never delete anything that wasn't explicitly
   selected. Never auto-retry a failed write.
-- Long-running writes run in the `run_jobs` worker via `jobs.enqueue`; a new kind needs a `HANDLERS`
-  entry and a migration.
+- Long-running writes (rule deploys, definition syncs, VIP apply/delete) run in the `run_jobs`
+  worker via `jobs.enqueue`; the web request only validates and queues. A new kind needs a
+  `HANDLERS` entry and a migration.
 - Tests: `Mock` client with `snapshot.side_effect = [preflight, readback]`; see `docs/testing.md`.
