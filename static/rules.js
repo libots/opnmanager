@@ -72,9 +72,9 @@ document.addEventListener('DOMContentLoaded', function () {
     {key:'action',label:'Action',hidden:true,text:actionName},
     {key:'quick',label:'Quick',hidden:true,text:r=>yesNo(r.quick!=='0')},
     {key:'direction',label:'Direction',hidden:true,text:r=>({out:'out',any:'both'}[r.direction]||'in')},
-    {key:'rule',label:'Rule (interfaces)',head:'Rule',headIcon:'network-wired',text:r=>bindingText(r.interface_display,r.interfacenot==='1'),
+    {key:'rule',label:'Interface (rule)',head:'Rule',headIcon:'network-wired',text:r=>bindingText(r.interface_display,r.interfacenot==='1'),
       cell:(td,r)=>bindingCell(td,r.binding_count,r.interface_display,r.interfacenot==='1')},
-    {key:'origin',label:'Origin',headIcon:'network-wired',text:r=>bindingText(r.origin_display,r['received-on-not']==='1'),
+    {key:'origin',label:'Interface (origin)',head:'Origin',headIcon:'network-wired',text:r=>bindingText(r.origin_display,r['received-on-not']==='1'),
       cell:(td,r)=>bindingCell(td,r.origin_count,r.origin_display,r['received-on-not']==='1')},
     {key:'version',label:'Version',text:versionName},
     {key:'protocol',label:'Protocol',text:protocolName,cell(td,r){td.textContent=protocolName(r);if(r.icmptype||r.icmp6type)td.append(element('small',r.icmptype||r.icmp6type));}},
@@ -109,6 +109,16 @@ document.addEventListener('DOMContentLoaded', function () {
   let layout=loadLayout();
   const visibleColumns=()=>[COLUMNS[0],...layout.order.filter(k=>!layout.hidden.has(k)).map(k=>byKey.get(k)),COLUMNS[COLUMNS.length-1]];
   const label=k=>byKey.get(k).label;
+  // The column chooser lists settings in the rule dialog's sections and order; the table keeps its own order.
+  const MENU_SECTIONS=[
+    ['Organisation',['state','sequence','tags','categories','description']],
+    ['Deployment',['targets']],
+    ['Interface',['rule','origin','placement']],
+    ['Filter',['quick','action','direction','version','protocol','icmp','source','source_port','destination','destination_port','log']],
+    ['Stateful firewall',['statetype']],
+    ['Source Routing',['gateway']],
+    ['Overview',['icons']],
+  ].map(([name,keys])=>[name,keys.filter(k=>movable.includes(k))]).filter(([,keys])=>keys.length);
   function setLayout(next) {
     layout=next;store.set(COLUMN_STORE,{order:layout.order,hidden:[...layout.hidden],known:movable});
     buildHeader();render();
@@ -147,20 +157,25 @@ document.addEventListener('DOMContentLoaded', function () {
     }));
   }
   const columnList=document.getElementById('rule-columns-list');
+  // Arrows move a column one place left or right among the columns shown in the table.
+  function neighbour(k,step) {
+    const shown=layout.order.filter(c=>!layout.hidden.has(c));
+    return layout.hidden.has(k)?undefined:shown[shown.indexOf(k)+step];
+  }
   function buildColumnMenu(focus) {
-    columnList.replaceChildren(...layout.order.map((k,index)=>{
+    columnList.replaceChildren(...MENU_SECTIONS.flatMap(([section,keys])=>[element('li',section,'rule-column-section'),...keys.map(k=>{
       const item=element('li'),box=element('input'),name=element('label');
       box.type='checkbox';box.checked=!layout.hidden.has(k);box.id='rule-column-'+k;
       box.addEventListener('change',()=>{const hidden=new Set(layout.hidden);if(box.checked)hidden.delete(k);else hidden.add(k);setLayout({order:layout.order,hidden});buildColumnMenu({col:k});});
       name.htmlFor=box.id;name.append(box,document.createTextNode(' '+label(k)));item.append(name);
-      for (const [text,step] of [['↑',-1],['↓',1]]) {
+      for (const [text,step] of [['←',-1],['→',1]]) {
         const button=element('button',text,'rule-column-move');button.type='button';button.id=`rule-column-${k}-${step}`;
-        button.setAttribute('aria-label',`Move ${label(k)} ${step<0?'left':'right'}`);
-        const target=layout.order[index+step];button.disabled=!target;item.append(button);
+        button.setAttribute('aria-label',`Move ${label(k)} ${step<0?'left':'right'} in the table`);button.title=step<0?'Move left':'Move right';
+        const target=neighbour(k,step);button.disabled=!target;item.append(button);
         button.addEventListener('click',()=>{moveColumn(k,target,step>0);buildColumnMenu({col:k,step});});
       }
       return item;
-    }));
+    })]));
     // Keep keyboard focus on the control just used, or on its checkbox once an arrow is disabled.
     if (focus) { const target=focus.step&&document.getElementById(`rule-column-${focus.col}-${focus.step}`);(target&&!target.disabled?target:document.getElementById('rule-column-'+focus.col)).focus(); }
   }
