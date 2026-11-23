@@ -8,6 +8,7 @@ from .definition_sync import definition_plan
 from .models import AuditEvent, Firewall, InterfaceGroup, InterfaceMapping, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError
 from .reconcile import plan_for
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "groups": [], "categories": [], "interfaces": []}
 
@@ -113,9 +114,7 @@ class GroupPullTests(TestCase):
 
     def test_unmapped_logical_addresses_are_left_out_of_the_pushed_rule(self):
         LogicalInterface.objects.create(name="DMZ")
-        Rule.objects.create(
-            name="Address", interface=self.lan, source="@WAN:net,@LAN:net,10.9.0.0/16", destination="@DMZ:ip,@LAN:ip"
-        )
+        make_rule(self.lan, name="Address", source="@WAN:net,@LAN:net,10.9.0.0/16", destination="@DMZ:ip,@LAN:ip")
         plan = plan_for(self.fw)
         self.assertEqual(plan["errors"], [])
         payload = next(op for op in plan["operations"] if op["kind"] == "rule")["payload"]
@@ -126,14 +125,14 @@ class GroupPullTests(TestCase):
         )
 
     def test_rule_is_skipped_rather_than_widened_when_an_address_field_empties(self):
-        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:net", destination="@LAN:net")
+        make_rule(self.lan, name="Address", source="@WAN:net", destination="@LAN:net")
         plan = plan_for(self.fw)
         self.assertEqual(plan["errors"], [])
         self.assertFalse([op for op in plan["operations"] if op["kind"] == "rule"])
         self.assertIn("leaves its source or destination empty", " ".join(plan["warnings"]))
 
     def test_malformed_logical_address_still_blocks(self):
-        Rule.objects.create(name="Address", interface=self.lan, source="@WAN:subnet")
+        make_rule(self.lan, name="Address", source="@WAN:subnet")
         self.assertIn("Invalid logical address @WAN:subnet.", plan_for(self.fw)["errors"])
 
     @patch("fleet.views.OPNsenseClient")

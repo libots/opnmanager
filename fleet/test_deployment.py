@@ -8,6 +8,7 @@ from .alias_patterns import expand_entry
 from .deployment import deployment_plan, execute_deployment
 from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
 from .opnsense import DeviceError, OPNsenseClient
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -34,8 +35,8 @@ class DeploymentTests(TestCase):
         logical = LogicalInterface.objects.create(name="LAN")
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
         Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
-        self.first = Rule.objects.create(name="First", interface=logical, sequence=100)
-        self.second = Rule.objects.create(name="Second", interface=logical, sequence=200)
+        self.first = make_rule(logical, name="First", sequence=100)
+        self.second = make_rule(logical, name="Second", sequence=200)
 
     def test_only_selected_rule_is_saved_applied_and_verified(self):
         plan = deployment_plan(self.fw)
@@ -196,7 +197,7 @@ class ProtectedApplyTests(TestCase):
         logical = LogicalInterface.objects.create(name="LAN")
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
         Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
-        self.rule = Rule.objects.create(name="First", interface=logical, sequence=100)
+        self.rule = make_rule(logical, name="First", sequence=100)
         self.plan = deployment_plan(self.fw)
         self.row = self.plan["rows"][0]
 
@@ -294,7 +295,7 @@ class PlannerQueryTests(TestCase):
         def add_rules(start, count):
             for i in range(start, start + count):
                 Alias.objects.create(name=f"A{i}", content="10.0.0.1", scope="selected").firewall_groups.add(group)
-                rule = Rule.objects.create(name=f"R{i}", interface=logical, sequence=i + 1, source=f"A{i}")
+                rule = make_rule(logical, name=f"R{i}", sequence=i + 1, source=f"A{i}")
                 rule.categories.add(category)
                 rule.interface_groups.add(interface_group)
 
@@ -316,8 +317,8 @@ class RetireRuleTests(TestCase):
         self.fw = Firewall.objects.create(name="Test", base_url="https://fw.test", credential_prefix="TEST")
         self.logical = LogicalInterface.objects.create(name="LAN")
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=self.logical, device_interface="lan")
-        self.kept = Rule.objects.create(name="Kept", interface=self.logical, sequence=100)
-        gone = Rule.objects.create(name="Gone", interface=self.logical, sequence=200)
+        self.kept = make_rule(self.logical, name="Kept", sequence=100)
+        gone = make_rule(self.logical, name="Gone", sequence=200)
         self.gone_tag = "Gone " + short_marker(gone.pk)
         gone.delete()
         self.device_rules = [
@@ -335,7 +336,7 @@ class RetireRuleTests(TestCase):
         from .rule_identity import short_marker
 
         unmapped = LogicalInterface.objects.create(name="UNMAPPED")
-        broken = Rule.objects.create(name="Broken", interface=unmapped, sequence=400)
+        broken = make_rule(unmapped, name="Broken", sequence=400)
         snapshot = self.fw.snapshots.first()
         snapshot.data["rules"].append(
             {"description": "Broken " + short_marker(broken.pk), "uuid": "b", "interface": "", "sequence": "400"}
@@ -480,7 +481,7 @@ class ConfigHistoryFallbackTests(TestCase):
         logical = LogicalInterface.objects.create(name="LAN")
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
         Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
-        Rule.objects.create(name="First", interface=logical, sequence=100)
+        make_rule(logical, name="First", sequence=100)
         self.unsupported = SavepointUnsupported("no filter savepoint API. No rule writes were made.")
 
     def device(self, readback_ok=True):
@@ -581,7 +582,7 @@ class CombinedDeploymentTests(TestCase):
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
         Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
         Alias.objects.create(name="Needed", content="10.0.0.1")
-        self.rule = Rule.objects.create(name="Uses alias", interface=logical, sequence=100, source="Needed")
+        self.rule = make_rule(logical, name="Uses alias", sequence=100, source="Needed")
 
     def client_for(self, plan, *, categories=()):
         """A device that accepts the definitions, then the rule, reading each back."""
@@ -666,7 +667,7 @@ class CombinedDeploymentTests(TestCase):
     def test_definitions_alone_and_rule_errors_do_not_block_them(self):
         from .deployment import combined_plan, execute_combined
 
-        Rule.objects.create(name="Clash", interface=self.rule.interface, sequence=100)
+        make_rule(self.rule.interfaces.get(), name="Clash", sequence=100)
         plan = combined_plan(self.fw)
         self.assertEqual(plan["definitions"]["errors"], [])
         self.assertTrue(all(row["errors"] for row in plan["rules"]["rows"]))

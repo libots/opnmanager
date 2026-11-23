@@ -7,8 +7,9 @@ from django.test import TestCase
 
 from .deployment import combined_plan, deployment_plan
 from .jobs import enqueue, recover_interrupted, run_pending
-from .models import DeviceJob, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
+from .models import DeviceJob, Firewall, InterfaceMapping, LogicalInterface, Snapshot
 from .opnsense import DeviceError
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -19,7 +20,7 @@ class DeviceJobTests(TestCase):
         logical = LogicalInterface.objects.create(name="LAN")
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
         Snapshot.objects.create(firewall=self.fw, data=copy.deepcopy(EMPTY))
-        self.rule = Rule.objects.create(name="First", interface=logical, sequence=100)
+        self.rule = make_rule(logical, name="First", sequence=100)
         self.user = get_user_model().objects.create_superuser("admin-test", password="Test-only-password")
         self.client.force_login(self.user)
 

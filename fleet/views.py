@@ -288,7 +288,7 @@ def rules_page(request):
     else:
         rows = []
         groups = {g.name: {i.name for i in g.members.all()} for g in InterfaceGroup.objects.prefetch_related("members")}
-        for rule in Rule.objects.select_related("interface").prefetch_related(
+        for rule in Rule.objects.prefetch_related(
             "interfaces",
             "interface_groups",
             "origin_interfaces",

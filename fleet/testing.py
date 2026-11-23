@@ -23,3 +23,12 @@ class DataDirTestRunner(DiscoverRunner):
         self._data_dir_override.disable()
         self._data_dir.cleanup()
         super().teardown_test_environment(**kwargs)
+
+
+def make_rule(*interfaces, **fields):
+    """Create a manager rule bound to the given logical interfaces (tests only)."""
+    from .models import Rule
+
+    rule = Rule.objects.create(**fields)
+    rule.interfaces.set(interfaces)
+    return rule

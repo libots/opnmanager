@@ -30,6 +30,7 @@ from .models import (
 from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import plan_for, validate_snapshot
 from .rule_filters import filter_rows
+from .testing import make_rule
 
 RICH = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -126,7 +127,7 @@ class FeatureTests(TestCase):
 
     def test_category_uuid_mapping_is_device_specific(self):
         category = Category.objects.create(name="Operations")
-        rule = Rule.objects.create(name="Categorized", interface=self.logical)
+        rule = make_rule(self.logical, name="Categorized")
         rule.categories.add(category)
         self.observed(categories=[{"uuid": "source-cat", "name": "Operations", "color": "137b66"}])
         op = next(op for op in plan_for(self.fw)["operations"] if op["kind"] == "rule")
@@ -394,7 +395,7 @@ class FeatureTests(TestCase):
         self.assertIn("Choose one protocol.", str(bad.errors))
 
     def test_legacy_multi_protocol_rule_stays_editable(self):
-        rule = Rule.objects.create(name="Legacy", protocol="TCP,UDP", interface=self.logical)
+        rule = make_rule(self.logical, name="Legacy", protocol="TCP,UDP")
         form = RuleForm(instance=rule)
         self.assertIn("multiple", str(form["protocol"]))
 
@@ -431,7 +432,7 @@ class FeatureTests(TestCase):
 
     def test_icmp_family_validation_and_inverted_interface_filter(self):
         with self.assertRaisesMessage(ValidationError, "ICMPv6 requires IPv6"):
-            Rule(name="Bad IPv6", interface=self.logical, protocol="IPv6-ICMP", icmp6_types="128").full_clean()
+            Rule(name="Bad IPv6", protocol="IPv6-ICMP", icmp6_types="128").full_clean()
         rows = [
             {"interface": "opt2", "interfacenot": "1", "description": "Except clients"},
             {"interface": "", "description": "Global"},
@@ -478,5 +479,22 @@ class MigrationUpgradeTests(TransactionTestCase):
                 "opt2",
             )
             self.assertEqual(migrated.protocol, "TCP")
+        finally:
+            MigrationExecutor(connection).migrate(latest)
+
+    def test_upgrade_keeps_bindings_set_only_on_the_legacy_interface_field(self):
+        executor = MigrationExecutor(connection)
+        before = [("fleet", "0017_interfacegroup_uid_no_gui_group")]
+        latest = executor.loader.graph.leaf_nodes()
+        try:
+            executor.migrate(before)
+            apps = executor.loader.project_state(before).apps
+            interface = apps.get_model("fleet", "LogicalInterface").objects.create(name="LEGACY")
+            legacy_only = apps.get_model("fleet", "Rule").objects.create(name="Legacy only", interface=interface)
+            executor = MigrationExecutor(connection)
+            executor.migrate(latest)
+            apps = executor.loader.project_state(latest).apps
+            migrated = apps.get_model("fleet", "Rule").objects.get(pk=legacy_only.pk)
+            self.assertEqual(list(migrated.interfaces.values_list("pk", flat=True)), [interface.pk])
         finally:
             MigrationExecutor(connection).migrate(latest)

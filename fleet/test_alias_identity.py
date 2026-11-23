@@ -5,10 +5,11 @@ from django.test import TestCase
 
 from .definition_sync import definition_plan, execute_definition_plan
 from .import_rules import import_rules
-from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
+from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Snapshot
 from .opnsense import DeviceError
 from .reconcile import plan_for
 from .rule_identity import short_marker, tagged, untagged
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -43,7 +44,7 @@ class AliasIdentityTests(TestCase):
     def test_rename_updates_the_tagged_device_alias_and_manager_references(self):
         alias = Alias.objects.create(name="DNS", content="10.0.0.1")
         parent = Alias.objects.create(name="Infra", content="DNS\n10.0.0.9")
-        rule = Rule.objects.create(name="Resolve", interface=self.lan, destination="DNS,10.1.1.1")
+        rule = make_rule(self.lan, name="Resolve", destination="DNS,10.1.1.1")
         self.device_aliases(
             {"uuid": "u1", "name": "DNS", "type": "host", "content": "10.0.0.1", "description": tagged("", alias.uid)}
         )
@@ -123,7 +124,7 @@ class AliasIdentityTests(TestCase):
             {"uuid": "u1", "name": "Old", "type": "host", "content": "10.0.0.1", "description": tagged("", gone.uid)}
         )
         gone.delete()
-        rule = Rule.objects.create(name="Any", interface=self.lan)
+        rule = make_rule(self.lan, name="Any")
         self.assertEqual(definition_plan(self.fw, rule=rule)["removals"], [])
 
     def test_import_strips_the_tag_from_alias_descriptions(self):

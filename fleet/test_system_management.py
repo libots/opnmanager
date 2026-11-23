@@ -13,13 +13,13 @@ from .models import (
     Firewall,
     InterfaceMapping,
     LogicalInterface,
-    Rule,
     VirtualIP,
 )
 from .oidc_storage import load
 from .opnsense import DeviceError
 from .reconcile import plan_for
 from .system_management import firmware_action, read_vips, refresh_firmware, refresh_inventory, vip_plan
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "interfaces": [], "groups": [], "categories": []}
 
@@ -67,7 +67,7 @@ class SystemManagementTests(TestCase):
         from .models import Snapshot
 
         Snapshot.objects.create(firewall=self.fw, data=EMPTY)
-        rule = Rule.objects.create(name="Origin", interface=self.logical, source="bogons", destination="(self)")
+        rule = make_rule(self.logical, name="Origin", source="bogons", destination="(self)")
         rule.origin_interfaces.add(self.logical)
         op = next(op for op in plan_for(self.fw)["operations"] if op["kind"] == "rule")
         self.assertEqual(op["payload"]["received-on"], "lan")

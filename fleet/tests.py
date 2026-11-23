@@ -11,10 +11,11 @@ from django.test import SimpleTestCase, TestCase, override_settings
 
 from .alias_sync import alias_plan, execute_alias_plan
 from .auth import SubjectOIDCBackend
-from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Rule, Snapshot
+from .models import Alias, AuditEvent, Firewall, InterfaceMapping, LogicalInterface, Snapshot
 from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import plan_for, validate_snapshot
 from .rule_identity import tagged
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": []}
 
@@ -27,7 +28,7 @@ class FleetTests(TestCase):
         for fw, local in [(self.fw, "opt2"), (self.other, "opt4")]:
             InterfaceMapping.objects.create(firewall=fw, logical_interface=self.interface, device_interface=local)
             Snapshot.objects.create(firewall=fw, data=copy.deepcopy(EMPTY))
-        self.rule = Rule.objects.create(name="DNS", interface=self.interface, protocol="UDP", destination_port="53")
+        self.rule = make_rule(self.interface, name="DNS", protocol="UDP", destination_port="53")
 
     def test_logical_interfaces_translate_per_device(self):
         self.assertEqual(plan_for(self.fw)["operations"][0]["payload"]["interface"], "opt2")
@@ -89,7 +90,7 @@ class FleetTests(TestCase):
         self.assertEqual([op["payload"]["name"] for op in ops], ["ZChild", "AParent"])
 
     def test_sequence_conflicts_block_plan(self):
-        Rule.objects.create(name="Conflict", interface=self.interface, sequence=self.rule.sequence)
+        make_rule(self.interface, name="Conflict", sequence=self.rule.sequence)
         self.assertTrue(plan_for(self.fw)["errors"])
         self.assertFalse(plan_for(self.fw)["operations"])
 

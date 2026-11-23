@@ -6,7 +6,8 @@ from django.test import TestCase
 from .definition_sync import definition_plan, execute_definition_plan
 from .dependencies import rule_definitions
 from .deployment import deployment_plan
-from .models import Alias, Category, Firewall, InterfaceGroup, InterfaceMapping, LogicalInterface, Rule, Snapshot
+from .models import Alias, Category, Firewall, InterfaceGroup, InterfaceMapping, LogicalInterface, Snapshot
+from .testing import make_rule
 
 EMPTY = {"schema_version": 1, "rules": [], "aliases": [], "groups": [], "categories": [], "interfaces": []}
 
@@ -18,7 +19,7 @@ class RuleDependencyTests(TestCase):
         InterfaceMapping.objects.create(firewall=self.fw, logical_interface=logical, device_interface="lan")
         self.logical = logical
         Snapshot.objects.create(firewall=self.fw, data=EMPTY)
-        self.rule = Rule.objects.create(name="Chosen", interface=logical)
+        self.rule = make_rule(logical, name="Chosen")
 
     def test_unrelated_drift_and_invalid_definitions_do_not_block_rule(self):
         Alias.objects.create(name="Unrelated", content="x.x.x.x", type="host")
