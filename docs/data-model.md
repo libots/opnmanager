@@ -22,7 +22,8 @@ ScopedPolicy (abstract): scope ∈ {all, selected} + M2M firewalls + M2M firewal
 Rule M2M: interfaces, interface_groups, origin_interfaces, origin_interface_groups, categories
 RuleOrigin(firewall, rule, remote_uuid)          unique (firewall, remote_uuid) — imported-from link
 VirtualIPOrigin(firewall, virtual_ip, remote_uuid) unique (firewall, remote_uuid)
-Firewall: position (display order, Meta ordering), ipv4_site_prefix, ipv6_site_prefix, dhcp_backend (dnsmasq|kea)
+Firewall: position (display order, Meta ordering), ipv4_site_prefix, ipv6_site_prefix, site_dns_servers, site_domain, dhcp_backend (dnsmasq|kea)
+DnsPreference (name, dns_servers / search_domains token lists, is_default) 1─* DhcpScope.dns_preference (SET_NULL)
 InterfaceAddressing 1─1 LogicalInterface (templates ipv4_address / ipv6_address)
 AddressRange *─1 LogicalInterface (name, "10.x.10.10-29")
 DhcpScope (ScopedPolicy) *─1 LogicalInterface; DhcpOption *─1 DhcpScope (code, kind, value)
@@ -126,7 +127,7 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 
 ## Migrations
 
-`fleet/migrations/0001`–`0023`. Notable data migrations:
+`fleet/migrations/0001`–`0024`. Notable data migrations:
 - `0004` copies `Rule.interface` into `Rule.interfaces`.
 - `0013` removes stored authentication-server models (never deployable).
 - `0015` converts stored ICMPv6 type numbers to OPNsense option names.
@@ -140,6 +141,8 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 - `0022` adds `Firewall.position` (the user-chosen display order) and numbers existing firewalls
   alphabetically, so the order doesn't change on upgrade.
 - `0023` adds the `push_interface_addresses` permission and the `interfaces.addresses` job kind.
+- `0024` adds per-site DNS (`Firewall.site_dns_servers`, `site_domain`), `DnsPreference` and
+  `DhcpScope.dns_preference`.
 
 `fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 (and from 0017) to latest with
 data; keep it passing. CI runs `makemigrations --check --dry-run`.

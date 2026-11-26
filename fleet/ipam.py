@@ -55,7 +55,16 @@ OPTION_NAMES = {
 
 
 # Short labels for the DHCP overview.
-OPTION_LABELS = {3: "Gateway", 6: "DNS", 15: "Domain", 42: "NTP", 43: "Vendor (43)", 66: "TFTP server", 67: "Boot file"}
+OPTION_LABELS = {
+    3: "Gateway",
+    6: "DNS",
+    15: "Domain",
+    42: "NTP",
+    43: "Vendor (43)",
+    66: "TFTP server",
+    67: "Boot file",
+    119: "Search",
+}
 
 
 class TemplateError(ValueError):
@@ -348,6 +357,142 @@ def _resolve_servers(text, subnet, site, router, aliases):
     return unique, problems
 
 
+# --- DNS preference lists ----------------------------------------------------------------------
+#
+# One ordered list for the whole fleet, resolved per site. Tokens:
+#   site               this site's DNS servers (Firewall.site_dns_servers) / domain (site_domain)
+#   site:<firewall>    a named site's servers or domain
+#   other-sites        every other enabled site's, in the fleet order, skipping ones already listed
+#   router / 0.0.0.0   the firewall's own address on the interface (DNS servers only)
+# plus literal addresses, templates (10.x.10.5) or host aliases (servers) and literal domains (search).
+
+DOMAIN = re.compile(
+    r"^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+)
+PREFERENCE_WORDS = ("site", "other-sites", "router")
+
+
+def preference_tokens(text):
+    return [t.strip() for t in re.split(r"[,\s]+", text or "") if t.strip()]
+
+
+def check_preference(text, kind, firewall_names, aliases):
+    """Problems with a preference list (kind "servers" or "search"); [] when it is valid."""
+    problems = []
+    for token in preference_tokens(text):
+        lower = token.lower()
+        if lower in ("site", "other-sites"):
+            continue
+        if lower.startswith("site:"):
+            if token[5:] not in firewall_names:
+                problems.append(f"{token}: there is no firewall named {token[5:]}")
+            continue
+        if kind == "servers":
+            if lower == "router" or token == ROUTER or token in aliases:
+                continue
+            try:
+                if check_template(token) != 4:
+                    problems.append(f"{token}: DHCP hands out IPv4 DNS servers only")
+            except TemplateError:
+                problems.append(f"{token} isn't an address, template, host alias or keyword")
+        elif not DOMAIN.match(token.rstrip(".")):
+            problems.append(f"{token} isn't a domain name or keyword")
+    return problems
+
+
+def site_servers(firewall, aliases):
+    """A site's own DNS servers (IPv4), resolved with its own site prefix."""
+    servers, problems = [], []
+    site = None
+    for token in preference_tokens(getattr(firewall, "site_dns_servers", "")):
+        if token in aliases:
+            for member in (m.strip() for m in aliases[token].splitlines() if m.strip()):
+                try:
+                    if ipaddress.ip_address(member).version == 4:
+                        servers.append(member)
+                except ValueError:
+                    problems.append(f"alias {token} member {member} is not a single address")
+            continue
+        try:
+            if "x" in token.lower():
+                site = site or site_prefix(firewall, 4)
+                if site is None:
+                    raise TemplateError(f"{firewall.name} has no IPv4 site prefix for {token}")
+            servers.append(
+                str(resolve_address(token, site) if site and "x" in token.lower() else ipaddress.ip_address(token))
+            )
+        except (TemplateError, ValueError) as exc:
+            problems.append(str(exc) if isinstance(exc, TemplateError) else f"{token} isn't an IPv4 address")
+    return servers, problems
+
+
+def resolve_preference(text, kind, firewall, firewalls, aliases, router=None):
+    """An ordered, de-duplicated list for one site: [{"value", "source"}], and problems.
+
+    `firewalls` is the fleet in display order (for other-sites and site:<name>); `router` is the
+    interface address that `router` / 0.0.0.0 stands for (None outside an interface context).
+    """
+    entries, problems, seen, named = [], [], set(), {fw.name: fw for fw in firewalls}
+
+    def add(value, source):
+        if value and value.lower() not in seen:
+            seen.add(value.lower())
+            entries.append({"value": value, "source": source})
+
+    def add_site(fw, source):
+        if kind == "servers":
+            servers, issues = site_servers(fw, aliases)
+            problems.extend(issues)
+            for server in servers:
+                add(server, source)
+        elif getattr(fw, "site_domain", ""):
+            add(fw.site_domain.strip().rstrip("."), source)
+
+    included = set()
+    tokens = preference_tokens(text)
+    for token in tokens:
+        lower = token.lower()
+        if lower.startswith("site:") and token[5:] in named:
+            included.add(named[token[5:]].pk)
+    for token in tokens:
+        lower = token.lower()
+        if lower == "site":
+            add_site(firewall, f"{firewall.name} (this site)")
+            included.add(firewall.pk)
+        elif lower.startswith("site:"):
+            other = named.get(token[5:])
+            if other is None:
+                problems.append(f"{token}: there is no firewall named {token[5:]}")
+            else:
+                add_site(other, other.name)
+        elif lower == "other-sites":
+            for other in firewalls:
+                if other.pk != firewall.pk and other.pk not in included and other.enabled:
+                    add_site(other, other.name)
+        elif kind == "servers" and (lower == "router" or token == ROUTER):
+            if router is None:
+                add("router", "the firewall on each interface")
+            else:
+                add(str(router), "the firewall on this interface")
+        elif kind == "servers" and token in aliases:
+            for member in (m.strip() for m in aliases[token].splitlines() if m.strip()):
+                try:
+                    if ipaddress.ip_address(member).version == 4:
+                        add(member, f"alias {token}")
+                except ValueError:
+                    problems.append(f"alias {token} member {member} is not a single address")
+        elif kind == "servers":
+            try:
+                site = site_prefix(firewall, 4) if "x" in lower else None
+                address = resolve_address(token, site) if site else ipaddress.ip_address(token)
+                add(str(address), "listed")
+            except (TemplateError, ValueError):
+                problems.append(f"{token} doesn't resolve to an IPv4 address at {firewall.name}")
+        else:
+            add(token.rstrip("."), "listed")
+    return entries, problems
+
+
 def encode_option(kind, values):
     """Hex bytes (aa:bb:...) of an option value, for backends that take raw data."""
     if kind == "ip":
@@ -386,7 +531,7 @@ def check_option_value(kind, value):
         raise TemplateError("Text options hold at most 255 characters.")
 
 
-def scope_settings(scope, subnet, site, router, aliases):
+def scope_settings(scope, subnet, site, router, aliases, dns_context=None):
     """Resolve a DHCP scope at one site → backend-neutral settings dict (or raise TemplateError)."""
     problems = []
     settings = {"subnet": str(subnet), "interface_address": str(router), "range": None, "options": []}
@@ -399,7 +544,22 @@ def scope_settings(scope, subnet, site, router, aliases):
         gateways, issues = _resolve_servers(scope.gateway, subnet, site, router, aliases)
         problems += issues
         settings["options"].append({"code": 3, "name": "routers", "kind": "ip", "values": gateways})
-    for code, text in ((6, scope.dns_servers), (42, scope.ntp_servers)):
+    preference = getattr(scope, "dns_preference", None)
+    if preference is not None and dns_context is not None:
+        firewall, firewalls = dns_context
+        servers, issues = resolve_preference(preference.dns_servers, "servers", firewall, firewalls, aliases, router)
+        problems += issues
+        if preference.dns_servers:
+            values = [entry["value"] for entry in servers]
+            settings["options"].append({"code": 6, "name": OPTION_NAMES[6], "kind": "ip", "values": values})
+        search, issues = resolve_preference(preference.search_domains, "search", firewall, firewalls, aliases)
+        problems += issues
+        if search:
+            domains = [entry["value"] for entry in search]
+            settings["options"].append({"code": 119, "name": OPTION_NAMES[119], "kind": "domains", "values": domains})
+            if not scope.domain_name:
+                settings["options"].append({"code": 15, "name": "domain-name", "kind": "text", "values": domains[:1]})
+    for code, text in ((6, scope.dns_servers if preference is None else ""), (42, scope.ntp_servers)):
         if text:
             servers, issues = _resolve_servers(text, subnet, site, router, aliases)
             problems += issues
@@ -442,7 +602,8 @@ def render_dnsmasq(settings, device_interface):
         lease = f",{settings['lease_time']}" if settings.get("lease_time") else ""
         lines.append(f"dhcp-range={device_interface},{settings['range']['start']},{settings['range']['end']}{lease}")
     for option in settings["options"]:
-        if option["kind"] in ("ip",):
+        if option["kind"] in ("ip", "domains"):
+            # dnsmasq encodes option 119 (domain-search) as RFC 3397 names itself.
             value = ",".join(option["values"])
         elif option["kind"] in ("unifi", "hex"):
             value = option.get("hex", "")
@@ -462,7 +623,7 @@ def render_kea(settings, device_interface):
     if settings.get("lease_time"):
         subnet["valid-lifetime"] = settings["lease_time"]
     for option in settings["options"]:
-        if option["kind"] == "ip":
+        if option["kind"] in ("ip", "domains"):
             entry = {"code": option["code"], "data": ", ".join(option["values"])}
         elif option["kind"] in ("unifi", "hex"):
             entry = {"code": option["code"], "csv-format": False, "data": option.get("hex", "").replace(":", "")}

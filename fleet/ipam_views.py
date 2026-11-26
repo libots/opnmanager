@@ -37,6 +37,7 @@ from .models import (
     Alias,
     DeviceJob,
     DhcpScope,
+    DnsPreference,
     Firewall,
     InterfaceAddressing,
     LogicalInterface,
@@ -348,7 +349,7 @@ def address_plan(request):
     )
 
 
-def scope_cells(scope, firewalls, plans, aliases):
+def scope_cells(scope, firewalls, plans, aliases, fleet=None):
     """Resolved settings of one DHCP scope at each firewall, with dnsmasq/Kea previews."""
     cells = []
     for fw in firewalls:
@@ -373,7 +374,9 @@ def scope_cells(scope, firewalls, plans, aliases):
             if "error" in planned:
                 raise TemplateError(planned["error"])
             site = site_prefix(fw, 4)
-            settings = scope_settings(scope, planned["subnet"], site, planned["router"], aliases)
+            settings = scope_settings(
+                scope, planned["subnet"], site, planned["router"], aliases, dns_context=(fw, fleet or firewalls)
+            )
             cell.update(
                 settings=settings,
                 dnsmasq="\n".join(render_dnsmasq(settings, device)),
@@ -395,17 +398,19 @@ def dhcp_scopes(request):
     aliases = {a.name: a.content for a in Alias.objects.filter(type="host")}
     checks = Overlaps()
     by_interface = {}
-    for scope in DhcpScope.objects.select_related("logical_interface").prefetch_related(
+    fleet = list(Firewall.objects.all())
+    for scope in DhcpScope.objects.select_related("logical_interface", "dns_preference").prefetch_related(
         "options", *ScopedPolicy.SCOPE_PREFETCH
     ):
         by_interface.setdefault(scope.logical_interface_id, []).append(scope)
     layout = {group["logical"].pk: group for group in range_layout(firewalls, plans, checks)}
+    default_dns = DnsPreference.objects.filter(is_default=True).first()
     planned = {a.logical_interface_id: a for a in InterfaceAddressing.objects.all()}
     rows, claimed = [], {}
     for logical in LogicalInterface.objects.all():
         scopes = by_interface.get(logical.pk, [])
         for index, scope in enumerate(scopes):
-            cells = scope_cells(scope, firewalls, plans, aliases)
+            cells = scope_cells(scope, firewalls, plans, aliases, fleet)
             for cell in cells:
                 cell["warnings"] = checks.for_subject("pool", cell["firewall"].pk, scope.pk)
                 if cell.get("applies") and scope.enabled:
@@ -434,6 +439,8 @@ def dhcp_scopes(request):
                 }
             )
         initial = {"logical_interface": logical.pk, "name": f"{logical.name} DHCP"}
+        if default_dns:
+            initial["dns_preference"] = default_dns.pk
         gaps = [r for r in layout.get(logical.pk, {}).get("rows", []) if r["kind"] == "gap" and r.get("offsets")]
         if gaps:
             widest = max(gaps, key=lambda r: max((c.get("size", 0) for c in r["cells"]), default=0))
@@ -854,4 +861,34 @@ def push_addresses(request, pk):
             "unchanged": [row for row in rows if not row["action"] and not row["blocked"]],
             "approval": token,
         },
+    )
+
+
+@login_required
+@permission_required("fleet.view_firewall", raise_exception=True)
+def dns_order(request):
+    """Each site's DNS servers and domain, and every DNS preference list resolved per site."""
+    from .ipam import resolve_preference, site_servers
+
+    firewalls = _firewalls(request)
+    fleet = list(Firewall.objects.all())
+    aliases = {a.name: a.content for a in Alias.objects.filter(type="host")}
+    sites = []
+    for fw in firewalls:
+        servers, problems = site_servers(fw, aliases)
+        sites.append({"firewall": fw, "servers": servers, "problems": problems})
+    lists = []
+    for preference in DnsPreference.objects.prefetch_related("scopes"):
+        cells = []
+        for fw in firewalls:
+            servers, server_problems = resolve_preference(preference.dns_servers, "servers", fw, fleet, aliases)
+            search, search_problems = resolve_preference(preference.search_domains, "search", fw, fleet, aliases)
+            cells.append(
+                {"firewall": fw, "servers": servers, "search": search, "problems": server_problems + search_problems}
+            )
+        lists.append({"preference": preference, "cells": cells, "scopes": list(preference.scopes.all())})
+    return render(
+        request,
+        "fleet/ipam_dns.html",
+        {"firewalls": firewalls, "sites": sites, "lists": lists, "all_firewalls": Firewall.objects.all()},
     )

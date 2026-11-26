@@ -49,6 +49,19 @@ with prefix length), `set_item/<if>`, `reconfigure` (applies only interfaces wit
 audit (`interfaces.addresses.started/completed/failed`). Only `staticv4`/`staticv6` interfaces are
 changed; the management address (an IP literal in `base_url`) is blocked. No rollback.
 
+## DNS order (`DnsPreference`, `ipam.resolve_preference`)
+
+Per site: `Firewall.site_dns_servers` (IPv4 addresses, templates resolved with that firewall's own
+prefix, host aliases; `ipam.site_servers`) and `Firewall.site_domain`. `DnsPreference` holds two
+ordered token lists (`dns_servers`, `search_domains`; validated by `check_preference`, normalized to
+", "-joined tokens). `resolve_preference(text, kind, firewall, fleet, aliases, router)` returns
+`[{value, source}]`, de-duplicated in order: `site`, `site:<name>`, `other-sites` (fleet order, enabled
+only, skipping sites named elsewhere in the list), `router`/`0.0.0.0` (the interface address, or the
+word "router" without one), literals. `scope_settings(..., dns_context=(firewall, fleet))` uses a
+scope's `dns_preference` for option 6, option 119 (`kind` "domains") and option 15 when the scope has
+no domain name; `DhcpScope.dns_servers` is then ignored. One list can be `is_default` (save() clears
+the others); the DHCP page prefills new scopes with it. Page: `ipam_views.dns_order`.
+
 ## Ranges page (`ipam_views.range_layout`)
 
 One group per interface with an IPv4 plan: header (subnet, router, usable count per site), then

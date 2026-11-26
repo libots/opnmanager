@@ -28,6 +28,7 @@ from .models import (
     DeviceJob,
     DhcpOption,
     DhcpScope,
+    DnsPreference,
     Firewall,
     InterfaceAddressing,
     InterfaceMapping,
@@ -959,3 +960,103 @@ class DhcpPageTests(TestCase):
             [(row["logical"].name, bool(row["scope"])) for row in rows],
             [("VL10", True), ("VL20", False), ("VL30", False)],
         )
+
+
+class DnsPreferenceTests(TestCase):
+    """Home, VH, Afton and a Cloud site, each with AD DNS servers and a domain."""
+
+    def setUp(self):
+        self.sites = {}
+        for name, octet in (("Home", 20), ("Cloud", 50), ("VH", 21), ("Afton", 22)):
+            self.sites[name] = Firewall.objects.create(
+                name=name,
+                base_url=f"https://{name.lower()}.test",
+                credential_prefix=name.upper(),
+                ipv4_site_prefix=f"10.{octet}.0.0/16",
+                site_dns_servers="10.x.10.5, 10.x.10.6",
+                site_domain=f"{name.lower()}.corp.example",
+            )
+        self.vl10 = LogicalInterface.objects.create(name="VL10")
+        InterfaceAddressing.objects.create(logical_interface=self.vl10, ipv4_address="10.x.8.1/21")
+        for fw in self.sites.values():
+            InterfaceMapping.objects.create(firewall=fw, logical_interface=self.vl10, device_interface="opt1")
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_order_is_resolved_per_site(self):
+        from .ipam import resolve_preference
+
+        fleet = list(Firewall.objects.all())
+        servers, problems = resolve_preference(
+            "site, site:Cloud, other-sites, router", "servers", self.sites["VH"], fleet, {}, router="10.21.8.1"
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            [entry["value"] for entry in servers],
+            [
+                "10.21.10.5",
+                "10.21.10.6",
+                "10.50.10.5",
+                "10.50.10.6",
+                "10.20.10.5",
+                "10.20.10.6",
+                "10.22.10.5",
+                "10.22.10.6",
+                "10.21.8.1",
+            ],
+        )
+        self.assertEqual(servers[0]["source"], "VH (this site)")
+        search, _ = resolve_preference("site, other-sites", "search", self.sites["Afton"], fleet, {})
+        self.assertEqual(
+            [entry["value"] for entry in search],
+            ["afton.corp.example", "home.corp.example", "cloud.corp.example", "vh.corp.example"],
+        )
+
+    def test_lists_and_site_settings_are_validated(self):
+        bad = DnsPreference(name="Bad", dns_servers="site, site:Nowhere, ad.example", search_domains="site, -bad-")
+        with self.assertRaises(ValidationError) as caught:
+            bad.full_clean()
+        self.assertIn("no firewall named Nowhere", str(caught.exception))
+        self.assertIn("-bad- isn't a domain name", str(caught.exception))
+        home = self.sites["Home"]
+        home.site_domain = "not a domain"
+        with self.assertRaises(ValidationError):
+            home.full_clean()
+
+    def test_dhcp_scopes_hand_out_the_list_in_order(self):
+        preference = DnsPreference.objects.create(
+            name="AD first",
+            dns_servers="site, site:Cloud, other-sites, router",
+            search_domains="site, other-sites",
+            is_default=True,
+        )
+        DhcpScope.objects.create(
+            name="VL10 clients",
+            logical_interface=self.vl10,
+            dynamic_range="10.x.15.0-250",
+            dns_preference=preference,
+            dns_servers="9.9.9.9",
+        )
+        page = self.client.get("/ipam/dhcp/")
+        cells = page.context["rows"][0]["cells"]
+        home = {o["code"]: o for o in cells[0]["settings"]["options"]}
+        self.assertEqual(home[6]["values"][:3], ["10.20.10.5", "10.20.10.6", "10.50.10.5"])
+        self.assertEqual(home[6]["values"][-1], "10.20.8.1")
+        self.assertNotIn("9.9.9.9", home[6]["values"])
+        self.assertEqual(home[119]["values"][0], "home.corp.example")
+        self.assertEqual(home[15]["values"], ["home.corp.example"])
+        self.assertIn(
+            "dhcp-option=opt1,119,home.corp.example,cloud.corp.example,vh.corp.example,afton.corp.example",
+            cells[0]["dnsmasq"],
+        )
+        dns = self.client.get("/ipam/dns/")
+        self.assertContains(dns, "AD first")
+        self.assertContains(dns, "Used by VL10 clients")
+        self.assertContains(dns, "the firewall on each interface")
+
+    def test_only_one_default_and_new_scopes_start_with_it(self):
+        first = DnsPreference.objects.create(name="One", is_default=True)
+        second = DnsPreference.objects.create(name="Two", is_default=True)
+        first.refresh_from_db()
+        self.assertFalse(first.is_default)
+        page = self.client.get("/ipam/dhcp/")
+        self.assertContains(page, f"dns_preference={second.pk}")

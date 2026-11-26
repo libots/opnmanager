@@ -27,6 +27,7 @@ urlpatterns = [
     path("settings/authentication/", management.oidc_options, name="oidc_options"),
     path("ipam/", ipam_views.address_plan, name="ipam_plan"),
     path("ipam/dhcp/", ipam_views.dhcp_scopes, name="ipam_dhcp"),
+    path("ipam/dns/", ipam_views.dns_order, name="ipam_dns"),
     path("ipam/ula-vips/", ipam_views.create_ula_vips, name="ipam_ula_vips"),
     path("ipam/<int:pk>/push/", ipam_views.push_addresses, name="ipam_push"),
     path("ipam/subnet-info/", ipam_views.subnet_info, name="ipam_subnet_info"),

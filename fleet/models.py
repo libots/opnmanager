@@ -8,15 +8,18 @@ from django.core.validators import MaxLengthValidator, MaxValueValidator, MinVal
 from django.db import models, transaction
 
 from .ipam import (
+    DOMAIN,
     HOSTNAME,
     OPTION_TYPES,
     TemplateError,
     check_option_value,
+    check_preference,
     check_range,
     check_template,
     interface_plan,
     normalize_mac,
     parse_site_prefix,
+    preference_tokens,
 )
 from .sorting import natural_key
 
@@ -72,6 +75,19 @@ class Firewall(models.Model):
         blank=True,
         help_text="e.g. 2001:db8:0:1400::/56. Templates such as x:x:x:40::1/64 take their x parts from it.",
     )
+    site_dns_servers = models.CharField(
+        "Site DNS servers",
+        max_length=300,
+        blank=True,
+        help_text="This site's own DNS servers in order, such as its AD domain controllers: addresses, templates "
+        "(10.x.10.5) or host alias names. DNS preference lists use them as site, site:<firewall> and other-sites.",
+    )
+    site_domain = models.CharField(
+        "Site domain",
+        max_length=253,
+        blank=True,
+        help_text="This site's DNS domain, e.g. home.corp.example; the search order of DNS preference lists uses it.",
+    )
     DNSMASQ, KEA = "dnsmasq", "kea"
     dhcp_backend = models.CharField(
         "DHCP server",
@@ -92,6 +108,23 @@ class Firewall(models.Model):
                     setattr(self, field, str(parse_site_prefix(value, family)))
                 except TemplateError as exc:
                     errors[field] = str(exc)
+        self.site_domain = self.site_domain.strip().rstrip(".")
+        if self.site_domain and not DOMAIN.match(self.site_domain):
+            errors["site_domain"] = "Enter a DNS domain such as home.corp.example."
+        aliases = set(Alias.objects.filter(type="host").values_list("name", flat=True))
+        servers = preference_tokens(self.site_dns_servers)
+        problems = []
+        for token in servers:
+            if token in aliases:
+                continue
+            try:
+                if check_template(token) != 4:
+                    problems.append(f"{token}: DHCP hands out IPv4 DNS servers only")
+            except TemplateError:
+                problems.append(f"{token} isn't an IPv4 address, template or host alias")
+        if problems:
+            errors["site_dns_servers"] = "; ".join(problems) + "."
+        self.site_dns_servers = ", ".join(servers)
         if errors:
             raise ValidationError(errors)
         url = urlsplit(self.base_url)
@@ -670,6 +703,58 @@ class AddressRange(models.Model):
         ]
 
 
+class DnsPreference(models.Model):
+    """An ordered DNS server and search-domain list, written once and resolved at each site."""
+
+    name = models.CharField(max_length=60, unique=True)
+    dns_servers = models.CharField(
+        "DNS servers",
+        max_length=500,
+        blank=True,
+        default="site, other-sites, router",
+        help_text="In order. site = this site's DNS servers; site:<firewall> = a named site's; other-sites = every "
+        "other site's, in the fleet order; router = the firewall on the interface. Addresses, templates (10.x.10.5) "
+        "and host alias names work too, e.g. for DNS servers outside the fleet.",
+    )
+    search_domains = models.CharField(
+        "Domain search",
+        max_length=500,
+        blank=True,
+        default="site, other-sites",
+        help_text="In order. site = this site's domain; site:<firewall> = a named site's; other-sites = every other "
+        "site's; or literal domains.",
+    )
+    is_default = models.BooleanField(
+        "Default", default=False, help_text="New DHCP scopes start with this list. Only one list is the default."
+    )
+    description = models.CharField(max_length=200, blank=True)
+
+    def clean(self):
+        aliases = {a.name: a.content for a in Alias.objects.filter(type="host")}
+        names = set(Firewall.objects.values_list("name", flat=True))
+        errors = {}
+        for field, kind in (("dns_servers", "servers"), ("search_domains", "search")):
+            problems = check_preference(getattr(self, field), kind, names, aliases)
+            if problems:
+                errors[field] = "; ".join(problems) + "."
+            setattr(self, field, ", ".join(preference_tokens(getattr(self, field))))
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if self.is_default:
+                DnsPreference.objects.exclude(pk=self.pk).filter(is_default=True).update(is_default=False)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ["-is_default", "name"]
+        verbose_name = "DNS preference list"
+
+
 class DhcpScope(ScopedPolicy):
     """DHCPv4 settings for one logical interface, written once and resolved per site."""
 
@@ -695,6 +780,16 @@ class DhcpScope(ScopedPolicy):
         default="0.0.0.0",
         help_text="Comma-separated: 0.0.0.0 (the firewall), addresses or templates (10.x.10.5), offsets (+5), "
         "or host alias names (their addresses in this family are used).",
+    )
+    dns_preference = models.ForeignKey(
+        DnsPreference,
+        verbose_name="DNS preference list",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="scopes",
+        help_text="Hands out DNS servers and the domain search list in this list's order at each site (and its "
+        "first search domain as the domain name if Domain name is empty). DNS servers below are then ignored.",
     )
     ntp_servers = models.CharField("NTP servers", max_length=300, blank=True, help_text="Same notation as DNS.")
     domain_name = models.CharField(max_length=253, blank=True)

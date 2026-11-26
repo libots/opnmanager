@@ -19,6 +19,7 @@ from .models import (
     Category,
     DhcpOption,
     DhcpScope,
+    DnsPreference,
     DNSProfile,
     Firewall,
     FirewallGroup,
@@ -235,7 +236,10 @@ class FirewallAdmin(OpnDialogAdmin):
         ("General settings", {"fields": ["enabled", "name", "notes"]}),
         ("Connection", {"fields": ["base_url", "ca_bundle", "credential_prefix", "credential_settings"]}),
         ("Interfaces", {"fields": ["auto_map_interfaces", "mapping_overview"]}),
-        ("Addressing and DHCP", {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "dhcp_backend"]}),
+        (
+            "Addressing and DHCP",
+            {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "site_dns_servers", "site_domain", "dhcp_backend"]},
+        ),
     ]
     sections = {"addressing": "Addressing and DHCP"}
     address_fields = {"ipv4_site_prefix": ("prefix", ()), "ipv6_site_prefix": ("prefix", ())}
@@ -670,7 +674,7 @@ class DhcpScopeAdmin(OpnDialogAdmin):
     fieldsets = [
         (None, {"fields": ["name", "enabled", "logical_interface", "description"]}),
         ("Addresses", {"fields": ["dynamic_range", "lease_time"]}),
-        ("Options", {"fields": ["gateway", "dns_servers", "ntp_servers", "domain_name"]}),
+        ("Options", {"fields": ["gateway", "dns_preference", "dns_servers", "ntp_servers", "domain_name"]}),
         ("Deployment", {"fields": ["targets"]}),
     ]
 
@@ -683,3 +687,13 @@ class StaticReservationAdmin(OpnDialogAdmin):
     list_filter = ["firewall", "logical_interface"]
     search_fields = ["hostname", "mac_address", "ip_address", "description"]
     fields = ["firewall", "logical_interface", "ip_address", "mac_address", "hostname", "description"]
+
+
+@admin.register(DnsPreference)
+class DnsPreferenceAdmin(OpnDialogAdmin):
+    return_view = "ipam_dns"
+    list_display = ["name", "dns_servers", "search_domains", "is_default"]
+    fieldsets = [
+        (None, {"fields": ["name", "is_default", "description"]}),
+        ("Order", {"fields": ["dns_servers", "search_domains"]}),
+    ]
