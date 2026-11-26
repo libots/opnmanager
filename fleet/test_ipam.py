@@ -1071,3 +1071,36 @@ class DnsPreferenceTests(TestCase):
         self.assertFalse(first.is_default)
         page = self.client.get("/ipam/dhcp/")
         self.assertContains(page, f"dns_preference={second.pk}")
+
+
+class ChipSuggestionTests(TestCase):
+    def setUp(self):
+        from .models import DnsBase
+
+        self.home = Firewall.objects.create(name="Home", base_url="https://home.test", credential_prefix="HOME")
+        DnsBase.objects.create(name="ad", kind="servers", default="10.x.10.5")
+        DnsBase.objects.create(name="corp", kind="domains")
+        Alias.objects.create(name="AD_DNS", content="10.20.10.5\n10.21.10.5")
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_dns_lists_suggest_bases_sites_and_router_with_hints(self):
+        page = self.client.get("/admin/fleet/dnspreference/add/")
+        self.assertContains(page, '<option value="this.ad" data-hint="this site&#x27;s ad">this.ad</option>', html=True)
+        self.assertContains(page, '<option value="Home.ad" data-hint="Home&#x27;s ad">Home.ad</option>', html=True)
+        self.assertContains(page, 'data-hint="the firewall on the interface"')
+        self.assertContains(page, 'data-hint="alias: 10.20.10.5, 10.21.10.5"')
+        self.assertContains(page, '<option value="others.corp" data-hint="every other site&#x27;s corp">', html=False)
+
+    def test_chip_order_is_the_saved_order(self):
+        self.client.post(
+            "/admin/fleet/dnspreference/add/",
+            {"name": "AD", "dns_servers": ["router", "Home.ad", "this.ad"], "search_domains": ["this.corp"]},
+        )
+        self.assertEqual(DnsPreference.objects.get().dns_servers, "router, Home.ad, this.ad")
+
+    def test_port_names_are_offered_only_for_port_aliases(self):
+        page = self.client.get("/admin/fleet/alias/add/")
+        self.assertContains(page, 'data-filter-by="type"')
+        self.assertContains(page, '<option value="https" data-hint="443" data-only="port">https</option>', html=True)
+        page = self.client.get("/admin/fleet/dhcpscope/add/")
+        self.assertContains(page, 'data-hint="this firewall on the interface"')

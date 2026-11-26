@@ -85,6 +85,15 @@ editor (`admin/fleet/rule/change_form.html`, `rule-editor.css`) is the original.
 OPNsense's sections ("General settings", …) and use OPNsense's field labels (`labels` on the admin).
 New or reworked editors should use `OpnDialogAdmin` rather than Django's default change form.
 
+### Chip lists (`TokenWidget(tags=True)`)
+
+Ordered, free-form lists (alias content, DHCP gateway/DNS/NTP servers, DNS preference lists, DNS base
+defaults) use chips. Suggestions come from the widget's choices; `option_attrs` adds per-option
+`data-hint` (shown beside the suggestion) and `data-only` (with the select's `data-filter-by`, e.g.
+port names only while the alias type is `port`). `forms.server_suggestions` and
+`forms.dns_list_suggestions` build the common sets. The browser submits selected options in DOM
+order, so reordering chips reorders the saved value.
+
 ### Address fields: hints and calculator
 
 `OpnDialogAdmin.address_fields = {field: (kind, context_fields)}` marks address inputs
@@ -128,7 +137,7 @@ Grid layout prefs, the sidebar collapse state, and rule-editor switches are kept
 | --- | --- | --- |
 | `static/app.css` | `shell_head.html` (all pages) | Theme (OPNsense colors, Source Sans 3 fonts in `static/fonts/`) |
 | `static/ui.js` | `shell_head.html` | Sidebar fold/collapse, All/none checkbox toggles |
-| `static/opn-select.js` | `forms.TokenWidget.Media` | Picker widgets; `data-selector` = `picker`/`tags`/`net`/`port`/`manual` |
+| `static/opn-select.js` | `forms.TokenWidget.Media` | Picker widgets; `data-selector` = `picker`/`tags`/`net`/`port`/`manual`. Tags: suggestions on focus (with `data-hint`, filtered by `data-only` against the field named in `data-filter-by`), "Add …" for typed text, click a chip to edit it, drag or Alt+←/→ to reorder (option DOM order = saved order), Text mode |
 | `static/rules.js` | `fleet/rules.html` | Rules grid: columns, filters, inspect/tree, CSV, dialog, bulk |
 | `static/rule-editor.js` / `.css` | `admin/fleet/rule/change_form.html` | Dialog behavior (advanced/help switches, protocol-dependent fields, bulk greyed fields) |
 | `static/logical-interfaces.js` | `fleet/logical_interfaces.html` | Mapping matrix edits, conflict highlighting, fill by name |

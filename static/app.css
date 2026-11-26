@@ -593,3 +593,14 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-order ol { margin: 2px 0 8px; padding-left: 20px; font-size: 13px; }
 .ipam-order ol li small { color: var(--opn-muted); }
 .ipam-order strong { font-size: 12px; color: var(--opn-muted); font-weight: 600; }
+/* Chips: click to edit, drag to reorder; suggestion hints. */
+.opn-token { cursor: grab; }
+.opn-token:focus-visible { outline: 2px solid #66AFE9; outline-offset: 1px; }
+.opn-token-label { cursor: text; }
+.opn-token.is-dragging { opacity: .4; }
+.opn-token.is-editing { padding: 0; background: #fff; border-color: #66AFE9; cursor: auto; }
+.opn-token-editor { height: 22px; min-height: 0; margin: 0; padding: 0 5px; border: 0 !important; outline: 0; box-shadow: none !important; font: 400 13px var(--opn-font); }
+.opn-tokens-menu .opn-picker-option { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.opn-token-hint { color: var(--opn-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opn-tokens-menu .opn-picker-option.is-active .opn-token-hint { color: inherit; }
+.opn-token-new .opn-token-option { font-style: italic; }

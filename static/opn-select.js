@@ -272,11 +272,14 @@
   }
 
   /*
-   * Free-form chips, like OPNsense's tokenizer on alias content: chips with a ×,
-   * typing with suggestions from the list, Enter/comma/paste to add, Backspace to
-   * remove the last chip. Below it, OPNsense's Clear All / Copy / Paste / Text
-   * links. Text swaps the chips for a one-item-per-line box in the same place;
-   * whatever is in that box is used when the form is saved.
+   * Free-form chips, like OPNsense's tokenizer on alias content. The suggestion list opens below the
+   * box on focus and narrows as you type (each entry can carry a hint from data-hint); for free-form
+   * lists its first entry adds exactly what was typed. Enter/comma/paste add, Backspace removes the
+   * last chip, a click on a chip edits it in place, and chips can be dragged (or moved with
+   * Alt+Left/Right) to change the order, which is the order saved. Below it, OPNsense's
+   * Clear All / Copy / Paste / Text links; Text swaps the chips for a one-item-per-line box.
+   * Options with data-only="a,b" are suggested only while the field named by the select's
+   * data-filter-by has one of those values (e.g. port names for port aliases).
    */
   function enhanceTags(select) {
     if (select.dataset.opnPicker) return;
@@ -323,38 +326,58 @@
     for (const label of select.labels) label.addEventListener('click', event => { event.preventDefault(); (text.hidden ? input : text).focus(); });
 
     let active = -1;
-    const values = () => Array.from(select.options).filter(o => o.selected).map(o => o.value);
+    const selected = () => Array.from(select.options).filter(o => o.selected);
+    const values = () => selected().map(o => o.value);
     const labelOf = option => option.textContent.trim();
+    const filterField = select.dataset.filterBy && select.form?.elements[select.dataset.filterBy];
+    const fits = option => !option.dataset.only || !filterField || option.dataset.only.split(',').includes(filterField.value);
 
     function find(value) {
       const options = Array.from(select.options);
       return options.find(o => o.value === value) || options.find(o => o.value.toLowerCase() === value.toLowerCase() || labelOf(o).toLowerCase() === value.toLowerCase());
     }
 
+    // An option for a value: the known one, or a new free-form one (null when not allowed).
+    function optionFor(raw) {
+      const value = raw.trim();
+      if (!value) return null;
+      const option = find(value);
+      if (option) return option;
+      return free ? new Option(value, value) : null;
+    }
+
     // Adds values in order; returns the ones that aren't allowed (only for fixed lists).
     function add(items) {
       const rejected = [];
       for (const raw of items) {
-        const value = raw.trim();
-        if (!value) continue;
-        let option = find(value);
-        if (!option) {
-          if (!free) { rejected.push(value); continue; }
-          option = new Option(value, value);
-        }
+        if (!raw.trim()) continue;
+        const option = optionFor(raw);
+        if (!option) { rejected.push(raw.trim()); continue; }
         option.selected = true;
         select.append(option); // chips follow the order they were added in
       }
       return rejected;
     }
 
+    // Selected options follow the chips' order; unselected ones keep their place before them.
+    function reorder(order) {
+      for (const option of order) select.append(option);
+    }
+
+    let dragged = null;
     function render() {
       chips.replaceChildren();
-      for (const option of Array.from(select.options).filter(o => o.selected)) {
+      for (const option of selected()) {
         const chip = el('li', 'opn-token');
-        chip.append(el('span', 'opn-token-label', labelOf(option)));
+        chip.tabIndex = 0;
+        chip.draggable = !select.disabled;
+        chip.title = 'Click to edit · drag (or Alt+←/→) to reorder';
+        chip.optionRef = option;
+        const label = el('span', 'opn-token-label', labelOf(option));
+        chip.append(label);
         const remove = el('button', 'opn-token-remove', '×');
         remove.type = 'button';
+        remove.tabIndex = -1;
         remove.setAttribute('aria-label', 'Remove ' + labelOf(option));
         remove.addEventListener('click', event => {
           event.stopPropagation();
@@ -362,32 +385,129 @@
           render(); fire(select); input.focus();
         });
         chip.append(remove);
+        label.addEventListener('click', event => { event.stopPropagation(); if (!select.disabled) editChip(chip); });
+        chip.addEventListener('keydown', event => {
+          const index = selected().indexOf(option);
+          if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+            event.preventDefault();
+            const order = selected();
+            const target = index + (event.key === 'ArrowLeft' ? -1 : 1);
+            if (target < 0 || target >= order.length) return;
+            order.splice(target, 0, order.splice(index, 1)[0]);
+            reorder(order); render(); fire(select);
+            chips.children[target]?.focus();
+          } else if (event.key === 'Enter' || event.key === 'F2') { event.preventDefault(); editChip(chip); }
+          else if (event.key === 'Delete' || event.key === 'Backspace') {
+            event.preventDefault();
+            option.selected = false; render(); fire(select);
+            (chips.children[Math.min(index, chips.children.length - 1)] || input).focus();
+          }
+        });
+        chip.addEventListener('dragstart', event => {
+          dragged = chip;
+          chip.classList.add('is-dragging');
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', option.value);
+        });
+        chip.addEventListener('dragend', () => {
+          chip.classList.remove('is-dragging');
+          if (!dragged) return;
+          dragged = null;
+          reorder(Array.from(chips.children, node => node.optionRef));
+          render(); fire(select);
+        });
         chips.append(chip);
       }
       input.placeholder = values().length ? '' : (select.dataset.placeholder || '');
     }
+    chips.addEventListener('dragover', event => {
+      if (!dragged) return;
+      event.preventDefault();
+      const target = event.target.closest('.opn-token');
+      if (!target || target === dragged) return;
+      const box = target.getBoundingClientRect();
+      chips.insertBefore(dragged, event.clientX < box.left + box.width / 2 ? target : target.nextSibling);
+    });
+    chips.addEventListener('drop', event => { if (dragged) event.preventDefault(); });
+
+    // Click on a chip: edit its value in place, as OPNsense's tokenizer does.
+    function editChip(chip) {
+      const option = chip.optionRef;
+      const editor = el('input', 'opn-token-editor');
+      editor.type = 'text';
+      editor.value = option.value;
+      editor.size = Math.max(4, option.value.length + 1);
+      editor.setAttribute('aria-label', 'Edit ' + labelOf(option));
+      chip.replaceChildren(editor);
+      chip.classList.add('is-editing');
+      chip.draggable = false;
+      editor.focus();
+      editor.select();
+      let done = false;
+      function finish(save) {
+        if (done) return;
+        done = true;
+        const value = editor.value.trim();
+        if (save && value && value !== option.value) {
+          const replacement = optionFor(value);
+          if (!replacement) {
+            status.textContent = 'Not in the list: ' + value;
+          } else if (replacement !== option) {
+            const order = selected();
+            order[order.indexOf(option)] = replacement;
+            option.selected = false;
+            replacement.selected = true;
+            reorder(order.filter((item, index) => order.indexOf(item) === index));
+            status.textContent = '';
+          }
+        } else if (save && !value) {
+          option.selected = false;
+        }
+        render(); fire(select);
+        input.focus();
+      }
+      editor.addEventListener('input', () => { editor.size = Math.max(4, editor.value.length + 1); });
+      editor.addEventListener('keydown', event => {
+        event.stopPropagation();
+        if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+        else if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      });
+      editor.addEventListener('blur', () => finish(true));
+    }
 
     function suggestions() {
       const query = input.value.trim().toLowerCase();
-      if (!query) return [];
-      return Array.from(select.options).filter(o => !o.selected && (o.value.toLowerCase().includes(query) || labelOf(o).toLowerCase().includes(query))).slice(0, 50);
+      const matches = Array.from(select.options).filter(o => !o.selected && fits(o) && (!query || o.value.toLowerCase().includes(query) || labelOf(o).toLowerCase().includes(query) || (o.dataset.hint || '').toLowerCase().includes(query)));
+      // Exact and prefix matches first, then the rest in list order.
+      const rank = o => (o.value.toLowerCase() === query ? 0 : o.value.toLowerCase().startsWith(query) ? 1 : 2);
+      return matches.sort((a, b) => rank(a) - rank(b)).slice(0, 50);
     }
 
     function showMenu() {
       const found = suggestions();
+      const typed = input.value.trim();
       menu.replaceChildren();
-      found.forEach((option, index) => {
-        const li = el('li', 'opn-picker-option', labelOf(option));
+      const entries = found.map(option => ({value: option.value, label: labelOf(option), hint: option.dataset.hint || ''}));
+      // Free-form lists can always take exactly what was typed; it comes after the matches, so Enter
+      // picks the best match and the typed text stays one arrow key away.
+      if (free && typed && !found.some(o => o.value.toLowerCase() === typed.toLowerCase()) && !/[\s,]/.test(typed)) {
+        entries.push({value: typed, label: 'Add “' + typed + '”', hint: 'as typed', typed: true});
+      }
+      entries.forEach((entry, index) => {
+        const li = el('li', 'opn-picker-option' + (entry.typed ? ' opn-token-new' : ''));
+        li.append(el('span', 'opn-token-option', entry.label));
+        if (entry.hint) li.append(el('small', 'opn-token-hint', entry.hint));
         li.setAttribute('role', 'option');
         li.id = menu.id + '_' + index;
         li.addEventListener('mousedown', event => event.preventDefault());
-        li.addEventListener('click', () => { add([option.value]); input.value = ''; render(); fire(select); showMenu(); input.focus(); });
+        li.addEventListener('click', () => { add([entry.value]); input.value = ''; render(); fire(select); showMenu(); input.focus(); });
         menu.append(li);
       });
       active = -1;
-      menu.hidden = !found.length;
+      menu.hidden = !entries.length;
       input.setAttribute('aria-expanded', String(!menu.hidden));
       input.removeAttribute('aria-activedescendant');
+      if (entries.length && typed) setActive(0);
     }
 
     function setActive(index) {
@@ -413,17 +533,23 @@
     input.addEventListener('input', () => {
       if (/[,\n]/.test(input.value)) commitTyped(); else showMenu();
     });
+    input.addEventListener('focus', () => { if (!select.disabled) showMenu(); });
     input.addEventListener('keydown', event => {
       const count = menu.querySelectorAll('[role=option]').length;
-      if (event.key === 'ArrowDown' && count) { event.preventDefault(); setActive(Math.min(active + 1, count - 1)); }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (menu.hidden) showMenu(); else if (count) setActive(Math.min(active + 1, count - 1));
+      }
       else if (event.key === 'ArrowUp' && count) { event.preventDefault(); setActive(Math.max(active - 1, 0)); }
       else if (event.key === 'Enter') {
         event.preventDefault();
         if (active >= 0) menu.querySelectorAll('[role=option]')[active].click(); else commitTyped();
-      } else if (event.key === 'Escape') { menu.hidden = true; input.setAttribute('aria-expanded', 'false'); }
+      } else if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); menu.hidden = true; input.setAttribute('aria-expanded', 'false'); }
       else if (event.key === 'Backspace' && !input.value) {
-        const last = Array.from(select.options).filter(o => o.selected).pop();
+        const last = selected().pop();
         if (last) { last.selected = false; render(); fire(select); }
+      } else if (event.key === 'ArrowLeft' && !input.value && chips.lastElementChild) {
+        event.preventDefault(); chips.lastElementChild.focus();
       }
     });
     input.addEventListener('paste', event => {
@@ -434,7 +560,7 @@
       commitTyped();
     });
     input.addEventListener('blur', () => { menu.hidden = true; input.setAttribute('aria-expanded', 'false'); if (input.value.trim()) commitTyped(); });
-    box.addEventListener('click', () => input.focus());
+    box.addEventListener('click', event => { if (event.target === box || event.target === chips) input.focus(); });
 
     // Text mode: the textarea takes the chips' place; switching back (or saving) applies it.
     function applyText() {

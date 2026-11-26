@@ -693,6 +693,9 @@ class StaticReservationAdmin(OpnDialogAdmin):
 
 @admin.register(DnsPreference)
 class DnsPreferenceAdmin(OpnDialogAdmin):
+    from .forms import DnsPreferenceForm
+
+    form = DnsPreferenceForm
     return_view = "ipam_dns"
     list_display = ["name", "dns_servers", "search_domains", "is_default"]
     fieldsets = [
@@ -711,6 +714,9 @@ class DnsBaseValueInline(PlainRelationsMixin, admin.TabularInline):
 
 @admin.register(DnsBase)
 class DnsBaseAdmin(OpnDialogAdmin):
+    from .forms import DnsBaseForm
+
+    form = DnsBaseForm
     return_view = "ipam_dns"
     inlines = [DnsBaseValueInline]
     list_display = ["name", "kind", "default"]

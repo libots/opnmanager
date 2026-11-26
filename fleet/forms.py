@@ -40,7 +40,10 @@ class TokenWidget(forms.SelectMultiple):
     manual entry; manual: a list plus one typed value (gateways).
     """
 
-    def __init__(self, *args, tags=False, selector=None, **kwargs):
+    def __init__(self, *args, tags=False, selector=None, option_attrs=None, **kwargs):
+        # Per-option attributes, e.g. {"https": {"data-hint": "443", "data-only": "port"}}: tags show
+        # data-hint next to a suggestion and offer data-only options only for matching data-filter-by values.
+        self.option_attrs = option_attrs or {}
         attrs = kwargs.pop("attrs", {})
         attrs.update(
             {
@@ -86,8 +89,32 @@ class TokenWidget(forms.SelectMultiple):
                     option["attrs"]["data-manual"] = "true"
         return groups
 
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex, attrs)
+        option["attrs"].update(self.option_attrs.get(str(value), {}))
+        return option
+
     class Media:
         js = ["opn-select.js"]
+
+
+def suggestion_field(label, help_text, choices, option_attrs=None, **attrs):
+    """A comma-separated CharField edited as ordered, free-form chips with suggestions."""
+    widget = TokenWidget(choices=choices, tags=True, option_attrs=option_attrs, attrs=attrs)
+    return forms.CharField(label=label, required=False, help_text=help_text, widget=widget)
+
+
+def server_suggestions(include_router=True):
+    """Choices and hints for DNS/NTP/gateway server lists: the firewall itself and host aliases."""
+    choices, hints = [], {}
+    if include_router:
+        choices.append(("0.0.0.0", "0.0.0.0"))
+        hints["0.0.0.0"] = {"data-hint": "this firewall on the interface"}
+    for alias in Alias.objects.filter(type="host"):
+        choices.append((alias.name, alias.name))
+        members = [m.strip() for m in alias.content.splitlines() if m.strip()]
+        hints[alias.name] = {"data-hint": "alias: " + ", ".join(members[:3]) + (" …" if len(members) > 3 else "")}
+    return choices, hints
 
 
 class SearchSelect(TokenWidget):
@@ -554,7 +581,14 @@ class AliasForm(TargetsFormMixin, forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["content"].widget.choices = [(a.name, a.name) for a in Alias.objects.exclude(pk=self.instance.pk)]
+        widget = self.fields["content"].widget
+        aliases = list(Alias.objects.exclude(pk=self.instance.pk))
+        widget.choices = [(a.name, a.name) for a in aliases] + [(name, name) for name, _ in PORTS]
+        widget.option_attrs = {
+            **{a.name: {"data-hint": f"{a.get_type_display()} alias"} for a in aliases},
+            **{name: {"data-hint": label.rpartition("(")[2].rstrip(")"), "data-only": "port"} for name, label in PORTS},
+        }
+        widget.attrs["data-filter-by"] = "type"
         if self.instance.pk:
             from .alias_patterns import compile_content
 
@@ -665,6 +699,13 @@ class DhcpScopeForm(TargetsFormMixin, forms.ModelForm):
         model = DhcpScope
         exclude = SCOPE_FIELDS
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices, hints = server_suggestions()
+        for name in ("gateway", "dns_servers", "ntp_servers"):
+            field = self.fields[name]
+            field.widget = TokenWidget(choices=choices, tags=True, option_attrs=hints)
+
     def clean(self):
         data = super().clean()
         aliases = set(Alias.objects.filter(type="host").values_list("name", flat=True))
@@ -772,3 +813,61 @@ def rule_form_initial(data, names):
         elif name in data:
             initial[name] = data[name]
     return initial
+
+
+def dns_list_suggestions(kind):
+    """Suggestions for a DNS preference list: router, each base as base / this. / others. / <site>.,
+    and host aliases (servers) — with a hint saying what each one means."""
+    from .models import DnsBase
+
+    wanted = "servers" if kind == "servers" else "domains"
+    choices, hints = [], {}
+
+    def offer(value, hint):
+        choices.append((value, value))
+        hints[value] = {"data-hint": hint}
+
+    if kind == "servers":
+        offer("router", "the firewall on the interface")
+    sites = list(Firewall.objects.all())
+    for base in DnsBase.objects.filter(kind=wanted):
+        offer(f"this.{base.name}", f"this site's {base.name}")
+        offer(f"others.{base.name}", f"every other site's {base.name}")
+        offer(base.name, f"this site's {base.name}, then the others'")
+        for fw in sites:
+            offer(f"{fw.name}.{base.name}", f"{fw.name}'s {base.name}")
+    if kind == "servers":
+        alias_choices, alias_hints = server_suggestions(include_router=False)
+        choices += alias_choices
+        hints.update(alias_hints)
+    return choices, hints
+
+
+class DnsPreferenceForm(forms.ModelForm):
+    class Meta:
+        from .models import DnsPreference
+
+        model = DnsPreference
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, kind in (("dns_servers", "servers"), ("search_domains", "search")):
+            choices, hints = dns_list_suggestions(kind)
+            self.fields[name].widget = TokenWidget(choices=choices, tags=True, option_attrs=hints)
+
+
+class DnsBaseForm(forms.ModelForm):
+    class Meta:
+        from .models import DnsBase
+
+        model = DnsBase
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices, hints = server_suggestions(include_router=False)
+        for value in hints:
+            hints[value]["data-only"] = "servers"
+        widget = TokenWidget(choices=choices, tags=True, option_attrs=hints, attrs={"data-filter-by": "kind"})
+        self.fields["default"].widget = widget
