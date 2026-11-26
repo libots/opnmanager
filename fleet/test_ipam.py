@@ -195,7 +195,7 @@ class AddressPlanTests(TestCase):
         page = self.client.get("/ipam/ranges/")
         self.assertContains(page, "10.21.10.10 – 10.21.10.29")
         self.assertContains(page, "1 of 20 reserved")
-        self.assertContains(page, "Overlaps APs.")
+        self.assertContains(page, "Overlaps range APs (10.21.10.25 – 10.21.10.49).")
 
     def test_reservation_must_be_inside_its_subnet(self):
         reservation = StaticReservation(
@@ -558,3 +558,95 @@ class FirewallOrderTests(TestCase):
         self.assertEqual([fw.name for fw in Firewall.objects.all()], ["Home", "VH", "Afton"])
         self.client.force_login(get_user_model().objects.create_user("viewer"))
         self.assertEqual(self.client.post("/firewalls/order/", {"order": [afton.pk, home.pk, vh.pk]}).status_code, 403)
+
+
+class OverlapTests(TestCase):
+    def setUp(self):
+        from .models import DeviceInventory
+
+        self.home = Firewall.objects.create(
+            name="Home", base_url="https://home.test", credential_prefix="HOME", ipv4_site_prefix="10.20.0.0/16"
+        )
+        self.vh = Firewall.objects.create(
+            name="VH", base_url="https://vh.test", credential_prefix="VH", ipv4_site_prefix="10.21.0.0/16"
+        )
+        self.vl10 = LogicalInterface.objects.create(name="VL10")
+        self.vl11 = LogicalInterface.objects.create(name="VL11")
+        InterfaceAddressing.objects.create(logical_interface=self.vl10, ipv4_address="10.x.8.1/21")
+        InterfaceAddressing.objects.create(logical_interface=self.vl11, ipv4_address="10.x.12.1/22")  # inside VL10
+        InterfaceMapping.objects.create(firewall=self.home, logical_interface=self.vl10, device_interface="opt1")
+        DeviceInventory.objects.create(
+            firewall=self.home,
+            data={"interfaces": [{"name": "opt1", "ipv4": "10.20.8.1/21"}, {"name": "opt9", "ipv4": "10.20.9.1/24"}]},
+        )
+        self.switches = AddressRange.objects.create(
+            logical_interface=self.vl10, name="Switches", addresses="10.x.10.10-29"
+        )
+        self.scope = DhcpScope.objects.create(
+            name="VL10 clients", logical_interface=self.vl10, dynamic_range="10.x.10.20-99"
+        )
+        StaticReservation.objects.create(
+            firewall=self.home, logical_interface=self.vl10, ip_address="10.20.10.50", mac_address="aa:bb:cc:00:00:01"
+        )
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_report_finds_every_kind_of_overlap_once(self):
+        from .ipam_checks import Overlaps
+
+        self.vh.ipv4_site_prefix = "10.20.128.0/17"
+        self.vh.save()
+        report = Overlaps().report()
+        summary = "\n".join(report["summary"])
+        self.assertIn("Site prefix 10.20.0.0/16 of Home overlaps VH's 10.20.128.0/17.", summary)
+        self.assertIn("Home: VL10 10.20.8.0/21 overlaps VL11 (10.20.12.0/22).", summary)
+        self.assertNotIn("VL11 10.20.12.0/22 overlaps VL10", summary)  # one line per pair
+        self.assertIn("Home: VL10 10.20.8.0/21 overlaps 10.20.9.1/24 in use on opt9.", summary)
+        self.assertIn(
+            "range Switches (10.20.10.10 – 10.20.10.29) overlaps the dynamic DHCP range of VL10 clients", summary
+        )
+        self.assertIn("contains reservation 10.20.10.50", summary)
+        self.assertIn("Home: reservation 10.20.10.50 is inside the dynamic DHCP range of VL10 clients", summary)
+        self.assertEqual(len(report["summary"]), len(set(report["summary"])))
+
+    def test_pages_show_the_warnings(self):
+        plan = self.client.get("/ipam/")
+        self.assertContains(plan, "overlap warning")
+        self.assertContains(plan, 'class="ipam-warning">10.20.8.0/21 overlaps VL11 (10.20.12.0/22).</small>')
+        self.assertNotContains(plan, "in use on opt1")  # VL10 has a plan: compared by plan, not twice
+        self.assertContains(self.client.get("/ipam/ranges/"), "Overlaps the dynamic DHCP range of VL10 clients")
+        self.assertContains(self.client.get("/ipam/dhcp/"), "Dynamic range contains reservation 10.20.10.50")
+        self.assertContains(
+            self.client.get(f"/ipam/reservations/?firewall={self.home.pk}"), "Is inside the dynamic DHCP range"
+        )
+
+    def test_live_hints_warn_and_leave_the_edited_object_out(self):
+        def hint(**params):
+            return self.client.get("/ipam/subnet-info/", params).json()["warnings"]
+
+        self.assertEqual(
+            hint(kind="prefix", value="10.21.128.0/17"), ["This prefix overlaps VH's site prefix 10.21.0.0/16."]
+        )
+        self.assertEqual(hint(kind="prefix", value="10.21.0.0/16", self=self.vh.pk), [])
+        self.assertIn(
+            "Home: overlaps VL10 (10.20.8.0/21).", hint(kind="template", value="10.x.10.1/24", interface=self.vl11.pk)
+        )
+        warnings = hint(kind="range", value="10.x.10.25-30", interface=self.vl10.pk, self=self.switches.pk)
+        self.assertEqual(
+            warnings,
+            [
+                "Home: overlaps the dynamic DHCP range of VL10 clients (10.20.10.20 – 10.20.10.99).",
+                "VH: overlaps the dynamic DHCP range of VL10 clients (10.21.10.20 – 10.21.10.99).",
+            ],
+        )
+        warnings = hint(kind="pool", value="10.x.10.40-60", interface=self.vl10.pk, self=self.scope.pk)
+        self.assertIn("Home: contains reservation 10.20.10.50.", warnings)
+        warnings = hint(kind="pool", value="10.x.10.25-60", interface=self.vl10.pk, self=self.scope.pk)
+        self.assertIn(
+            "Home: overlaps range Switches (10.20.10.10 – 10.20.10.29); contains reservation 10.20.10.50.", warnings
+        )
+        self.assertEqual(
+            hint(kind="address", value="10.20.10.30", interface=self.vl10.pk, firewall=self.home.pk),
+            ["Home: is inside the dynamic DHCP range of VL10 clients (10.20.10.20 – 10.20.10.99)."],
+        )
+        page = self.client.get(f"/admin/fleet/addressrange/{self.switches.pk}/change/")
+        self.assertContains(page, f'data-hint-self="{self.switches.pk}"')

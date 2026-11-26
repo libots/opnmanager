@@ -14,7 +14,7 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | `/firewalls/<pk>/import/` | `views.import_snapshot` | POST JSON file upload (≤5 MiB) |
 | `/firewalls/<pk>/plan/` | `views.download_plan` | `plan_for` as JSON download |
 | `/firewalls/order/` | `views.reorder_firewalls` | POST `order` = every firewall id in the new order (drag on the overview); 409 if the list changed |
-| `/ipam/subnet-info/` | `ipam_views.subnet_info` | JSON hint lines for an address field (`kind`, `value`, optional `interface`, `firewall`) |
+| `/ipam/subnet-info/` | `ipam_views.subnet_info` | JSON hint `lines` and overlap `warnings` for an address field (`kind`, `value`, optional `interface`, `firewall`, `self`) |
 | `/firewalls/<pk>/deploy/` | `views.deploy_rules` | Combined review (GET) / enqueue job (POST) |
 | `/fleet/deployment/deploy/` | `views.deploy_all` | Every enabled firewall's combined review; POST enqueues one `rules.deploy` job per checked firewall (fields prefixed `fw<pk>-`) |
 | `/firewalls/<pk>/sync/` | `views.sync_definitions` | Definitions-only review / enqueue |

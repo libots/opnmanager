@@ -106,3 +106,4 @@ body.opn-modal.opn-form-page #content-main > form { border: 0; }
 .subnet-calc [hidden] { display: none !important; }
 /* Django admin's clearing <br> after the form adds a line of height that would make a fitted dialog scroll. */
 body.opn-modal #content > br.clear { display: none; }
+.subnet-hint-warning { color: var(--opn-warning); }

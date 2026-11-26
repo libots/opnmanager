@@ -568,3 +568,12 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-matrix .ipam-name small { overflow-wrap: anywhere; }
 .ipam-suggested code { font-size: 12px; }
 .ipam-matrix .ipam-name .ipam-add-plan { display: inline-flex; min-height: 26px; margin: 6px 0 0; padding: 2px 10px; font-size: 13px; line-height: 20px; }
+/* Overlap warnings (fleet/ipam_checks.py): amber, never blocking. */
+.ipam-warning { display: block; color: var(--opn-warning); font-size: 12px; overflow-wrap: anywhere; }
+.ipam-matrix small.ipam-warning { color: var(--opn-warning); }
+.ipam-warning::before { content: "⚠ "; }
+.ipam-overlaps { padding: 10px 14px; border-left: 3px solid #F0AD4E; }
+.ipam-overlaps[hidden] { display: none; }
+.ipam-overlaps summary { cursor: pointer; font-weight: 600; }
+.ipam-overlaps ul { margin: 8px 0 4px; padding-left: 20px; font-size: 14px; }
+.ipam-overlaps .help { margin: 4px 0 0; }

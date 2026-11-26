@@ -154,6 +154,15 @@ class OpnDialogAdmin(PlainRelationsMixin, admin.ModelAdmin):
     def get_inline_instances(self, request, obj=None):
         return [] if self.section(request) else super().get_inline_instances(request, obj)
 
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        form = super().get_form(request, obj, change, **kwargs)
+        # Overlap warnings in the hints leave the object being edited out of the comparison.
+        if obj is not None and obj.pk:
+            for name in self.address_fields:
+                if name in form.base_fields:
+                    form.base_fields[name].widget.attrs["data-hint-self"] = str(obj.pk)
+        return form
+
     def framed(self, request, response):
         # Only same-origin pages may frame an editor opened as a dialog; everything else stays DENY.
         if self.is_modal(request):
@@ -616,7 +625,10 @@ class VirtualIPAdmin(OpnDialogAdmin):
 @admin.register(InterfaceAddressing)
 class InterfaceAddressingAdmin(OpnDialogAdmin):
     return_view = "ipam_plan"
-    address_fields = {"ipv4_address": ("template", ()), "ipv6_address": ("template", ())}
+    address_fields = {
+        "ipv4_address": ("template", ("logical_interface",)),
+        "ipv6_address": ("template", ("logical_interface",)),
+    }
 
     def get_form(self, request, obj=None, change=False, **kwargs):
         form = super().get_form(request, obj, change, **kwargs)
@@ -649,7 +661,7 @@ class DhcpOptionInline(admin.TabularInline):
 @admin.register(DhcpScope)
 class DhcpScopeAdmin(OpnDialogAdmin):
     return_view = "ipam_dhcp"
-    address_fields = {"dynamic_range": ("range", ("logical_interface",))}
+    address_fields = {"dynamic_range": ("pool", ("logical_interface",))}
     form = DhcpScopeForm
     inlines = [DhcpOptionInline]
     list_display = ["name", "logical_interface", "dynamic_range", "enabled", "scope"]

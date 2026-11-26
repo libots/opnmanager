@@ -65,6 +65,7 @@ fleet/               The only app. Everything below is in here.
   mappings.py        Auto-map logical interfaces from unique device labels
   system_management.py Interface inventory, firmware, VIP read/plan and worker-side apply/delete
   ipam.py            Address templates (10.x.40.1/21), ranges, DHCP scope resolution/rendering (pure)
+  ipam_checks.py     Overlap warnings across the address plan (site prefixes, subnets, ranges, pools, reservations)
   dhcp.py            Dnsmasq/Kea leases & reservations: read, reservation plan, sync, import
   ipam_views.py      Addressing pages: address plan, DHCP scopes, ranges, reservations & leases
   views.py           Dashboard, firewall page, pull/import, rules grid, deploy review, jobs

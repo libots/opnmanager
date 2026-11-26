@@ -212,6 +212,7 @@
     let timer = null, serial = 0;
     async function refresh() {
       const query = new URLSearchParams({kind: input.dataset.subnetHint, value: input.value});
+      if (input.dataset.hintSelf) query.set('self', input.dataset.hintSelf);
       for (const name of context) if (form.elements[name]) query.set(param[name] || name, form.elements[name].value);
       const mine = ++serial;
       if (!input.value.trim()) { hint.replaceChildren(); return; }
@@ -227,6 +228,9 @@
           if (line.label) row.append(Object.assign(document.createElement('strong'), {textContent: line.label + ': '}));
           row.append(document.createTextNode(line.text));
           hint.append(row);
+        }
+        for (const warning of data.warnings || []) {
+          hint.append(Object.assign(document.createElement('div'), {className: 'subnet-hint-warning', textContent: '⚠ ' + warning}));
         }
       } catch (error) {
         if (mine === serial) hint.replaceChildren();

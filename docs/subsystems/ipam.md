@@ -28,6 +28,20 @@ Templates `templates/fleet/ipam_*.html`. Tests: `fleet/test_ipam.py`.
 Address fields in the editors show live hints from `ipam.hint_lines` (`describe_network` for a
 subnet's usable range) via `/ipam/subnet-info/`, plus a client-side subnet calculator; see ui.md.
 
+## Overlap warnings (`ipam_checks.py`)
+
+`Overlaps()` resolves the plan once for the enabled firewalls and reports, as warnings only:
+site prefixes overlapping between firewalls; planned interface subnets overlapping each other at a
+site, or overlapping an address observed on an interface *without* a plan (interfaces with a plan
+are compared by their planned subnet and their own "differs" state, so nothing is reported twice);
+named ranges overlapping each other or a DHCP dynamic range on the same interface; and
+reservations inside a dynamic range. `report()` gives `by_subject` (short messages keyed
+`("site", fw)`, `("subnet", fw, li)`, `("range", fw, range)`, `("pool", fw, scope)`,
+`("reservation", pk)`) for the page cells and `summary` (one full line per overlapping pair) for the
+Address Plan panel. The editors' hints call the same `check_*` methods via `/ipam/subnet-info/`,
+leaving out the object being edited (`self`, set by `OpnDialogAdmin.get_form` as `data-hint-self`);
+the DHCP dynamic range uses hint kind `pool`.
+
 ## DHCP scopes
 
 `DhcpScope` (a `ScopedPolicy`) + `DhcpOption` rows. `scope_settings()` resolves a scope at one site

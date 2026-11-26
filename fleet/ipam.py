@@ -580,7 +580,7 @@ def describe_network(network, short=False):
 
 
 def hint_lines(kind, value, firewalls=(), subnets=None, site_of=None):
-    """Hint lines for a field value. kind: prefix, interface, template, range or address.
+    """Hint lines for a field value. kind: prefix, interface, template, range, pool or address.
 
     firewalls / subnets / site_of give the per-site context: subnets maps a firewall pk to that
     site's interface subnet (for ranges and addresses) and site_of(firewall, family) its prefix.
@@ -618,7 +618,7 @@ def hint_lines(kind, value, firewalls=(), subnets=None, site_of=None):
             except TemplateError as exc:
                 lines.append({"label": fw.name, "text": str(exc), "error": True})
         return lines
-    if kind == "range":
+    if kind in ("range", "pool"):
         check_range(value)
     for fw in firewalls:
         subnet = (subnets or {}).get(fw.pk)
@@ -628,7 +628,7 @@ def hint_lines(kind, value, firewalls=(), subnets=None, site_of=None):
             lines.append({"label": fw.name, "text": subnet, "error": True})
             continue
         try:
-            if kind == "range":
+            if kind in ("range", "pool"):
                 first, last = resolve_range(value, subnet, site_of(fw, 4))
                 lines.append(
                     {"label": fw.name, "text": f"{first} – {last} ({_count(range_size(first, last))} addresses)"}

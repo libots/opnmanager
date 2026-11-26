@@ -25,7 +25,7 @@ developer docs; consult it for intended user-facing behavior.
 | Rule import / mappings | `fleet/import_rules.py`, `mappings.py`, `interface_views.py` → `docs/subsystems/import-and-mappings.md` |
 | UI | `config/urls.py`, `fleet/views.py`, `management_views.py`, `admin.py` (editors), `forms.py`, `templates/`, `static/` → `docs/subsystems/ui.md` |
 | Firmware / VIPs / DNS | `fleet/system_management.py`, `management_views.py` → `docs/subsystems/system-management.md` |
-| Addressing (IPAM / DHCP) | `fleet/ipam.py` (pure), `dhcp.py`, `ipam_views.py` → `docs/subsystems/ipam.md` |
+| Addressing (IPAM / DHCP) | `fleet/ipam.py` (pure), `ipam_checks.py`, `dhcp.py`, `ipam_views.py` → `docs/subsystems/ipam.md` |
 | Settings / auth / secrets | `config/settings.py`, `fleet/auth.py`, `credentials.py`, `oidc_storage.py` → `docs/subsystems/auth-and-secrets.md` |
 | Tests | `fleet/test_*.py`, `fleet/tests.py` → `docs/testing.md` |
 

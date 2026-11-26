@@ -29,6 +29,7 @@ from .ipam import (
     site_prefix,
     suggest_template,
 )
+from .ipam_checks import Overlaps
 from .jobs import enqueue
 from .models import (
     AddressRange,
@@ -101,21 +102,27 @@ def _suggestions(logical, firewalls):
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def subnet_info(request):
-    """Live hint under an address field: usable range, size, and what a template means at each site."""
+    """Live hint under an address field: usable range, size, what a template means at each site,
+    and overlap warnings (the edited object, `self`, is left out of the comparison)."""
     from django.http import JsonResponse
 
-    from .ipam import hint_lines
+    from .ipam import hint_lines, parse_site_prefix, resolve_interface
 
     kind = request.GET.get("kind", "")
-    if kind not in ("prefix", "interface", "template", "range", "address"):
+    if kind not in ("prefix", "interface", "template", "range", "pool", "address"):
         return JsonResponse({"error": "Unknown field kind."}, status=400)
     value = request.GET.get("value", "")[:200]
-    firewalls = list(Firewall.objects.filter(enabled=True).prefetch_related("interface_mappings"))
+    own = request.GET.get("self", "")
+    own = int(own) if own.isdigit() else None
+    firewalls = list(
+        Firewall.objects.filter(enabled=True).select_related("inventory").prefetch_related("interface_mappings")
+    )
     if request.GET.get("firewall", "").isdigit():
         firewalls = [fw for fw in firewalls if str(fw.pk) == request.GET["firewall"]]
     subnets = {}
     interface = request.GET.get("interface", "")
-    if kind in ("range", "address") and interface.isdigit():
+    interface = int(interface) if interface.isdigit() else None
+    if kind in ("range", "pool", "address") and interface:
         addressing = InterfaceAddressing.objects.filter(logical_interface_id=interface).first()
         for fw in firewalls:
             planned = interface_plan(addressing, fw)[4] if addressing else None
@@ -133,9 +140,44 @@ def subnet_info(request):
         lines = hint_lines(kind, value, firewalls, subnets, site_of)
     except TemplateError as exc:
         return JsonResponse({"lines": [], "error": str(exc)})
-    if kind in ("range", "address") and not interface.isdigit():
+    if kind in ("range", "pool", "address") and not interface:
         return JsonResponse({"lines": [], "error": "Choose the logical interface to see this at each site."})
-    return JsonResponse({"lines": lines})
+    warnings = []
+    if value.strip() and kind != "interface":
+        checks = Overlaps(firewalls if kind != "prefix" else None)
+        if kind == "prefix":
+            warnings = [
+                f"This prefix {problem}." for problem in checks.check_site_prefix(parse_site_prefix(value), own)
+            ]
+        for fw in firewalls if kind != "prefix" else []:
+            try:
+                if kind == "template":
+                    site = site_prefix(fw, 4 if ":" not in value else 6)
+                    if site is None:
+                        continue
+                    network = resolve_interface(value, site).network
+                    problems = checks.check_subnet(fw, interface, network)
+                elif kind in ("range", "pool"):
+                    subnet = subnets.get(fw.pk)
+                    if subnet is None or isinstance(subnet, str):
+                        continue
+                    first, last = resolve_range(value, subnet, site_prefix(fw, 4))
+                    problems = checks.check_range(
+                        fw,
+                        interface,
+                        first,
+                        last,
+                        exclude_range=own if kind == "range" else None,
+                        exclude_pool=own if kind == "pool" else None,
+                        label=kind,
+                    )
+                else:
+                    problems = checks.check_reservation(fw, interface, ipaddress.ip_address(value.strip()))
+            except (TemplateError, ValueError):
+                continue
+            if problems:
+                warnings.append(f"{fw.name}: {'; '.join(problems)}.")
+    return JsonResponse({"lines": lines, "warnings": warnings})
 
 
 @login_required
@@ -143,9 +185,10 @@ def subnet_info(request):
 def address_plan(request):
     firewalls = _firewalls(request)
     plans = site_plans(firewalls)
+    checks = Overlaps()
     sites = []
     for fw in firewalls:
-        site = {"firewall": fw, "prefixes": []}
+        site = {"firewall": fw, "prefixes": [], "warnings": checks.for_subject("site", fw.pk)}
         for family in (4, 6):
             try:
                 prefix = site_prefix(fw, family)
@@ -174,7 +217,15 @@ def address_plan(request):
                         "observed": ", ".join(str(a) for a in observed if a.version == family),
                     }
                 )
-            cells.append({"firewall": fw, "device": device, "families": families, "inventory": bool(observed_row)})
+            cells.append(
+                {
+                    "firewall": fw,
+                    "device": device,
+                    "families": families,
+                    "inventory": bool(observed_row),
+                    "warnings": checks.for_subject("subnet", fw.pk, logical.pk),
+                }
+            )
         row = {"addressing": plan, "logical": logical, "cells": cells}
         if plan is None:
             suggested = _suggestions(logical, firewalls)
@@ -195,6 +246,7 @@ def address_plan(request):
             "rows": rows,
             "planned_count": sum(1 for row in rows if row["addressing"]),
             "unplanned_count": sum(1 for row in rows if not row["addressing"]),
+            "overlaps": checks.report()["summary"],
             "firewalls": firewalls,
             "all_firewalls": Firewall.objects.all(),
         },
@@ -242,9 +294,11 @@ def dhcp_scopes(request):
     )
     rows = []
     claimed = {}
+    checks = Overlaps()
     for scope in scopes:
         cells = scope_cells(scope, firewalls, plans, aliases)
         for cell in cells:
+            cell["warnings"] = checks.for_subject("pool", cell["firewall"].pk, scope.pk)
             if cell.get("applies") and scope.enabled:
                 claimed.setdefault((cell["firewall"].pk, scope.logical_interface_id), []).append(scope.name)
         rows.append({"scope": scope, "cells": cells})
@@ -289,24 +343,6 @@ def _range_cells(ranges, firewalls, plans, reservations):
     return rows
 
 
-def _overlaps(rows):
-    """Warn when two named ranges of one interface overlap at a firewall."""
-    by_interface = {}
-    for row in rows:
-        by_interface.setdefault(row["range"].logical_interface_id, []).append(row)
-    for group in by_interface.values():
-        for i, row in enumerate(group):
-            for other in group[i + 1 :]:
-                for cell, other_cell in zip(row["cells"], other["cells"], strict=True):
-                    if "first" in cell and "first" in other_cell:
-                        if int(cell["first"]) <= int(other_cell["last"]) and int(other_cell["first"]) <= int(
-                            cell["last"]
-                        ):
-                            message = f"Overlaps {other['range'].name}."
-                            cell.setdefault("warnings", []).append(message)
-                            other_cell.setdefault("warnings", []).append(f"Overlaps {row['range'].name}.")
-
-
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def address_ranges(request):
@@ -316,7 +352,10 @@ def address_ranges(request):
     for reservation in StaticReservation.objects.all():
         reservations.setdefault(reservation.firewall_id, []).append(reservation)
     rows = _range_cells(AddressRange.objects.select_related("logical_interface"), firewalls, plans, reservations)
-    _overlaps(rows)
+    checks = Overlaps()
+    for row in rows:
+        for cell in row["cells"]:
+            cell["warnings"] = checks.for_subject("range", cell["firewall"].pk, row["range"].pk)
     return render(
         request,
         "fleet/ipam_ranges.html",
@@ -373,7 +412,8 @@ def reservations(request):
     device_to_logical = {
         m.device_interface: logicals[m.logical_interface_id] for m in selected.interface_mappings.all()
     }
-    managed = list(selected.reservations.select_related("logical_interface"))
+    managed = list(selected.reservations.select_related("logical_interface", "firewall"))
+    checks = Overlaps()
     taken = {r.ip_address for r in managed}
     observed = _inventory(selected).get("dhcp") or {}
     taken |= {r.get("ip", "") for r in observed.get("reservations", [])}
@@ -398,6 +438,7 @@ def reservations(request):
             "",
         )
         reservation.device_state = dhcp.reservation_state(reservation, observed)
+        reservation.warnings = checks.for_subject("reservation", reservation.pk)
         groups.setdefault(reservation.logical_interface, []).append(reservation)
     by_mac = {(r.mac_address, r.logical_interface_id) for r in managed}
     leases = []
