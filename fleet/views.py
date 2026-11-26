@@ -662,6 +662,8 @@ def job_detail(request, pk):
     job = get_object_or_404(DeviceJob.objects.select_related("firewall"), pk=pk)
     if job.kind in (DeviceJob.VIP_APPLY, DeviceJob.VIP_DELETE):
         back = ("Return to Virtual IPs", reverse("virtual_ips"))
+    elif job.kind == DeviceJob.DHCP_SYNC:
+        back = ("Return to reservations", reverse("ipam_reservations") + f"?firewall={job.firewall.pk}")
     elif job.kind == DeviceJob.RULES_DEPLOY or job.params.get("rule_id"):
         back = ("Return to rule deployment", reverse("deploy_rules", args=[job.firewall.pk]))
     else:

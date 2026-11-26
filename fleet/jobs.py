@@ -1,4 +1,4 @@
-"""Background execution of device writes (rule deploys, definition syncs, virtual IP changes).
+"""Background execution of device writes (rule deploys, definition syncs, VIP and DHCP reservation changes).
 
 Web requests only validate input and enqueue a DeviceJob; the `run_jobs`
 worker process claims jobs one at a time and runs them. A deploy therefore
@@ -99,11 +99,26 @@ def _delete_vip(job, client):
     return "Virtual IP deleted and absence verified. Retarget or remove any desired definition separately."
 
 
+def _sync_dhcp(job, client):
+    from .dhcp import execute_reservation_sync
+
+    written, removed = execute_reservation_sync(
+        job.firewall,
+        job.params.get("approval_sha256"),
+        job.params.get("selected", []),
+        job.params.get("remove", []),
+        client,
+        job.actor,
+    )
+    return f"Wrote and verified {written} reservations and removed {removed}; the DHCP service was reloaded."
+
+
 HANDLERS = {
     DeviceJob.RULES_DEPLOY: _deploy_rules,
     DeviceJob.DEFINITIONS_SYNC: _sync_definitions,
     DeviceJob.VIP_APPLY: _apply_vip,
     DeviceJob.VIP_DELETE: _delete_vip,
+    DeviceJob.DHCP_SYNC: _sync_dhcp,
 }
 
 

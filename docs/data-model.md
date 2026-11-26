@@ -22,6 +22,11 @@ ScopedPolicy (abstract): scope ∈ {all, selected} + M2M firewalls + M2M firewal
 Rule M2M: interfaces, interface_groups, origin_interfaces, origin_interface_groups, categories
 RuleOrigin(firewall, rule, remote_uuid)          unique (firewall, remote_uuid) — imported-from link
 VirtualIPOrigin(firewall, virtual_ip, remote_uuid) unique (firewall, remote_uuid)
+Firewall: ipv4_site_prefix, ipv6_site_prefix, dhcp_backend (dnsmasq|kea)
+InterfaceAddressing 1─1 LogicalInterface (templates ipv4_address / ipv6_address)
+AddressRange *─1 LogicalInterface (name, "10.x.10.10-29")
+DhcpScope (ScopedPolicy) *─1 LogicalInterface; DhcpOption *─1 DhcpScope (code, kind, value)
+StaticReservation(firewall, logical_interface PROTECT, ip, mac, hostname, uid, remote_uuid)
 AuditEvent(actor, action, detail)                append-only log, read-only in admin
 LocalAccountState(user 1─1, must_change_password)
 ```
@@ -101,7 +106,7 @@ Snapshots are immutable observations; only the newest one is used for planning.
 Merged dict, each key written by a different feature (always `{**data, key: ...}`):
 `interfaces` (overview rows; `system_management.refresh_inventory`), `protocols` (device
 protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware` (`system_management.firmware_summary`: version, core/plugin updates, installed plugins), `vips`
-(passwords stripped), `rule_rollback` (`savepoint` | `config_history`; set by deployment).
+(passwords stripped), `dhcp` (`dhcp.refresh_dhcp`: backend, leases, reservations, Kea subnets, read_at), `rule_rollback` (`savepoint` | `config_history`; set by deployment).
 
 ### `DeviceJob.params`
 
@@ -109,17 +114,18 @@ protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware` 
   `approval_sha256`, `selected_rules` (rule UUIDs and retire option ids `disable:<uuid>` /
   `delete:<uuid>`), `remove_definitions` (device UUIDs), `accept_warnings`, `allow_unprotected`.
 - `definitions.sync`: `approval_sha256`, `rule_id` (optional), `remove_definitions`.
+- `dhcp.reservations.sync`: `approval_sha256`, `selected` (reservation uids), `remove` (device UUIDs).
 - `vip.apply`: `vip_id`, `digest` (from the signed review). `vip.delete`: `uuid` (device VIP), `digest`.
 - Old jobs may use `remove_aliases`; `jobs._removals()` reads both.
 
 ## Custom permissions
 
-On `Firewall.Meta`: `refresh_firewall`, `manage_credentials`, `sync_definitions`, `deploy_rules`.
+On `Firewall.Meta`: `refresh_firewall`, `manage_credentials`, `sync_definitions`, `deploy_rules`, `sync_dhcp`.
 On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firewall`.
 
 ## Migrations
 
-`fleet/migrations/0001`–`0019`. Notable data migrations:
+`fleet/migrations/0001`–`0021`. Notable data migrations:
 - `0004` copies `Rule.interface` into `Rule.interfaces`.
 - `0013` removes stored authentication-server models (never deployable).
 - `0015` converts stored ICMPv6 type numbers to OPNsense option names.
@@ -127,6 +133,9 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
   unique. Use this three-step pattern for any new unique-with-default column.
 - `0018` copies any remaining `Rule.interface` values into `Rule.interfaces`, then drops the column.
 - `0019` adds the `vip.apply` / `vip.delete` job kinds (choices only).
+- `0021` adds IPAM: firewall site prefixes and DHCP backend, `InterfaceAddressing`, `AddressRange`,
+  `DhcpScope`/`DhcpOption`, `StaticReservation`, the `sync_dhcp` permission and the
+  `dhcp.reservations.sync` job kind.
 
 `fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 (and from 0017) to latest with
 data; keep it passing. CI runs `makemigrations --check --dry-run`.

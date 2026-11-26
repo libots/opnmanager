@@ -2,7 +2,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from fleet import interface_views, views
+from fleet import interface_views, ipam_views, views
 from fleet import management_views as management
 from fleet.accounts import InitialPasswordChangeView, LocalLoginView
 
@@ -25,6 +25,13 @@ urlpatterns = [
     ),
     path("system/firmware/action/", management.firmware_task, name="firmware_task"),
     path("settings/authentication/", management.oidc_options, name="oidc_options"),
+    path("ipam/", ipam_views.address_plan, name="ipam_plan"),
+    path("ipam/dhcp/", ipam_views.dhcp_scopes, name="ipam_dhcp"),
+    path("ipam/ranges/", ipam_views.address_ranges, name="ipam_ranges"),
+    path("ipam/reservations/", ipam_views.reservations, name="ipam_reservations"),
+    path("ipam/reservations/<int:pk>/read/", ipam_views.read_dhcp, name="ipam_read_dhcp"),
+    path("ipam/reservations/<int:pk>/import/", ipam_views.import_reservations, name="ipam_import"),
+    path("ipam/reservations/<int:pk>/sync/", ipam_views.sync_reservations, name="ipam_sync"),
     path("", views.dashboard, name="dashboard"),
     path("firewalls/<int:pk>/", views.firewall_detail, name="firewall"),
     path("firewalls/<int:pk>/import/", views.import_snapshot, name="import_snapshot"),

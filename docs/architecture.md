@@ -64,6 +64,9 @@ fleet/               The only app. Everything below is in here.
   import_rules.py    Adopt snapshot rules into manager policy (atomic, all-or-nothing)
   mappings.py        Auto-map logical interfaces from unique device labels
   system_management.py Interface inventory, firmware, VIP read/plan and worker-side apply/delete
+  ipam.py            Address templates (10.x.40.1/21), ranges, DHCP scope resolution/rendering (pure)
+  dhcp.py            Dnsmasq/Kea leases & reservations: read, reservation plan, sync, import
+  ipam_views.py      Addressing pages: address plan, DHCP scopes, ranges, reservations & leases
   views.py           Dashboard, firewall page, pull/import, rules grid, deploy review, jobs
   management_views.py Interfaces overview, firmware, VIPs, DNS, OIDC options, deployment overview
   interface_views.py Fleet: Logical Interfaces matrix and mapping saves
@@ -76,7 +79,7 @@ fleet/               The only app. Everything below is in here.
   retention.py       Snapshot pruning (post_save signal wired in apps.py)
   templatetags/icons.py  {% icon "name" %} inlines static/icons/<name>.svg
   management/commands/   bootstrap_admin, run_jobs, plan, sync_aliases, seed_demo
-  migrations/        0001–0019
+  migrations/        0001–0021
   test_*.py, tests.py    Tests (one module per feature area; see testing.md)
   testing.py         Test runner (temporary DATA_DIR) and make_rule() helper; not a test module
 templates/           base.html/sidebar.html shell; fleet/*; admin overrides; registration/*
@@ -108,3 +111,5 @@ examples/snapshot.json  Normalized snapshot import format
 | Map interfaces | `interface_views.save_mappings` | atomic bulk mapping replace |
 | VIP apply/delete | `management_views.review_vip` / `delete_vip` (signed review → job) | `system_management.execute_vip_apply` / `execute_vip_delete` |
 | Firmware | `management_views.firmware_task` | `system_management.firmware_action` |
+| Deploy all firewalls | `views.deploy_all` | one `combined_plan` + job per checked firewall |
+| DHCP reservations | `ipam_views.read_dhcp` / `sync_reservations` (job) | `dhcp.refresh_dhcp`, `dhcp.execute_reservation_sync` |

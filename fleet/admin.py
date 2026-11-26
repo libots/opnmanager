@@ -10,19 +10,24 @@ from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import DNSProfileForm, VirtualIPForm
+from .forms import DhcpScopeForm, DNSProfileForm, VirtualIPForm
 from .models import (
+    AddressRange,
     Alias,
     AuditEvent,
     Category,
+    DhcpOption,
+    DhcpScope,
     DNSProfile,
     Firewall,
     FirewallGroup,
+    InterfaceAddressing,
     InterfaceGroup,
     InterfaceMapping,
     LogicalInterface,
     Rule,
     Snapshot,
+    StaticReservation,
     VirtualIP,
 )
 
@@ -96,6 +101,12 @@ class FirewallAdmin(admin.ModelAdmin):
     list_display = ["name", "base_url", "enabled"]
     inlines = [MappingInline, FirewallGroupMembershipInline]
     readonly_fields = ["credential_settings", "mapping_overview"]
+    fieldsets = [
+        (None, {"fields": ["name", "base_url", "enabled", "credential_prefix", "ca_bundle", "credential_settings"]}),
+        ("Interfaces", {"fields": ["auto_map_interfaces", "mapping_overview"]}),
+        ("Addressing and DHCP", {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "dhcp_backend"]}),
+        ("Notes", {"fields": ["notes"]}),
+    ]
 
     def get_deleted_objects(self, objs, request):
         deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
@@ -469,3 +480,69 @@ class DNSProfileAdmin(DesiredProfileAdmin):
 class VirtualIPAdmin(admin.ModelAdmin):
     form = VirtualIPForm
     list_display = ["name", "interface", "network", "mode", "scope"]
+
+
+def _back_to(view_name):
+    """After saving an IPAM object, return to its overview page instead of the admin list."""
+
+    class BackMixin:
+        def response_add(self, request, obj, post_url_continue=None):
+            response = super().response_add(request, obj, post_url_continue)
+            return self._back(request, response)
+
+        def response_change(self, request, obj):
+            return self._back(request, super().response_change(request, obj))
+
+        def response_delete(self, request, obj_display, obj_id):
+            response = super().response_delete(request, obj_display, obj_id)
+            return self._back(request, response)
+
+        def _back(self, request, response):
+            if request.POST.get("_continue") or request.POST.get("_addanother") or "_popup" in request.POST:
+                return response
+            target = request.GET.get("next", "")
+            if not url_has_allowed_host_and_scheme(target, {request.get_host()}, request.is_secure()):
+                target = reverse(view_name)
+            return HttpResponseRedirect(target)
+
+    return BackMixin
+
+
+@admin.register(InterfaceAddressing)
+class InterfaceAddressingAdmin(_back_to("ipam_plan"), PlainRelationsMixin, admin.ModelAdmin):
+    list_display = ["logical_interface", "ipv4_address", "ipv6_address", "notes"]
+    fields = ["logical_interface", "ipv4_address", "ipv6_address", "notes"]
+
+
+@admin.register(AddressRange)
+class AddressRangeAdmin(_back_to("ipam_ranges"), PlainRelationsMixin, admin.ModelAdmin):
+    list_display = ["logical_interface", "name", "addresses", "description"]
+    list_filter = ["logical_interface"]
+    fields = ["logical_interface", "name", "addresses", "description"]
+
+
+class DhcpOptionInline(admin.TabularInline):
+    model = DhcpOption
+    extra = 0
+    fields = ["code", "kind", "value", "description"]
+
+
+@admin.register(DhcpScope)
+class DhcpScopeAdmin(_back_to("ipam_dhcp"), PlainRelationsMixin, admin.ModelAdmin):
+    form = DhcpScopeForm
+    inlines = [DhcpOptionInline]
+    list_display = ["name", "logical_interface", "dynamic_range", "enabled", "scope"]
+    fieldsets = [
+        (None, {"fields": ["name", "enabled", "logical_interface", "description"]}),
+        ("Addresses", {"fields": ["dynamic_range", "lease_time"]}),
+        ("Options", {"fields": ["gateway", "dns_servers", "ntp_servers", "domain_name"]}),
+        ("Deployment", {"fields": ["targets"]}),
+    ]
+
+
+@admin.register(StaticReservation)
+class StaticReservationAdmin(_back_to("ipam_reservations"), PlainRelationsMixin, admin.ModelAdmin):
+    list_display = ["firewall", "logical_interface", "ip_address", "mac_address", "hostname", "description"]
+    list_filter = ["firewall", "logical_interface"]
+    search_fields = ["hostname", "mac_address", "ip_address", "description"]
+    fields = ["firewall", "logical_interface", "ip_address", "mac_address", "hostname", "description"]

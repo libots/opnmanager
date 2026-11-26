@@ -14,6 +14,7 @@ how the code works. Read only the page for the area you are changing.
 | [subsystems/import-and-mappings.md](subsystems/import-and-mappings.md) | Rule adoption from a snapshot, interface mappings, the Logical Interfaces page |
 | [subsystems/ui.md](subsystems/ui.md) | Views, URLs, Django admin editors, the rule dialog, rules grid, JS/CSS/templates |
 | [subsystems/system-management.md](subsystems/system-management.md) | Firmware, virtual IPs, DNS profiles |
+| [subsystems/ipam.md](subsystems/ipam.md) | Address plan templates, DHCP scopes, ranges, reservations and leases (Dnsmasq/Kea) |
 | [subsystems/auth-and-secrets.md](subsystems/auth-and-secrets.md) | Settings, login/OIDC, permissions, credential encryption, data-dir files |
 | [testing.md](testing.md) | Writing or running tests; how the device is mocked |
 | [decisions.md](decisions.md) | You want to know *why* something is designed the way it is before changing it |

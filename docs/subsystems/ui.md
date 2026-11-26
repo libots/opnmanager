@@ -27,6 +27,7 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | `/interfaces/virtual-ips/…` | `management_views.*vip*` | Apply/delete POSTs enqueue jobs; see system-management.md |
 | `/system/firmware/…` | `management_views.firmware*` | |
 | `/system/settings/general/` | `management_views.dns_general` | |
+| `/ipam/`, `/ipam/dhcp/`, `/ipam/ranges/`, `/ipam/reservations/` | `ipam_views.*` | Addressing matrices and reservations; `…/<pk>/read/` (POST), `…/<pk>/import/` (POST), `…/<pk>/sync/` (review / enqueue); see ipam.md |
 | `/settings/`, `/settings/authentication/` | `views.settings_page`, `management_views.oidc_options` | |
 | `/admin/` | Django admin | CRUD editors (below) |
 | `/accounts/…`, `/oidc/…` | auth | `/oidc/` only when OIDC is enabled at startup |
@@ -38,7 +39,9 @@ Every view is `@login_required` + `@permission_required(..., raise_exception=Tru
 ## Editors are Django admin (`fleet/admin.py`)
 
 Firewall (with mapping and firewall-group inlines; mapping choices from the device), Rule, Alias,
-Category, InterfaceGroup, FirewallGroup, LogicalInterface, InterfaceMapping, DNSProfile, VirtualIP.
+Category, InterfaceGroup, FirewallGroup, LogicalInterface, InterfaceMapping, DNSProfile, VirtualIP,
+InterfaceAddressing, AddressRange, DhcpScope (with DhcpOption inline), StaticReservation (the IPAM
+editors return to their Addressing page, or to a safe `?next=`).
 Snapshot and AuditEvent are registered read-only. Scoped models use forms with a single "Deploy to"
 field (`forms.TargetsFormMixin`). `templates/admin/base_site.html` wraps admin in the app shell
 (`static/admin-shell.css`).

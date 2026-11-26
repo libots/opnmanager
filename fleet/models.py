@@ -1,3 +1,4 @@
+import ipaddress
 import uuid
 from urllib.parse import urlsplit
 
@@ -6,6 +7,17 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator, MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models, transaction
 
+from .ipam import (
+    HOSTNAME,
+    OPTION_TYPES,
+    TemplateError,
+    check_option_value,
+    check_range,
+    check_template,
+    interface_plan,
+    normalize_mac,
+    parse_site_prefix,
+)
 from .sorting import natural_key
 
 identifier = RegexValidator(
@@ -45,8 +57,41 @@ class Firewall(models.Model):
     )
     encrypted_api_key = models.TextField(blank=True, editable=False)
     encrypted_api_secret = models.TextField(blank=True, editable=False)
+    ipv4_site_prefix = models.CharField(
+        "IPv4 site prefix",
+        max_length=50,
+        blank=True,
+        help_text="This site's part of the address plan, e.g. 10.20.0.0/16. Interface templates such as "
+        "10.x.40.1/21 take their x parts from it.",
+    )
+    ipv6_site_prefix = models.CharField(
+        "IPv6 site prefix",
+        max_length=60,
+        blank=True,
+        help_text="e.g. 2001:db8:0:1400::/56. Templates such as x:x:x:40::1/64 take their x parts from it.",
+    )
+    DNSMASQ, KEA = "dnsmasq", "kea"
+    dhcp_backend = models.CharField(
+        "DHCP server",
+        max_length=10,
+        choices=[(DNSMASQ, "Dnsmasq DNS & DHCP"), (KEA, "Kea DHCP")],
+        default=DNSMASQ,
+        help_text="Which OPNsense DHCP service holds reservations and leases on this firewall. Reservations are "
+        "stored independently of it, so switching only changes where they're read from and written to.",
+    )
 
     def clean(self):
+        errors = {}
+        for field, family in (("ipv4_site_prefix", 4), ("ipv6_site_prefix", 6)):
+            value = getattr(self, field).strip()
+            setattr(self, field, value)
+            if value:
+                try:
+                    setattr(self, field, str(parse_site_prefix(value, family)))
+                except TemplateError as exc:
+                    errors[field] = str(exc)
+        if errors:
+            raise ValidationError(errors)
         url = urlsplit(self.base_url)
         if (
             url.scheme != "https"
@@ -69,6 +114,7 @@ class Firewall(models.Model):
             ("manage_credentials", "Can manage firewall API credentials"),
             ("sync_definitions", "Can synchronize aliases, categories and interface groups"),
             ("deploy_rules", "Can deploy selected firewall rules"),
+            ("sync_dhcp", "Can synchronize DHCP reservations"),
         ]
 
 
@@ -497,11 +543,13 @@ class DeviceJob(models.Model):
     DEFINITIONS_SYNC = "definitions.sync"
     VIP_APPLY = "vip.apply"
     VIP_DELETE = "vip.delete"
+    DHCP_SYNC = "dhcp.reservations.sync"
     KINDS = [
         (RULES_DEPLOY, "Rule deployment"),
         (DEFINITIONS_SYNC, "Definition synchronization"),
         (VIP_APPLY, "Virtual IP change"),
         (VIP_DELETE, "Virtual IP deletion"),
+        (DHCP_SYNC, "DHCP reservation synchronization"),
     ]
     QUEUED, RUNNING, SUCCEEDED, FAILED, INTERRUPTED = "queued", "running", "succeeded", "failed", "interrupted"
     STATUSES = [
@@ -532,3 +580,202 @@ class DeviceJob(models.Model):
 
     def __str__(self):
         return f"{self.get_kind_display()} on {self.firewall} ({self.status})"
+
+
+# --- IP address management ---------------------------------------------------------------------
+
+
+def validate_address_template(value):
+    try:
+        check_template(value, prefixed=True)
+    except TemplateError as exc:
+        raise ValidationError(str(exc)) from None
+
+
+def validate_range(value):
+    try:
+        check_range(value)
+    except TemplateError as exc:
+        raise ValidationError(str(exc)) from None
+
+
+class InterfaceAddressing(models.Model):
+    """The fleet-wide address plan of one logical interface, resolved per site."""
+
+    logical_interface = models.OneToOneField(LogicalInterface, on_delete=models.CASCADE, related_name="addressing")
+    ipv4_address = models.CharField(
+        "IPv4 address",
+        max_length=60,
+        blank=True,
+        validators=[validate_address_template],
+        help_text="The firewall's address and prefix length on this interface, with x for the site part: 10.x.40.1/21.",
+    )
+    ipv6_address = models.CharField(
+        "IPv6 address",
+        max_length=80,
+        blank=True,
+        validators=[validate_address_template],
+        help_text="With x for the site part: x:x:x:40::1/64.",
+    )
+    notes = models.CharField(max_length=200, blank=True)
+
+    def clean(self):
+        for field, family in (("ipv4_address", 4), ("ipv6_address", 6)):
+            value = getattr(self, field).strip()
+            setattr(self, field, value)
+            if value and check_template(value, prefixed=True) != family:
+                raise ValidationError({field: f"Enter an IPv{family} template."})
+
+    def __str__(self):
+        return f"{self.logical_interface} addressing"
+
+    class Meta:
+        ordering = ["logical_interface__sort_key", "logical_interface__name"]
+        verbose_name = "interface address plan"
+        verbose_name_plural = "interface address plans"
+
+
+class AddressRange(models.Model):
+    """A named block inside an interface's subnet, e.g. switches in 10.x.10.10-29."""
+
+    logical_interface = models.ForeignKey(LogicalInterface, on_delete=models.CASCADE, related_name="address_ranges")
+    name = models.CharField(max_length=60)
+    addresses = models.CharField(
+        max_length=120,
+        validators=[validate_range],
+        help_text="start-end with x for the site part, e.g. 10.x.10.10-29 (a bare number replaces the last part), "
+        "or relative to the subnet: +10-+29.",
+    )
+    description = models.CharField(max_length=200, blank=True)
+
+    def __str__(self):
+        return f"{self.logical_interface}: {self.name}"
+
+    class Meta:
+        ordering = ["logical_interface__sort_key", "addresses", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["logical_interface", "name"], name="one_range_name_per_interface")
+        ]
+
+
+class DhcpScope(ScopedPolicy):
+    """DHCPv4 settings for one logical interface, written once and resolved per site."""
+
+    logical_interface = models.ForeignKey(LogicalInterface, on_delete=models.CASCADE, related_name="dhcp_scopes")
+    name = models.CharField(max_length=60, unique=True)
+    enabled = models.BooleanField(default=True)
+    dynamic_range = models.CharField(
+        max_length=120,
+        blank=True,
+        validators=[validate_range],
+        help_text="Addresses handed out dynamically, e.g. 10.x.47.0-250 or +1024-+2000. Empty: reservations only.",
+    )
+    gateway = models.CharField(
+        max_length=200,
+        blank=True,
+        default="0.0.0.0",
+        help_text="0.0.0.0 means this firewall's address on the interface. Empty sends no gateway.",
+    )
+    dns_servers = models.CharField(
+        "DNS servers",
+        max_length=300,
+        blank=True,
+        default="0.0.0.0",
+        help_text="Comma-separated: 0.0.0.0 (the firewall), addresses or templates (10.x.10.5), offsets (+5), "
+        "or host alias names (their addresses in this family are used).",
+    )
+    ntp_servers = models.CharField("NTP servers", max_length=300, blank=True, help_text="Same notation as DNS.")
+    domain_name = models.CharField(max_length=253, blank=True)
+    lease_time = models.PositiveIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(60)], help_text="Seconds. Empty: the server default."
+    )
+    description = models.CharField(max_length=200, blank=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ["logical_interface__sort_key", "name"]
+        verbose_name = "DHCP scope"
+
+
+class DhcpOption(models.Model):
+    scope = models.ForeignKey(DhcpScope, on_delete=models.CASCADE, related_name="options")
+    code = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(254)])
+    kind = models.CharField("Type", max_length=10, choices=OPTION_TYPES, default="ip")
+    value = models.CharField(
+        max_length=500,
+        help_text="IP types take the same notation as DNS servers. UniFi: the controller address (encoded as "
+        "sub-option 1). Hex: bytes such as 01:04:0a:14:0a:05.",
+    )
+    description = models.CharField(max_length=100, blank=True)
+
+    def clean(self):
+        try:
+            check_option_value(self.kind, self.value)
+        except TemplateError as exc:
+            raise ValidationError({"value": str(exc)}) from None
+
+    def __str__(self):
+        return f"option {self.code}"
+
+    class Meta:
+        ordering = ["code"]
+        verbose_name = "DHCP option"
+        constraints = [models.UniqueConstraint(fields=["scope", "code"], name="one_dhcp_option_code_per_scope")]
+
+
+class StaticReservation(models.Model):
+    """A fixed address for one device at one site; portable between Dnsmasq and Kea."""
+
+    uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    firewall = models.ForeignKey(Firewall, on_delete=models.CASCADE, related_name="reservations")
+    logical_interface = models.ForeignKey(LogicalInterface, on_delete=models.PROTECT, related_name="reservations")
+    ip_address = models.GenericIPAddressField("IP address", protocol="IPv4")
+    mac_address = models.CharField("MAC address", max_length=17)
+    hostname = models.CharField(max_length=63, blank=True)
+    description = models.CharField(max_length=200, blank=True, validators=[MaxLengthValidator(DESCRIPTION_MAX - 20)])
+    remote_uuid = models.CharField(
+        max_length=100, blank=True, editable=False, help_text="Device reservation this was imported from."
+    )
+
+    def clean(self):
+        mac = normalize_mac(self.mac_address)
+        if not mac:
+            raise ValidationError({"mac_address": "Enter a MAC address such as aa:bb:cc:dd:ee:ff."})
+        self.mac_address = mac
+        if self.hostname and not HOSTNAME.match(self.hostname):
+            raise ValidationError({"hostname": "Use letters, digits and hyphens (no dots), up to 63 characters."})
+        problem = reservation_subnet_problem(self)
+        if problem:
+            raise ValidationError({"ip_address": problem})
+
+    def __str__(self):
+        return f"{self.hostname or self.mac_address} ({self.ip_address})"
+
+    class Meta:
+        ordering = ["firewall__name", "logical_interface__sort_key", "ip_address"]
+        constraints = [
+            models.UniqueConstraint(fields=["firewall", "ip_address"], name="one_reservation_per_address"),
+            models.UniqueConstraint(
+                fields=["firewall", "logical_interface", "mac_address"], name="one_reservation_per_mac"
+            ),
+        ]
+
+
+def reservation_subnet_problem(reservation):
+    """Why a reservation's address doesn't belong to its interface at its site, or ''."""
+    if not reservation.firewall_id or not reservation.logical_interface_id or not reservation.ip_address:
+        return ""
+    addressing = InterfaceAddressing.objects.filter(logical_interface_id=reservation.logical_interface_id).first()
+    if addressing is None or not addressing.ipv4_address:
+        return ""  # No address plan to check against.
+    planned = interface_plan(addressing, reservation.firewall)[4]
+    if not planned or "error" in planned:
+        return ""
+    address = ipaddress.ip_address(reservation.ip_address)
+    if address not in planned["subnet"]:
+        return f"{address} is outside {planned['subnet']}, the {reservation.logical_interface} subnet at {reservation.firewall}."
+    if address in (planned["subnet"].network_address, planned["subnet"].broadcast_address, planned["router"]):
+        return f"{address} is the network, broadcast or firewall address of {planned['subnet']}."
+    return ""

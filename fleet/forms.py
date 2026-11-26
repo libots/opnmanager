@@ -6,6 +6,7 @@ from .choices import ICMP6_TYPES, ICMP_TYPES, PORTS, protocol_choices
 from .models import (
     Alias,
     Category,
+    DhcpScope,
     DNSProfile,
     Firewall,
     FirewallGroup,
@@ -632,6 +633,48 @@ class VirtualIPForm(TargetsFormMixin, forms.ModelForm):
     class Meta:
         model = VirtualIP
         exclude = SCOPE_FIELDS
+
+
+def check_server_list(value, field_label, aliases):
+    """Syntax of a DHCP server list: 0.0.0.0, templates, +N/-N offsets or host alias names."""
+    import re
+
+    from .ipam import RELATIVE, ROUTER, TemplateError, check_template
+
+    problems = []
+    for token in [t.strip() for t in re.split(r"[,\s]+", value or "") if t.strip()]:
+        if token == ROUTER or RELATIVE.match(token) or token in aliases:
+            continue
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token):
+            problems.append(f"{token} is not a host alias")
+            continue
+        try:
+            if check_template(token) != 4:
+                problems.append(f"{token} is not IPv4")
+        except TemplateError as exc:
+            problems.append(str(exc))
+    if problems:
+        raise forms.ValidationError(f"{field_label}: " + "; ".join(problems) + ".")
+    return ", ".join(t.strip() for t in re.split(r"[,\s]+", value or "") if t.strip())
+
+
+class DhcpScopeForm(TargetsFormMixin, forms.ModelForm):
+    targets = targets_field()
+
+    class Meta:
+        model = DhcpScope
+        exclude = SCOPE_FIELDS
+
+    def clean(self):
+        data = super().clean()
+        aliases = set(Alias.objects.filter(type="host").values_list("name", flat=True))
+        for field in ("gateway", "dns_servers", "ntp_servers"):
+            if data.get(field):
+                try:
+                    data[field] = check_server_list(data[field], self.fields[field].label, aliases)
+                except forms.ValidationError as exc:
+                    self.add_error(field, exc)
+        return data
 
 
 class OIDCSettingsForm(forms.Form):

@@ -28,6 +28,12 @@
     <a href="{% url 'interface_overview' %}">Overview</a>
     <a href="{% url 'virtual_ips' %}">Virtual IPs</a>
   </div></details>
+  <details class="menu-section" data-menu="ipam" open><summary>{% icon "network-wired" %}<span class="menu-label">Addressing</span></summary><div class="menu-items" data-title="Addressing">
+    <a href="{% url 'ipam_plan' %}" data-match="/admin/fleet/interfaceaddressing/">Address Plan</a>
+    <a href="{% url 'ipam_dhcp' %}" data-match="/admin/fleet/dhcpscope/">DHCP Scopes</a>
+    <a href="{% url 'ipam_ranges' %}" data-match="/admin/fleet/addressrange/">Ranges</a>
+    <a href="{% url 'ipam_reservations' %}" data-match="/admin/fleet/staticreservation/">Reservations &amp; Leases</a>
+  </div></details>
   <details class="menu-section" data-menu="firewall" open><summary>{% icon "fire" %}<span class="menu-label">Firewall</span></summary><div class="menu-items" data-title="Firewall">
     <a href="/admin/fleet/alias/">Aliases</a>
     <a href="/admin/fleet/category/">Categories</a>

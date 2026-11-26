@@ -30,7 +30,8 @@ is in `pyproject.toml` (line length 120, migrations excluded); run `ruff format 
 | Module | Covers |
 | --- | --- |
 | `tests.py` | Core planning/drift, targeting, alias sync, permissions, OIDC, local accounts |
-| `test_deployment.py` | Rule plan/execute, protected apply & 26.7 fallback, retire, planner query count, snapshot retention |
+| `test_deployment.py` | Rule plan/execute, protected apply & 26.7 fallback, retire, planner query count, snapshot retention, all-firewalls review |
+| `test_ipam.py` | Address templates, address plan/DHCP/ranges pages, reservation subnet checks, DHCP read/import/plan/sync (Dnsmasq and Kea) |
 | `test_jobs.py` | Enqueue/worker/interrupted jobs, deploy POST → job |
 | `test_snapshot_compare.py` | Semantic preflight normalization |
 | `test_rule_identity.py`, `test_alias_identity.py`, `test_group_identity.py` | `[om:...]` tags, renames, removals |
