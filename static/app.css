@@ -550,7 +550,6 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-plan.show-unplanned .ipam-unplanned { display: table-row; }
 .ipam-plan.show-unplanned .ipam-none-planned { display: none; }
 .ipam-unplanned th, .ipam-unplanned td { background: #FCFCFC; }
-.ipam-add-plan { display: inline-block; margin: 6px 0 2px; padding: 2px 10px; font-size: 12px; }
 .ipam-observed { font-size: 12px; }
 /* Fleet: Overview — firewall order */
 .fleet-overview .order-col { width: 1%; padding-right: 0; }
@@ -561,3 +560,10 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .firewall-order-status { margin: 0 16px; min-height: 0; }
 .firewall-order-status:empty { display: none; }
 .inline-icon { width: 8px; height: 12px; vertical-align: -1px; }
+/* Address plan: the interface column stacks name, state, suggestion and Add plan instead of one long line. */
+.ipam-matrix .ipam-name { white-space: normal; min-width: 220px; max-width: 280px; }
+.ipam-name-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ipam-if { font-weight: 600; overflow-wrap: anywhere; }
+.ipam-matrix .ipam-name small { overflow-wrap: anywhere; }
+.ipam-suggested code { font-size: 12px; }
+.ipam-matrix .ipam-name .ipam-add-plan { display: inline-flex; min-height: 26px; margin: 6px 0 0; padding: 2px 10px; font-size: 13px; line-height: 20px; }

@@ -161,7 +161,8 @@ def address_plan(request):
         for fw in firewalls:
             device = _mappings(fw).get(logical.pk)
             observed_row = _observed_row(fw, device) if device else None
-            observed = observed_addresses(observed_row) if observed_row else []
+            # Link-local IPv6 (fe80::/10) exists on every interface and is never planned.
+            observed = [a for a in observed_addresses(observed_row) if not a.is_link_local] if observed_row else []
             planned = plans[(fw.pk, logical.pk)] if plan else {4: None, 6: None}
             families = []
             for family in (4, 6):
