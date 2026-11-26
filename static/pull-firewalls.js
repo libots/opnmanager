@@ -36,7 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         policy.replaceChildren(badge, ...(reasons.children.length ? [reasons] : []));
       }
-      status.textContent = ' Updated';
+      status.textContent = result.inventory_error ? ' Updated; interface inventory not refreshed' : ' Updated';
+      status.title = result.inventory_error || '';
+      status.className = result.inventory_error ? 'pull-partial' : '';
       return true;
     } catch (error) {
       status.textContent = ' ' + error.message;

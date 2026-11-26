@@ -21,6 +21,7 @@ from .models import Alias, AuditEvent, Category, DeviceJob, Firewall, InterfaceG
 from .opnsense import DeviceError, OPNsenseClient
 from .reconcile import Policy, plan_for
 from .rule_filters import SEARCH_FIELDS, filter_rows
+from .system_management import refresh_inventory
 
 
 @login_required
@@ -145,13 +146,28 @@ def pull_snapshot(request, pk):
     if not fw.enabled:
         return finish("Enable this firewall before pulling a snapshot.")
     try:
-        data = OPNsenseClient(fw).snapshot()
+        client = OPNsenseClient(fw)
+        data = client.snapshot()
         snapshot = Snapshot.objects.create(firewall=fw, data=data, source="api")
         count = apply_default_mappings(fw, data) if fw.auto_map_interfaces else 0
         AuditEvent.objects.create(actor=request.user.username, action="snapshot.pull", detail=fw.name)
+        # Keep interface status, addresses and the protocol catalog in step with the snapshot, so a
+        # newly added interface isn't listed without details. A failure here doesn't undo the pull.
+        inventory_error = None
+        try:
+            refresh_inventory(fw, client)
+        except DeviceError as exc:
+            inventory_error = f"The configuration was read, but the interface inventory wasn't refreshed: {exc}"
         if not wants_json:
             messages.info(request, f"Added {count} default interface mappings from unique display names.")
-            messages.success(request, "Configuration read from device. No device changes made.")
+            messages.success(
+                request,
+                "Configuration read from device"
+                + ("" if inventory_error else " and interface inventory refreshed")
+                + ". No device changes made.",
+            )
+            if inventory_error:
+                messages.warning(request, inventory_error)
         if wants_json:
             plan = plan_for(fw)
             drift = sum(item["status"] in ("missing", "changed", "conflict", "out_of_scope") for item in plan["items"])
@@ -164,6 +180,7 @@ def pull_snapshot(request, pk):
                 else "Managed fields match",
                 attention=bool(plan["errors"] or drift),
                 errors=plan["errors"],
+                inventory_error=inventory_error,
             )
         return finish()
     except DeviceError as exc:

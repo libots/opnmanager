@@ -150,7 +150,7 @@ Pulls use:
 - `GET /api/firewall/group/get`
 - `GET /api/firewall/category/get`
 
-The UI's pull/import controls require `fleet.refresh_firewall` plus `fleet.view_firewall`. Pulls and imports preserve historical snapshots and create audit events. There is no automatic polling yet. [examples/snapshot.json](examples/snapshot.json) shows the normalized import format; an OPNsense XML backup is not accepted as that format. Option-field maps returned by live APIs are normalized into their selected raw identifiers.
+A pull (one firewall, or **Pull all enabled firewalls**) also refreshes that firewall's interface inventory (status, addresses, VLAN, MTU and the protocol catalog, as **Refresh** on **Interfaces: Overview** does), so newly added interfaces show their details on Logical Interfaces and the address plan right away. If the inventory can't be read, the pull is still kept and the result says so. The UI's pull/import controls require `fleet.refresh_firewall` plus `fleet.view_firewall`. Pulls and imports preserve historical snapshots and create audit events. There is no automatic polling yet. [examples/snapshot.json](examples/snapshot.json) shows the normalized import format; an OPNsense XML backup is not accepted as that format. Option-field maps returned by live APIs are normalized into their selected raw identifiers.
 
 ## Synchronize aliases explicitly
 

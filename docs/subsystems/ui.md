@@ -10,7 +10,7 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | --- | --- | --- |
 | `/` | `views.dashboard` | Fleet overview; one shared `Policy` for all firewalls |
 | `/firewalls/<pk>/` | `views.firewall_detail` | Drift items, mappings, snapshot upload |
-| `/firewalls/<pk>/pull/` | `views.pull_snapshot` | POST; JSON reply when `Accept: application/json` (bulk pull, `static/pull-firewalls.js`) |
+| `/firewalls/<pk>/pull/` | `views.pull_snapshot` | POST; snapshot, auto-mappings, then `refresh_inventory` (failure reported as `inventory_error`, pull kept); JSON reply when `Accept: application/json` (bulk pull, `static/pull-firewalls.js`) |
 | `/firewalls/<pk>/import/` | `views.import_snapshot` | POST JSON file upload (≤5 MiB) |
 | `/firewalls/<pk>/plan/` | `views.download_plan` | `plan_for` as JSON download |
 | `/firewalls/order/` | `views.reorder_firewalls` | POST `order` = every firewall id in the new order (drag on the overview); 409 if the list changed |

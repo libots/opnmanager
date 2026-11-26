@@ -7,6 +7,9 @@ Files: `fleet/system_management.py`, `fleet/management_views.py`. Tests:
 
 ## Interface inventory
 
+Refreshed by **Refresh** on Interfaces: Overview and after every successful snapshot pull
+(`views.pull_snapshot`; an inventory error there is reported but doesn't fail the pull).
+
 `refresh_inventory(fw, client)`: `POST /api/interfaces/overview/interfaces_info` with
 `rowCount: -1` (otherwise OPNsense pages results). Stores rows in `DeviceInventory.data["interfaces"]`
 (identifier as `name`, plus description/device/status/addresses/VLAN/MTU). Also tries

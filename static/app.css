@@ -206,6 +206,7 @@ ins { color: var(--opn-success); background: #EDF8EF; text-decoration: none; }
 .pull-all-controls [role=status], [data-pull-status] { font-size: 13px; overflow-wrap: anywhere; }
 [data-pull-status] { display: block; margin-top: 4px; }
 [data-pull-status].pull-failed { color: var(--opn-danger); }
+[data-pull-status].pull-partial { color: var(--opn-warning); }
 
 /* ---------- Rules table (Firewall: Rules) ---------- */
 .rules-title { margin: 0 0 18px; }

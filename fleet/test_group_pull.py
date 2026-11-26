@@ -149,6 +149,31 @@ class GroupPullTests(TestCase):
         client.return_value.save_definition.assert_not_called()
 
     @patch("fleet.views.OPNsenseClient")
+    def test_pull_also_refreshes_the_interface_inventory(self, client):
+        from .models import DeviceInventory
+
+        client.return_value.snapshot.return_value = {**EMPTY, "interfaces": [{"name": "opt4", "label": "WAN"}]}
+        client.return_value.post.return_value = {
+            "rows": [{"identifier": "opt4", "description": "WAN", "status": "up", "ipv4": [{"ipaddr": "10.9.9.1/24"}]}]
+        }
+        client.return_value.get.side_effect = DeviceError("forbidden")  # protocol catalog: optional
+        response = self.client.post(f"/firewalls/{self.fw.pk}/pull/", HTTP_ACCEPT="application/json")
+        self.assertIsNone(response.json()["inventory_error"])
+        interfaces = DeviceInventory.objects.get(firewall=self.fw).data["interfaces"]
+        self.assertEqual([(row["name"], row["ipv4"]) for row in interfaces], [("opt4", "10.9.9.1/24")])
+
+    @patch("fleet.views.OPNsenseClient")
+    def test_pull_is_kept_when_the_inventory_cannot_be_read(self, client):
+        client.return_value.snapshot.return_value = EMPTY
+        client.return_value.post.side_effect = DeviceError("HTTP 403")
+        response = self.client.post(f"/firewalls/{self.fw.pk}/pull/", HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("interface inventory wasn't refreshed: HTTP 403", response.json()["inventory_error"])
+        self.assertEqual(self.fw.snapshots.count(), 2)
+        response = self.client.post(f"/firewalls/{self.fw.pk}/pull/", follow=True)
+        self.assertContains(response, "interface inventory wasn&#x27;t refreshed")
+
+    @patch("fleet.views.OPNsenseClient")
     def test_pull_failures_keep_snapshot_and_disabled_devices_are_skipped(self, client):
         client.return_value.snapshot.side_effect = DeviceError("Connection failed")
         response = self.client.post(f"/firewalls/{self.fw.pk}/pull/", HTTP_ACCEPT="application/json")
