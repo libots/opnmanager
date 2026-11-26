@@ -8,6 +8,7 @@ from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.text import capfirst
 from django.views.decorators.http import require_POST
 
 from .forms import DhcpScopeForm, DNSProfileForm, VirtualIPForm
@@ -205,15 +206,15 @@ class OpnDialogAdmin(PlainRelationsMixin, admin.ModelAdmin):
 
     def response_add(self, request, obj, post_url_continue=None):
         response = super().response_add(request, obj, post_url_continue)
-        return self._finish(request, response, f"{self.opts.verbose_name.capitalize()} “{obj}” added.")
+        return self._finish(request, response, f"{capfirst(self.opts.verbose_name)} “{obj}” added.")
 
     def response_change(self, request, obj):
         response = super().response_change(request, obj)
-        return self._finish(request, response, f"{self.opts.verbose_name.capitalize()} “{obj}” saved.")
+        return self._finish(request, response, f"{capfirst(self.opts.verbose_name)} “{obj}” saved.")
 
     def response_delete(self, request, obj_display, obj_id):
         response = super().response_delete(request, obj_display, obj_id)
-        return self._finish(request, response, f"{self.opts.verbose_name.capitalize()} “{obj_display}” deleted.")
+        return self._finish(request, response, f"{capfirst(self.opts.verbose_name)} “{obj_display}” deleted.")
 
 
 @admin.register(Firewall)

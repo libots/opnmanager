@@ -78,7 +78,11 @@ the DHCP dynamic range uses hint kind `pool`.
 `DhcpScope` (a `ScopedPolicy`) + `DhcpOption` rows. `scope_settings()` resolves a scope at one site
 into a backend-neutral dict (`subnet`, `range`, `options` with `code`/`kind`/`values`/`hex`/`label`);
 `0.0.0.0` = the interface's router address; host alias names expand to their addresses of the
-family. `render_dnsmasq` / `render_kea` are previews only — **scopes are not deployed**. The DHCP
+family. `render_dnsmasq` / `render_kea` are previews only — **scopes are not deployed**. The DHCP page
+(`ipam_views.dhcp_scopes`) lists every logical interface: one row per scope (grouped, first row
+carries the interface) and, for interfaces without one, a row hidden until "Show interfaces without a
+scope" (`static/ipam.js`, generic `data-toggle-*` toggle) with an Add scope prefilled from the widest
+consistent unused span in `range_layout`. The DHCP
 page flags several enabled scopes reaching one interface on one firewall.
 
 ## Reservations (`dhcp.py`)

@@ -381,32 +381,79 @@ def scope_cells(scope, firewalls, plans, aliases):
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def dhcp_scopes(request):
+    """Scopes grouped by logical interface, like the address plan; interfaces without a scope can be
+    shown too, each with an Add scope prefilled from its plan."""
     firewalls = _firewalls(request)
     plans = site_plans(firewalls)
     aliases = {a.name: a.content for a in Alias.objects.filter(type="host")}
-    scopes = list(
-        DhcpScope.objects.select_related("logical_interface").prefetch_related("options", *ScopedPolicy.SCOPE_PREFETCH)
-    )
-    rows = []
-    claimed = {}
     checks = Overlaps()
-    for scope in scopes:
-        cells = scope_cells(scope, firewalls, plans, aliases)
-        for cell in cells:
-            cell["warnings"] = checks.for_subject("pool", cell["firewall"].pk, scope.pk)
-            if cell.get("applies") and scope.enabled:
-                claimed.setdefault((cell["firewall"].pk, scope.logical_interface_id), []).append(scope.name)
-        rows.append({"scope": scope, "cells": cells})
+    by_interface = {}
+    for scope in DhcpScope.objects.select_related("logical_interface").prefetch_related(
+        "options", *ScopedPolicy.SCOPE_PREFETCH
+    ):
+        by_interface.setdefault(scope.logical_interface_id, []).append(scope)
+    layout = {group["logical"].pk: group for group in range_layout(firewalls, plans, checks)}
+    planned = {a.logical_interface_id: a for a in InterfaceAddressing.objects.all()}
+    rows, claimed = [], {}
+    for logical in LogicalInterface.objects.all():
+        scopes = by_interface.get(logical.pk, [])
+        for index, scope in enumerate(scopes):
+            cells = scope_cells(scope, firewalls, plans, aliases)
+            for cell in cells:
+                cell["warnings"] = checks.for_subject("pool", cell["firewall"].pk, scope.pk)
+                if cell.get("applies") and scope.enabled:
+                    claimed.setdefault((cell["firewall"].pk, logical.pk), []).append(scope.name)
+            rows.append({"logical": logical, "scope": scope, "first": index == 0, "cells": cells})
+        if scopes:
+            continue
+        addressing = planned.get(logical.pk)
+        row = {
+            "logical": logical,
+            "scope": None,
+            "first": True,
+            "planned": bool(addressing and addressing.ipv4_address),
+        }
+        row["cells"] = []
+        for fw in firewalls:
+            plan = (plans.get((fw.pk, logical.pk)) or {}).get(4)
+            device = _mappings(fw).get(logical.pk)
+            row["cells"].append(
+                {
+                    "firewall": fw,
+                    "device": device,
+                    "subnet": plan.get("subnet") if plan else None,
+                    "router": plan.get("router") if plan else None,
+                    "error": plan.get("error") if plan else None,
+                }
+            )
+        initial = {"logical_interface": logical.pk, "name": f"{logical.name} DHCP"}
+        gaps = [r for r in layout.get(logical.pk, {}).get("rows", []) if r["kind"] == "gap" and r.get("offsets")]
+        if gaps:
+            widest = max(gaps, key=lambda r: max((c.get("size", 0) for c in r["cells"]), default=0))
+            initial["dynamic_range"] = widest["offsets"]
+            row["suggested"] = widest["offsets"]
+        row["add_query"] = urlencode(initial)
+        rows.append(row)
     for row in rows:
+        if not row["scope"]:
+            continue
         for cell in row["cells"]:
-            others = claimed.get((cell["firewall"].pk, row["scope"].logical_interface_id), [])
+            others = claimed.get((cell["firewall"].pk, row["logical"].pk), [])
             if len(others) > 1 and row["scope"].enabled and cell.get("applies"):
                 cell["conflict"] = (
-                    f"Several scopes target {row['scope'].logical_interface} here: {', '.join(others)}. "
+                    f"Several scopes target {row['logical']} here: {', '.join(others)}. "
                     "Narrow their Deploy to lists so only one applies per firewall."
                 )
     return render(
-        request, "fleet/ipam_dhcp.html", {"firewalls": firewalls, "rows": rows, "all_firewalls": Firewall.objects.all()}
+        request,
+        "fleet/ipam_dhcp.html",
+        {
+            "firewalls": firewalls,
+            "rows": rows,
+            "scope_count": sum(1 for row in rows if row["scope"]),
+            "unscoped_count": sum(1 for row in rows if not row["scope"]),
+            "all_firewalls": Firewall.objects.all(),
+        },
     )
 
 

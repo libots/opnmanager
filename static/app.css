@@ -588,3 +588,5 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-gap-label { font-style: italic; }
 .ipam-ranges .ipam-pool td { background: #F2F8FB; }
 .ipam-ranges .ipam-firewall th, .ipam-ranges .ipam-firewall td { padding-top: 5px; padding-bottom: 5px; }
+.ipam-scope-name { margin-top: 2px; font-weight: 600; }
+.ipam-matrix tr.ipam-first > th, .ipam-matrix tr.ipam-first > td { border-top: 2px solid #DDD; }

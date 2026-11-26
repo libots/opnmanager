@@ -136,7 +136,7 @@ Grid layout prefs, the sidebar collapse state, and rule-editor switches are kept
 | `static/opn-form.js` / `opn-form.css` | `admin/opn_change_form.html` | OPNsense dialog layout for `OpnDialogAdmin` editors: help icons, full-help switch, dialog close |
 | `static/subnet-tools.js` | `admin/opn_change_form.html` | Address field hints and the subnet calculator |
 | `static/firewall-order.js` | `dashboard.html` | Drag (or arrow keys on the handle) to reorder firewalls; saves via `/firewalls/order/` |
-| `static/ipam.js` | `ipam_plan.html` | "Show interfaces without a plan" toggle (remembered) |
+| `static/ipam.js` | `ipam_plan.html`, `ipam_dhcp.html` | Remembered show/hide toggles (`data-toggle-target`, `-class`, `-key`): interfaces without a plan / scope |
 | `static/pull-firewalls.js` | `dashboard.html`, `deployment_overview.html` | Per-row and "pull all" (2 concurrent) via JSON |
 | `static/admin-shell.css` | `admin/base_site.html` | Admin restyle |
 

@@ -909,3 +909,53 @@ class RangeLayoutTests(TestCase):
         self.assertContains(page, "8 unused")
         self.assertContains(page, "addresses=10.x.10.2-9")
         self.assertContains(page, "Not deployed here")
+
+
+class DhcpPageTests(TestCase):
+    def setUp(self):
+        self.home = Firewall.objects.create(
+            name="Home", base_url="https://home.test", credential_prefix="HOME", ipv4_site_prefix="10.20.0.0/16"
+        )
+        self.vl10 = LogicalInterface.objects.create(name="VL10")
+        self.vl20 = LogicalInterface.objects.create(name="VL20", description="Cameras")
+        self.vl30 = LogicalInterface.objects.create(name="VL30")
+        InterfaceAddressing.objects.create(logical_interface=self.vl10, ipv4_address="10.x.10.1/24")
+        InterfaceAddressing.objects.create(logical_interface=self.vl20, ipv4_address="10.x.20.1/24")
+        AddressRange.objects.create(logical_interface=self.vl20, name="Cameras", addresses="10.x.20.10-49")
+        DhcpScope.objects.create(name="VL10 clients", logical_interface=self.vl10, dynamic_range="10.x.10.100-199")
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_interfaces_without_a_scope_are_listed_with_a_prefilled_add(self):
+        page = self.client.get("/ipam/dhcp/")
+        self.assertContains(page, "VL10 clients")
+        self.assertContains(page, 'id="ipam-unscoped-count" data-refresh>2</span>')
+        # VL20: widest unused span after the Cameras range; VL30 has no plan yet.
+        self.assertContains(page, "Suggested range: <code>x.x.20.50-254</code>")
+        self.assertContains(page, "name=VL20+DHCP")
+        self.assertContains(page, "dynamic_range=x.x.20.50-254")
+        self.assertContains(page, "Needs an IPv4 address plan first")
+        added = self.client.post(
+            f"/admin/fleet/dhcpscope/add/?_modal=1&logical_interface={self.vl20.pk}",
+            {
+                "name": "VL20 DHCP",
+                "logical_interface": self.vl20.pk,
+                "enabled": "on",
+                "dynamic_range": "10.x.20.50-254",
+                "gateway": "0.0.0.0",
+                "dns_servers": "0.0.0.0",
+                "targets": ["all"],
+                "options-TOTAL_FORMS": "0",
+                "options-INITIAL_FORMS": "0",
+            },
+        )
+        self.assertContains(added, '"message": "DHCP scope \\u201cVL20 DHCP\\u201d added."')
+        rows = self.client.get("/ipam/dhcp/").context["rows"]
+        self.assertEqual(
+            [(row["logical"].name, bool(row["scope"])) for row in rows],
+            [("VL10", True), ("VL20", True), ("VL30", False)],
+        )
+        rows = page.context["rows"]
+        self.assertEqual(
+            [(row["logical"].name, bool(row["scope"])) for row in rows],
+            [("VL10", True), ("VL20", False), ("VL30", False)],
+        )
