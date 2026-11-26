@@ -851,3 +851,61 @@ class IdentityAssociationTests(TestCase):
         }
         inventory.save()
         self.assertContains(self.client.get("/ipam/"), "ULA on the interface as a virtual IP ✓")
+
+
+class RangeLayoutTests(TestCase):
+    def setUp(self):
+        self.home = Firewall.objects.create(
+            name="Home", base_url="https://home.test", credential_prefix="HOME", ipv4_site_prefix="10.20.0.0/16"
+        )
+        self.vh = Firewall.objects.create(
+            name="VH", base_url="https://vh.test", credential_prefix="VH", ipv4_site_prefix="10.21.0.0/16"
+        )
+        self.vl10 = LogicalInterface.objects.create(name="VL10")
+        self.vl20 = LogicalInterface.objects.create(name="VL20")
+        InterfaceAddressing.objects.create(logical_interface=self.vl10, ipv4_address="10.x.10.1/24")
+        InterfaceAddressing.objects.create(logical_interface=self.vl20, ipv4_address="10.x.20.1/24")
+        AddressRange.objects.create(logical_interface=self.vl10, name="APs", addresses="10.x.10.30-49")
+        AddressRange.objects.create(logical_interface=self.vl10, name="Switches", addresses="10.x.10.10-29")
+        scope = DhcpScope.objects.create(
+            name="VL10 clients", logical_interface=self.vl10, dynamic_range="10.x.10.100-199", scope="selected"
+        )
+        scope.firewalls.add(self.home)
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def layout(self):
+        from .ipam_checks import Overlaps
+        from .ipam_views import range_layout, site_plans
+
+        firewalls = [self.home, self.vh]
+        return {g["logical"].name: g for g in range_layout(firewalls, site_plans(firewalls), Overlaps())}
+
+    def spans(self, row):
+        return [
+            None if cell.get("empty") or "first" not in cell else f"{cell['first']}-{cell['last']}"
+            for cell in row["cells"]
+        ]
+
+    def test_items_are_in_address_order_with_unused_space_between(self):
+        rows = self.layout()["VL10"]["rows"]
+        self.assertEqual(
+            [row["label"] for row in rows],
+            ["Firewall address", "Unused", "Switches", "APs", "Unused", "VL10 clients", "Unused"],
+        )
+        self.assertEqual(self.spans(rows[1]), ["10.20.10.2-10.20.10.9", "10.21.10.2-10.21.10.9"])
+        self.assertEqual(rows[1]["offsets"], "10.x.10.2-9")
+        # The dynamic range only targets Home, so VH's unused space after APs is listed once, at the end.
+        self.assertEqual(self.spans(rows[4]), ["10.20.10.50-10.20.10.99", None])
+        self.assertEqual(rows[4]["offsets"], "x.x.10.50-99")  # only Home has this gap
+        self.assertEqual(self.spans(rows[6]), ["10.20.10.200-10.20.10.254", "10.21.10.50-10.21.10.254"])
+        self.assertNotIn("offsets", rows[6])
+        # An interface with a plan but nothing in it is all unused space after the firewall.
+        self.assertEqual([row["label"] for row in self.layout()["VL20"]["rows"]], ["Firewall address", "Unused"])
+
+    def test_page_lists_every_planned_interface(self):
+        page = self.client.get("/ipam/ranges/")
+        self.assertContains(page, "VL20")
+        self.assertContains(page, "10.20.10.0/24")
+        self.assertContains(page, "8 unused")
+        self.assertContains(page, "addresses=10.x.10.2-9")
+        self.assertContains(page, "Not deployed here")

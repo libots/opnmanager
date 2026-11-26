@@ -49,6 +49,16 @@ with prefix length), `set_item/<if>`, `reconfigure` (applies only interfaces wit
 audit (`interfaces.addresses.started/completed/failed`). Only `staticv4`/`staticv6` interfaces are
 changed; the management address (an IP literal in `base_url`) is blocked. No rollback.
 
+## Ranges page (`ipam_views.range_layout`)
+
+One group per interface with an IPv4 plan: header (subnet, router, usable count per site), then
+items — the router (`Firewall address`), `AddressRange`s and enabled scopes' dynamic ranges (only at
+sites the scope applies to) — sorted by their offset at the first site where the interface resolves.
+`_gap_row` puts an unused row before each item and after the last; at a site it spans from the end
+of everything before it to the next item, and is empty where the next item doesn't exist there (that
+space shows once, further down). When every site's gap has the same offsets it gets a template label
+(`_range_template`, via `suggest_template`) used to prefill "Add range here".
+
 ## Overlap warnings (`ipam_checks.py`)
 
 `Overlaps()` resolves the plan once for the enabled firewalls and reports, as warnings only:

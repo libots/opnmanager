@@ -410,51 +410,171 @@ def dhcp_scopes(request):
     )
 
 
-def _range_cells(ranges, firewalls, plans, reservations):
-    rows = []
-    for item in ranges:
-        cells = []
+def _span_cell(first, last):
+    return {"first": first, "last": last, "size": range_size(first, last)}
+
+
+def range_layout(firewalls, plans, checks):
+    """Every planned interface with its contents in address order, per site: the firewall address,
+    named ranges, DHCP dynamic ranges, and the unused space between them.
+
+    Rows are ordered by their offset in the subnet at the first site where the interface resolves
+    (sites normally share the pattern). An "unused" row sits before each item and after the last;
+    at each site it covers the addresses between everything before it and the next item there.
+    """
+    reservations = {}
+    for reservation in StaticReservation.objects.all():
+        reservations.setdefault(reservation.firewall_id, []).append(reservation)
+    ranges, scopes = {}, {}
+    for item in AddressRange.objects.select_related("logical_interface"):
+        ranges.setdefault(item.logical_interface_id, []).append(item)
+    for scope in DhcpScope.objects.prefetch_related(*ScopedPolicy.SCOPE_PREFETCH):
+        if scope.enabled and scope.dynamic_range:
+            scopes.setdefault(scope.logical_interface_id, []).append(scope)
+    groups = []
+    for addressing in InterfaceAddressing.objects.select_related("logical_interface"):
+        if not addressing.ipv4_address:
+            continue
+        logical = addressing.logical_interface
+        sites = []
         for fw in firewalls:
-            planned = (plans.get((fw.pk, item.logical_interface_id)) or {}).get(4)
-            cell = {"firewall": fw}
-            try:
-                if not planned:
-                    raise TemplateError(f"{item.logical_interface} has no IPv4 address plan.")
-                if "error" in planned:
-                    raise TemplateError(planned["error"])
-                first, last = resolve_range(item.addresses, planned["subnet"], site_prefix(fw, 4))
-                used = [
-                    r
-                    for r in reservations.get(fw.pk, [])
-                    if r.logical_interface_id == item.logical_interface_id
-                    and int(first) <= int(ipaddress.ip_address(r.ip_address)) <= int(last)
-                ]
-                cell.update(first=first, last=last, size=range_size(first, last), used=len(used))
-                cell["percent"] = min(100, round(100 * len(used) / cell["size"]))
-            except TemplateError as exc:
-                cell["error"] = str(exc)
-            cells.append(cell)
-        rows.append({"range": item, "cells": cells})
-    return rows
+            planned = (plans.get((fw.pk, logical.pk)) or {}).get(4)
+            site = {"firewall": fw}
+            if planned and "subnet" in planned:
+                subnet = planned["subnet"]
+                site.update(subnet=subnet, router=planned["router"], usable=max(subnet.num_addresses - 2, 0))
+            else:
+                site["error"] = (planned or {}).get("error", f"{logical} has no IPv4 plan here.")
+            sites.append(site)
+        items = [{"kind": "firewall", "key": ("firewall",), "label": "Firewall address"}]
+        items += [
+            {"kind": "range", "key": ("range", r.pk), "range": r, "label": r.name} for r in ranges.get(logical.pk, [])
+        ]
+        items += [
+            {"kind": "pool", "key": ("pool", s.pk), "scope": s, "label": s.name} for s in scopes.get(logical.pk, [])
+        ]
+        spans = {}  # (item key, fw pk) -> (first, last)
+        for item in items:
+            item["cells"] = []
+            for site in sites:
+                fw = site["firewall"]
+                cell = {"firewall": fw}
+                if "error" in site:
+                    cell["error"] = site["error"]
+                elif item["kind"] == "firewall":
+                    spans[(item["key"], fw.pk)] = (site["router"], site["router"])
+                    cell.update(_span_cell(site["router"], site["router"]))
+                elif item["kind"] == "pool" and not item["scope"].applies_to(fw):
+                    cell["absent"] = "Not deployed here"
+                else:
+                    text = item["range"].addresses if item["kind"] == "range" else item["scope"].dynamic_range
+                    try:
+                        first, last = resolve_range(text, site["subnet"], site_prefix(fw, 4))
+                    except TemplateError as exc:
+                        cell["error"] = str(exc)
+                    else:
+                        spans[(item["key"], fw.pk)] = (first, last)
+                        cell.update(_span_cell(first, last))
+                        if item["kind"] == "range":
+                            used = sum(
+                                1
+                                for r in reservations.get(fw.pk, [])
+                                if r.logical_interface_id == logical.pk
+                                and int(first) <= int(ipaddress.ip_address(r.ip_address)) <= int(last)
+                            )
+                            cell.update(used=used, percent=min(100, round(100 * used / cell["size"])))
+                        subject = (
+                            ("range", fw.pk, item["range"].pk)
+                            if item["kind"] == "range"
+                            else ("pool", fw.pk, item["scope"].pk)
+                        )
+                        cell["warnings"] = checks.for_subject(*subject)
+                item["cells"].append(cell)
+        reference = next((site for site in sites if "subnet" in site), None)
+
+        def order(item, reference=reference, spans=spans):
+            span = spans.get((item["key"], reference["firewall"].pk)) if reference else None
+            return (0, int(span[0]), int(span[1])) if span else (1, 0, 0, item["label"])
+
+        items.sort(key=order)
+        rows = []
+        for index in range(len(items) + 1):
+            gap = _gap_row(index, items, sites, spans, logical)
+            if gap:
+                rows.append(gap)
+            if index < len(items):
+                rows.append(items[index])
+        groups.append({"logical": logical, "addressing": addressing, "sites": sites, "rows": rows})
+    return groups
+
+
+def _gap_row(index, items, sites, spans, logical):
+    """The unused addresses before items[index] (or after the last item) at each site, or None."""
+    cells, offsets, any_space = [], set(), False
+    for site in sites:
+        fw = site["firewall"]
+        if "subnet" not in site:
+            cells.append({"firewall": fw, "empty": True})
+            continue
+        if index < len(items) and (items[index]["key"], fw.pk) not in spans:
+            # The next item doesn't exist here; its space is part of a later unused row.
+            cells.append({"firewall": fw, "empty": True})
+            continue
+        subnet = site["subnet"]
+        lowest = int(subnet.network_address) + 1
+        highest = int(subnet.broadcast_address) - 1
+        before = [spans[(item["key"], fw.pk)] for item in items[:index] if (item["key"], fw.pk) in spans]
+        after = [spans[(item["key"], fw.pk)] for item in items[index:] if (item["key"], fw.pk) in spans]
+        start = max([int(last) + 1 for _, last in before] + [lowest])
+        end = min([int(first) - 1 for first, _ in after[:1]] + [highest])
+        if start > end:
+            cells.append({"firewall": fw, "empty": True})
+            continue
+        any_space = True
+        first, last = ipaddress.ip_address(start), ipaddress.ip_address(end)
+        cells.append({"firewall": fw, **_span_cell(first, last)})
+        offsets.add((start - int(subnet.network_address), end - int(subnet.network_address)))
+    if not any_space:
+        return None
+    row = {"kind": "gap", "label": "Unused", "cells": cells}
+    if len(offsets) == 1:
+        low, high = offsets.pop()
+        text = _range_template(cells, sites) or f"+{low}-+{high}"
+        row["add_query"] = urlencode({"logical_interface": logical.pk, "addresses": text})
+        row["offsets"] = text
+    return row
+
+
+def _range_template(cells, sites):
+    """The gap written like the plan (10.x.10.50-99): site parts as x, a short end where possible."""
+    starts, ends = [], []
+    for cell, site in zip(cells, sites, strict=True):
+        if cell.get("empty") or "first" not in cell:
+            continue
+        prefix = site_prefix(site["firewall"], 4)
+        if prefix is None:
+            return ""
+        starts.append((prefix, ipaddress.ip_interface(f"{cell['first']}/32")))
+        ends.append((prefix, ipaddress.ip_interface(f"{cell['last']}/32")))
+    first, last = suggest_template(starts), suggest_template(ends)
+    if not first or not last:
+        return ""
+    first, last = first.removesuffix("/32"), last.removesuffix("/32")
+    head, _, tail = last.rpartition(".")
+    if first.rpartition(".")[0] == head:
+        return f"{first}-{tail}"
+    return f"{first}-{last}"
 
 
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def address_ranges(request):
     firewalls = _firewalls(request)
-    plans = site_plans(firewalls)
-    reservations = {}
-    for reservation in StaticReservation.objects.all():
-        reservations.setdefault(reservation.firewall_id, []).append(reservation)
-    rows = _range_cells(AddressRange.objects.select_related("logical_interface"), firewalls, plans, reservations)
-    checks = Overlaps()
-    for row in rows:
-        for cell in row["cells"]:
-            cell["warnings"] = checks.for_subject("range", cell["firewall"].pk, row["range"].pk)
+    groups = range_layout(firewalls, site_plans(firewalls), Overlaps())
     return render(
         request,
         "fleet/ipam_ranges.html",
-        {"firewalls": firewalls, "rows": rows, "all_firewalls": Firewall.objects.all()},
+        {"firewalls": firewalls, "groups": groups, "all_firewalls": Firewall.objects.all()},
     )
 
 

@@ -581,3 +581,10 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-small-button.button { min-height: 26px; padding: 2px 10px; font-size: 13px; line-height: 20px; }
 .ipam-ok { color: var(--opn-success) !important; }
 .ipam-address { font-weight: 600; }
+/* Ranges: each interface's subnet in address order, with unused space between the blocks. */
+.ipam-ranges tbody + tbody .ipam-group th, .ipam-ranges tbody + tbody .ipam-group td { border-top: 2px solid #DDD; }
+.ipam-ranges .ipam-gap th, .ipam-ranges .ipam-gap td { background: repeating-linear-gradient(135deg, #FAFAFA, #FAFAFA 6px, #F3F3F3 6px, #F3F3F3 12px); color: var(--opn-muted); }
+.ipam-ranges .ipam-gap td .mono { color: var(--opn-muted); }
+.ipam-gap-label { font-style: italic; }
+.ipam-ranges .ipam-pool td { background: #F2F8FB; }
+.ipam-ranges .ipam-firewall th, .ipam-ranges .ipam-firewall td { padding-top: 5px; padding-bottom: 5px; }
