@@ -50,7 +50,7 @@ class DeploymentTests(TestCase):
         client.save_rule.assert_called_once_with(row["operation"])
         client.apply_rules.assert_called_once()
         self.assertTrue(AuditEvent.objects.filter(action="rules.deploy.completed").exists())
-        self.assertIn("--- firewall/current", [line["text"] for line in row["diff"]])
+        self.assertIn("description", [change["field"] for change in row["changes"]])
 
     def test_stale_device_or_policy_and_unknown_selection_rejected(self):
         plan = deployment_plan(self.fw)
@@ -690,7 +690,7 @@ class CombinedDeploymentTests(TestCase):
         user = get_user_model().objects.create_superuser("admin-test", password="Test-only-password")
         self.client.force_login(user)
         page = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
-        self.assertContains(page, "1. Supporting definitions")
+        self.assertContains(page, 'Definitions <span class="count">')
         self.assertContains(page, "Needed")
         self.client.post(
             f"/firewalls/{self.fw.pk}/deploy/",
@@ -703,3 +703,69 @@ class CombinedDeploymentTests(TestCase):
         job = DeviceJob.objects.get()
         self.assertTrue(job.params["combined"])
         self.assertTrue(job.params["include_definitions"])
+
+
+class DeployAllTests(TestCase):
+    """One review page for every enabled firewall; one independent job per checked firewall."""
+
+    def setUp(self):
+        logical = LogicalInterface.objects.create(name="LAN")
+        self.firewalls = []
+        for name in ("Home", "Branch"):
+            fw = Firewall.objects.create(name=name, base_url=f"https://{name.lower()}.test", credential_prefix=name)
+            InterfaceMapping.objects.create(firewall=fw, logical_interface=logical, device_interface="lan")
+            Snapshot.objects.create(firewall=fw, data=copy.deepcopy(EMPTY))
+            self.firewalls.append(fw)
+        self.idle = Firewall.objects.create(name="Idle", base_url="https://idle.test", credential_prefix="IDLE")
+        Snapshot.objects.create(firewall=self.idle, data=copy.deepcopy(EMPTY))
+        self.rule = make_rule(logical, name="Allow LAN", sequence=100, scope="selected")
+        self.rule.firewalls.set(self.firewalls)
+        self.unchanged = Firewall.objects.create(
+            name="Off", base_url="https://off.test", credential_prefix="OFF", enabled=False
+        )
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_page_lists_changes_per_firewall_and_folds_idle_ones(self):
+        page = self.client.get("/fleet/deployment/deploy/")
+        for fw in self.firewalls:
+            self.assertContains(page, f'name="fw{fw.pk}-selected_rules" value="{self.rule.pk}" checked')
+            self.assertContains(page, f'name="fw{fw.pk}-include" value="yes" data-deploy-include checked')
+        self.assertContains(page, "1 firewall with nothing to deploy")
+        self.assertContains(page, "Disabled firewalls are not reviewed: Off.")
+        self.assertContains(page, '<th scope="row">Description</th>')
+
+    def test_post_queues_one_job_per_checked_firewall(self):
+        from .deployment import combined_plan
+        from .models import DeviceJob
+
+        home, branch = self.firewalls
+        data = {"acknowledge": "yes", f"fw{home.pk}-include": "yes"}
+        for fw in self.firewalls:
+            data[f"fw{fw.pk}-approval_sha256"] = combined_plan(fw)["approval_sha256"]
+            data[f"fw{fw.pk}-selected_rules"] = [str(self.rule.pk)]
+        response = self.client.post("/fleet/deployment/deploy/", data)
+        self.assertRedirects(response, "/fleet/deployment/")
+        job = DeviceJob.objects.get()
+        self.assertEqual(job.firewall, home)
+        self.assertEqual(job.params["selected_rules"], [str(self.rule.pk)])
+        self.assertEqual(job.params["approval_sha256"], data[f"fw{home.pk}-approval_sha256"])
+        data[f"fw{branch.pk}-include"] = "yes"
+        self.client.post("/fleet/deployment/deploy/", data)
+        self.assertEqual(DeviceJob.objects.filter(firewall=branch).count(), 1)
+        self.assertEqual(DeviceJob.objects.filter(firewall=home).count(), 1)  # the first is still queued
+
+    def test_post_requires_acknowledgement_and_a_firewall(self):
+        from .models import DeviceJob
+
+        self.client.post("/fleet/deployment/deploy/", {f"fw{self.firewalls[0].pk}-include": "yes"})
+        self.client.post("/fleet/deployment/deploy/", {"acknowledge": "yes"})
+        self.assertFalse(DeviceJob.objects.exists())
+
+    def test_unchanged_rules_are_folded_on_the_single_review(self):
+        home = self.firewalls[0]
+        rule_payload = deployment_plan(home)["rows"][0]["operation"]["payload"]
+        Snapshot.objects.create(firewall=home, data={**EMPTY, "rules": [{**rule_payload, "uuid": "r1"}]})
+        page = self.client.get(f"/firewalls/{home.pk}/deploy/")
+        self.assertContains(page, "Nothing to deploy.")
+        self.assertContains(page, "1 unchanged rule")
+        self.assertNotContains(page, 'name="selected_rules"')

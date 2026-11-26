@@ -10,7 +10,7 @@ from .dependencies import rule_definitions
 from .locks import device_write_lock
 from .models import AuditEvent, Snapshot
 from .opnsense import DeviceError
-from .reconcile import Policy, canonical, plan_for
+from .reconcile import Policy, canonical, field_changes, plan_for
 from .rule_identity import marker_of, short_marker
 from .snapshot_compare import rows_by_identity
 
@@ -125,6 +125,10 @@ def definition_plan(firewall, rule=None):
     operations = [
         op for kind in ("group", "category") for op in all_objects["operations"] if op["kind"] == kind
     ] + aliases
+    observed = {(i["kind"], i["name"]): i["actual"] for i in all_objects["items"] if i["desired"]}
+    for op in operations:
+        name = op["payload"].get("name") or op["payload"].get("ifname", "")
+        op["changes"] = field_changes(observed.get((op["kind"], name)), op["payload"], op["kind"])
     result = {
         "firewall": firewall.name,
         "snapshot_id": all_objects["snapshot_id"],

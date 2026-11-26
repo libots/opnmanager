@@ -31,6 +31,7 @@ urlpatterns = [
     path("firewalls/<int:pk>/pull/", views.pull_snapshot, name="pull_snapshot"),
     path("firewalls/<int:pk>/plan/", views.download_plan, name="download_plan"),
     path("firewalls/<int:pk>/deploy/", views.deploy_rules, name="deploy_rules"),
+    path("fleet/deployment/deploy/", views.deploy_all, name="deploy_all"),
     path("rules/", views.rules_page, name="rules"),
     path("firewalls/<int:pk>/credentials/", views.firewall_credentials, name="credentials"),
     path("firewalls/<int:pk>/sync/", views.sync_definitions, name="sync_definitions"),

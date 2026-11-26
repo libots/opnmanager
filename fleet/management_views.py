@@ -127,7 +127,11 @@ def deployment_overview(request):
     return render(
         request,
         "fleet/deployment_overview.html",
-        {"devices": Firewall.objects.all(), "jobs": FirmwareJob.objects.select_related("firewall")[:30]},
+        {
+            "devices": Firewall.objects.all(),
+            "jobs": FirmwareJob.objects.select_related("firewall")[:30],
+            "device_jobs": DeviceJob.objects.select_related("firewall").order_by("-created_at", "-pk")[:20],
+        },
     )
 
 

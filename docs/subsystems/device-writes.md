@@ -31,7 +31,9 @@ intentional. Keep plan output deterministic (sort sets, no timestamps).
 
 One `plan_for(..., rule_ids={id}, definition_names=rule_definitions(rule))` per targeted rule
 (sharing one `Policy`). Each row: `id`, `name`, `operation`, `errors`, `warnings`,
-`dependencies` (definition operations the rule needs), `after_definitions`, `intent`, `diff`.
+`dependencies` (definition operations the rule needs), `after_definitions`, `intent`, `changes`
+(`reconcile.field_changes`: differing fields for an update, meaningful fields for a create).
+`definition_plan` adds the same `changes` list to each definition operation.
 Then:
 - `_check_positions`: blocks a rule whose `(binding, sequence)` collides with another targeted
   manager rule or with an unmatched device-local rule (floating rules share `(floating)`).
@@ -58,6 +60,13 @@ both sub-digests. `execute_combined`, under one lock:
 **Inner functions are underscore-prefixed and lock-free; public `execute_*` take the lock.** Never
 call a public `execute_*` while holding the lock: `flock` locks are per open file description, so
 the same process would block itself and get "already running".
+
+## Deploying several firewalls (`views.deploy_all`)
+
+There is no fleet-wide transaction. The all-firewalls page renders one `combined_plan` per enabled
+firewall; the POST enqueues an ordinary `rules.deploy` job for each checked firewall with that
+firewall's own digest and selections. Each job runs the single-firewall workflow above, so a
+failure on one firewall leaves the others untouched (and their jobs still run).
 
 ## Rule execution and rollback (`_execute_deployment`)
 

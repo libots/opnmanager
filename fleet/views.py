@@ -481,6 +481,101 @@ def adopt_rules(request, pk):
     return redirect("/rules/?firewall=" + str(fw.pk))
 
 
+# OPNsense's own labels for the fields a review lists (dialogFilterRule.xml, alias and group dialogs).
+FIELD_LABELS = {
+    "description": "Description",
+    "descr": "Description",
+    "interface": "Interface",
+    "interfacenot": "Invert interface",
+    "sequence": "Sequence",
+    "action": "Action",
+    "direction": "Direction",
+    "ipprotocol": "TCP/IP Version",
+    "protocol": "Protocol",
+    "source_net": "Source",
+    "source_not": "Invert source",
+    "source_port": "Source port",
+    "destination_net": "Destination",
+    "destination_not": "Invert destination",
+    "destination_port": "Destination port",
+    "received-on": "Received on",
+    "received-on-not": "Invert received on",
+    "icmptype": "ICMP type",
+    "icmp6type": "ICMPv6 type",
+    "categories": "Categories",
+    "log": "Log",
+    "quick": "Quick",
+    "statetype": "State type",
+    "gateway": "Gateway",
+    "enabled": "Enabled",
+    "name": "Name",
+    "ifname": "Name",
+    "type": "Type",
+    "content": "Content",
+    "members": "Members",
+    "nogroup": "Hide from GUI",
+    "color": "Color",
+}
+
+
+def _labelled(changes):
+    return [{**change, "label": FIELD_LABELS.get(change["field"], change["field"])} for change in changes]
+
+
+def deploy_review(firewall, include_definitions, prefix=""):
+    """Plan one firewall's deployment and sort it for review: what changes first, the rest folded away."""
+    combined = combined_plan(firewall, include_definitions)
+    rules, definitions = combined["rules"], combined["definitions"]
+    definition_ops = [
+        {
+            **op,
+            "name": op["payload"].get("name") or op["payload"].get("ifname", ""),
+            "changes": _labelled(op["changes"]),
+        }
+        for op in (definitions or {}).get("operations", [])
+    ]
+    changing = [
+        {**row, "changes": _labelled(row["changes"])} for row in rules["rows"] if row["operation"] and not row["errors"]
+    ]
+    blocked = [row for row in rules["rows"] if row["errors"]]
+    unchanged = [row for row in rules["rows"] if not row["operation"] and not row["errors"]]
+    notes = list((definitions or {}).get("warnings", []))
+    sync_ready = definitions_to_apply(combined)
+    removals = (definitions or {}).get("removals", [])
+    return {
+        "firewall": firewall,
+        "prefix": prefix,
+        "combined": combined,
+        "plan": rules,
+        "definitions": definitions,
+        "definition_ops": definition_ops,
+        "sync_ready": sync_ready,
+        "removals": removals,
+        "changing": changing,
+        "blocked": blocked,
+        "unchanged": unchanged,
+        "notes": notes,
+        "folded": len(unchanged) + len(notes),
+        "warned": any(row["warnings"] for row in changing),
+        "has_changes": bool((sync_ready and definition_ops) or changing or rules["retire"] or removals),
+    }
+
+
+def _deploy_params(request, include_definitions, prefix=""):
+    def values(name):
+        return [value for value in request.POST.getlist(prefix + name) if value]
+
+    return {
+        "combined": True,
+        "include_definitions": include_definitions,
+        "approval_sha256": request.POST.get(prefix + "approval_sha256", ""),
+        "selected_rules": values("selected_rules"),
+        "remove_definitions": values("remove_definition") if include_definitions else [],
+        "accept_warnings": request.POST.get(prefix + "accept_warnings") == "yes",
+        "allow_unprotected": request.POST.get(prefix + "allow_unprotected") == "yes",
+    }
+
+
 @login_required
 @permission_required(("fleet.view_firewall", "fleet.deploy_rules"), raise_exception=True)
 def deploy_rules(request, pk):
@@ -491,32 +586,54 @@ def deploy_rules(request, pk):
         try:
             if request.POST.get("acknowledge") != "yes":
                 raise DeviceError("Confirm the apply warning before deploying.")
-            params = {
-                "combined": True,
-                "include_definitions": include_definitions,
-                "approval_sha256": request.POST.get("approval_sha256", ""),
-                "selected_rules": [value for value in request.POST.getlist("selected_rules") if value],
-                "remove_definitions": [value for value in request.POST.getlist("remove_definition") if value]
-                if include_definitions
-                else [],
-                "accept_warnings": request.POST.get("accept_warnings") == "yes",
-                "allow_unprotected": request.POST.get("allow_unprotected") == "yes",
-            }
-            job = enqueue(fw, DeviceJob.RULES_DEPLOY, params, request.user.username)
+            job = enqueue(
+                fw, DeviceJob.RULES_DEPLOY, _deploy_params(request, include_definitions), request.user.username
+            )
         except DeviceError as exc:
             messages.error(request, str(exc))
             return redirect("deploy_rules", pk=pk)
         return redirect("job", pk=job.pk)
-    plan = combined_plan(fw, include_definitions)
+    return render(request, "fleet/deploy.html", {"firewall": fw, "review": deploy_review(fw, include_definitions)})
+
+
+@login_required
+@permission_required(("fleet.view_firewall", "fleet.deploy_rules"), raise_exception=True)
+def deploy_all(request):
+    """Review every enabled firewall on one page; each included firewall gets its own deployment job."""
+    include_definitions = request.user.has_perm("fleet.sync_definitions")
+    firewalls = list(Firewall.objects.filter(enabled=True))
+    if request.method == "POST":
+        if request.POST.get("acknowledge") != "yes":
+            messages.error(request, "Confirm the apply warning before deploying. Nothing was queued.")
+            return redirect("deploy_all")
+        included = [fw for fw in firewalls if request.POST.get(f"fw{fw.pk}-include") == "yes"]
+        if not included:
+            messages.error(request, "Select at least one firewall to deploy to. Nothing was queued.")
+            return redirect("deploy_all")
+        queued = []
+        for fw in included:
+            params = _deploy_params(request, include_definitions, prefix=f"fw{fw.pk}-")
+            try:
+                queued.append(enqueue(fw, DeviceJob.RULES_DEPLOY, params, request.user.username))
+            except DeviceError as exc:
+                messages.error(request, f"{fw.name}: {exc} Nothing was queued for it.")
+        if queued:
+            messages.success(
+                request,
+                f"Queued {len(queued)} deployment{'s' if len(queued) != 1 else ''} "
+                f"({', '.join(job.firewall.name for job in queued)}). Each firewall is deployed, verified and "
+                "reported on its own; follow them below.",
+            )
+        return redirect("deployment_overview")
+    reviews = [deploy_review(fw, include_definitions, prefix=f"fw{fw.pk}-") for fw in firewalls]
     return render(
         request,
-        "fleet/deploy.html",
+        "fleet/deploy_all.html",
         {
-            "firewall": fw,
-            "combined": plan,
-            "plan": plan["rules"],
-            "definitions": plan["definitions"],
-            "sync_ready": definitions_to_apply(plan),
+            "reviews": reviews,
+            "changing": [r for r in reviews if r["has_changes"]],
+            "idle": sum(not r["has_changes"] for r in reviews),
+            "skipped": Firewall.objects.filter(enabled=False),
         },
     )
 

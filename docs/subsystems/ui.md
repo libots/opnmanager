@@ -14,6 +14,7 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | `/firewalls/<pk>/import/` | `views.import_snapshot` | POST JSON file upload (≤5 MiB) |
 | `/firewalls/<pk>/plan/` | `views.download_plan` | `plan_for` as JSON download |
 | `/firewalls/<pk>/deploy/` | `views.deploy_rules` | Combined review (GET) / enqueue job (POST) |
+| `/fleet/deployment/deploy/` | `views.deploy_all` | Every enabled firewall's combined review; POST enqueues one `rules.deploy` job per checked firewall (fields prefixed `fw<pk>-`) |
 | `/firewalls/<pk>/sync/` | `views.sync_definitions` | Definitions-only review / enqueue |
 | `/firewalls/<pk>/rules/import/` | `views.adopt_rules` | POST rule adoption |
 | `/firewalls/<pk>/credentials/` | `views.firewall_credentials` | Write-only key/secret |
@@ -78,6 +79,7 @@ Grid layout prefs, the sidebar collapse state, and rule-editor switches are kept
 | `static/rules.js` | `fleet/rules.html` | Rules grid: columns, filters, inspect/tree, CSV, dialog, bulk |
 | `static/rule-editor.js` / `.css` | `admin/fleet/rule/change_form.html` | Dialog behavior (advanced/help switches, protocol-dependent fields, bulk greyed fields) |
 | `static/logical-interfaces.js` | `fleet/logical_interfaces.html` | Mapping matrix edits, conflict highlighting, fill by name |
+| `static/deploy.js` | `deploy.html`, `deploy_all.html` | Per-firewall and total selection counts; disables Deploy when nothing is selected |
 | `static/pull-firewalls.js` | `dashboard.html`, `deployment_overview.html` | Per-row and "pull all" (2 concurrent) via JSON |
 | `static/admin-shell.css` | `admin/base_site.html` | Admin restyle |
 
@@ -85,6 +87,11 @@ Icons: `{% load icons %}{% icon "name" "css-class" %}` inlines `static/icons/<na
 (Font Awesome Free, vendored; unknown names raise `TemplateSyntaxError`). Icons used by `rules.js`
 must be listed in `views.RULE_ICONS` (rendered into a `<template>` for the script). Add new SVGs to
 `static/icons/` and keep `THIRD_PARTY.md` accurate.
+
+Deploy reviews: `views.deploy_review()` sorts a `combined_plan` into `definition_ops`, `changing`
+rules, `removals`, `retire`, `blocked` and folded `unchanged`/`notes`, and adds OPNsense field
+labels (`views.FIELD_LABELS`). Both review pages render it with `partials/deploy_review.html`; the
+change tables come from `changes` lists in the plan (`reconcile.field_changes`), not from a diff.
 
 Templates: `base.html` + `sidebar.html` + `shell_head.html` form the shell;
 `templates/fleet/*.html` map 1:1 to views; `partials/` holds pull buttons and the rule row.

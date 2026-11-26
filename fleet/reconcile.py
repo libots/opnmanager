@@ -83,6 +83,32 @@ def canonical(row, fields, kind):
     return result
 
 
+# Fields always listed when reviewing a new rule, so its placement and match are visible.
+REVIEW_FIELDS = {"description", "interface", "sequence", "action", "protocol", "source_net", "destination_net"}
+
+
+def field_changes(actual, desired, kind):
+    """Fields a push writes, as {field, actual, desired}, for a compact review.
+
+    For an update only the fields that differ are listed. For a create every field
+    with a meaningful value is listed (defaults and empty values are left out).
+    """
+    after = canonical(desired, desired, kind)
+    if actual is None:
+        defaults = RULE_DEFAULTS if kind == "rule" else {"enabled": "1"}
+        return [
+            {"field": key, "actual": "", "desired": value}
+            for key, value in sorted(after.items())
+            if key in REVIEW_FIELDS or (value and value != defaults.get(key))
+        ]
+    before = canonical(actual, desired, kind)
+    return [
+        {"field": key, "actual": before[key], "desired": after[key]}
+        for key in sorted(after)
+        if before[key] != after[key]
+    ]
+
+
 ADDRESS_TOKEN = re.compile(r"@([A-Za-z_][A-Za-z0-9_]*):(net|ip)")
 
 

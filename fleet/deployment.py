@@ -1,6 +1,5 @@
 """Explicit selected-rule upsert/apply, protected by an OPNsense savepoint with automatic rollback."""
 
-import difflib
 import json
 
 from .alias_sync import digest
@@ -10,7 +9,7 @@ from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, Snapshot
 from .opnsense import DeviceError
 from .opnsense_errors import SavepointUnsupported
-from .reconcile import Policy, canonical, plan_for
+from .reconcile import Policy, canonical, field_changes, plan_for
 from .rule_identity import is_managed
 from .rule_identity import matches as matches_rule
 from .snapshot_compare import configuration_changes
@@ -183,21 +182,7 @@ def deployment_plan(firewall, pending_definitions=None):
             errors.append("Required category UUIDs are missing. Pull a live snapshot before pushing this rule.")
         if operation and operation["action"] == "update" and not operation.get("remote_uuid"):
             errors.append("Pull a live snapshot with remote rule UUIDs before updating.")
-        before = canonical(item["actual"] or {}, item["desired"], "rule") if item and item["actual"] else {}
-        after = canonical(item["desired"], item["desired"], "rule") if item else {}
-        lines = (
-            list(
-                difflib.unified_diff(
-                    json.dumps(before, indent=2, sort_keys=True).splitlines(),
-                    json.dumps(after, indent=2, sort_keys=True).splitlines(),
-                    fromfile="firewall/current",
-                    tofile="manager/desired",
-                    lineterm="",
-                )
-            )
-            if operation
-            else []
-        )
+        changes = field_changes(item["actual"], item["desired"], "rule") if item and operation else []
         row = {
             "id": str(rule.pk),
             "name": rule.name,
@@ -207,13 +192,7 @@ def deployment_plan(firewall, pending_definitions=None):
             "dependencies": dependencies,
             "after_definitions": names if after_definitions else "",
             "intent": rule_intent(operation, category_names),
-            "diff": [
-                {
-                    "text": line,
-                    "kind": "added" if line.startswith("+") else "removed" if line.startswith("-") else "",
-                }
-                for line in lines
-            ],
+            "changes": changes,
         }
         result["rows"].append(row)
         if item:

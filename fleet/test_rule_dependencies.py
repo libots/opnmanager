@@ -91,7 +91,7 @@ class RuleDependencyTests(TestCase):
         user = get_user_model().objects.create_superuser("test-admin", password="Test-only-password")
         self.client.force_login(user)
         page = self.client.get(f"/firewalls/{self.fw.pk}/deploy/")
-        self.assertContains(page, "Uses definitions synchronized in step 1: alias Needed")
+        self.assertContains(page, "Uses definitions written first: alias Needed")
         self.assertContains(page, f'name="selected_rules" value="{self.rule.pk}"')
         response = self.client.get(f"/firewalls/{self.fw.pk}/sync/?rule={self.rule.pk}")
         self.assertContains(response, 'name="rule_id"')
