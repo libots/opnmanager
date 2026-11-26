@@ -18,7 +18,15 @@ Templates `templates/fleet/ipam_*.html`. Tests: `fleet/test_ipam.py`.
   (`split_range`).
 - `interface_plan(addressing, firewall)` → `{4: ..., 6: ...}`, each `None`, `{interface, subnet,
   router}` or `{error}`. `compare_observed` checks it against `DeviceInventory.data["interfaces"]`.
-- Interface addresses are never written to devices (no OPNsense API).
+- Templates are the firewall's own address on the interface (`interface`), from which the subnet
+  follows. `interface_push.py` writes them on OPNsense 26.7+ (below).
+- Identity association: `refresh_inventory` stores `ipv4_mode` / `ipv6_mode` per interface
+  (`system_management.address_modes`: `static`, `none`, or the keyword: `idassoc6` = Identity
+  association, `track6` = legacy Track Interface, `dhcp6`, `slaac`, ...). For `idassoc6`/`track6`
+  interfaces with a ULA plan (`ipam.ipv6_scope`), `ipam_views._ula_vip` reports whether an IP alias
+  `VirtualIP` with that address exists for the firewall and whether it is on the device (inventory
+  `vips` or observed). `ipam_views.create_ula_vips` defines missing ones (selected scope, one
+  firewall) and hands over to `review_vip`; applying is the normal VIP job.
 - The Address Plan page lists every logical interface; those without a plan are rows hidden until
   "Show interfaces without a plan" is ticked (`static/ipam.js`, localStorage). Their **Add plan**
   opens the editor prefilled by `suggest_template()` from the addresses currently observed at each
@@ -27,6 +35,19 @@ Templates `templates/fleet/ipam_*.html`. Tests: `fleet/test_ipam.py`.
 
 Address fields in the editors show live hints from `ipam.hint_lines` (`describe_network` for a
 subnet's usable range) via `/ipam/subnet-info/`, plus a client-side subnet calculator; see ui.md.
+
+## Pushing interface addresses (`interface_push.py`)
+
+OPNsense 26.7 added `/api/interfaces/assignment/` (controller `AssignmentController`, model
+`NetworkInterface`): `get_item/<if>` (body `interface`: `type4`/`ipaddr`, `type6`/`ipaddrv6`, address
+with prefix length), `set_item/<if>`, `reconfigure` (applies only interfaces with pending edits),
+`pending` (`ok` / `pending`). A 404 means an older firewall: the review says 26.7 is needed.
+`review()` reads each mapped planned interface, plans per family and returns a digest of
+(observed, rows); the view signs it (`signing`, salt `interface-addresses`, 10 minutes). Job
+`interfaces.addresses` (`execute`): lock → `pending` must be `ok` → re-read and digest must match →
+`set_item` per device → `reconfigure` → readback with `get_item` → best-effort inventory refresh →
+audit (`interfaces.addresses.started/completed/failed`). Only `staticv4`/`staticv6` interfaces are
+changed; the management address (an IP literal in `base_url`) is blocked. No rollback.
 
 ## Overlap warnings (`ipam_checks.py`)
 

@@ -113,12 +113,20 @@ def _sync_dhcp(job, client):
     return f"Wrote and verified {written} reservations and removed {removed}; the DHCP service was reloaded."
 
 
+def _push_addresses(job, client):
+    from .interface_push import execute
+
+    count = execute(job.firewall, job.params.get("digest"), job.params.get("selected", []), client, job.actor)
+    return f"Changed and verified {count} interface address{'es' if count != 1 else ''}; the interfaces were applied."
+
+
 HANDLERS = {
     DeviceJob.RULES_DEPLOY: _deploy_rules,
     DeviceJob.DEFINITIONS_SYNC: _sync_definitions,
     DeviceJob.VIP_APPLY: _apply_vip,
     DeviceJob.VIP_DELETE: _delete_vip,
     DeviceJob.DHCP_SYNC: _sync_dhcp,
+    DeviceJob.INTERFACE_ADDRESSES: _push_addresses,
 }
 
 

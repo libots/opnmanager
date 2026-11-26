@@ -577,3 +577,7 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-overlaps summary { cursor: pointer; font-weight: 600; }
 .ipam-overlaps ul { margin: 8px 0 4px; padding-left: 20px; font-size: 14px; }
 .ipam-overlaps .help { margin: 4px 0 0; }
+.ipam-inline-form { margin: 4px 0 2px; }
+.ipam-small-button.button { min-height: 26px; padding: 2px 10px; font-size: 13px; line-height: 20px; }
+.ipam-ok { color: var(--opn-success) !important; }
+.ipam-address { font-weight: 600; }

@@ -284,6 +284,19 @@ def observed_addresses(inventory_row):
     return found
 
 
+ULA_NETWORK = ipaddress.ip_network("fc00::/7")
+
+
+def ipv6_scope(address):
+    """'ula', 'link-local' or 'global' for an IPv6 address or interface."""
+    ip = getattr(address, "ip", address)
+    if ip.is_link_local:
+        return "link-local"
+    if ip in ULA_NETWORK:
+        return "ula"
+    return "global"
+
+
 def compare_observed(planned, observed):
     """'match', 'mismatch' or 'absent' for a planned family against observed addresses."""
     if not planned or "error" in planned:

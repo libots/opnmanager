@@ -625,6 +625,7 @@ class VirtualIPAdmin(OpnDialogAdmin):
 @admin.register(InterfaceAddressing)
 class InterfaceAddressingAdmin(OpnDialogAdmin):
     return_view = "ipam_plan"
+    labels = {"ipv4_address": "Firewall IPv4 address", "ipv6_address": "Firewall IPv6 address"}
     address_fields = {
         "ipv4_address": ("template", ("logical_interface",)),
         "ipv6_address": ("template", ("logical_interface",)),

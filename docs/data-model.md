@@ -104,7 +104,7 @@ Snapshots are immutable observations; only the newest one is used for planning.
 ### `DeviceInventory.data`
 
 Merged dict, each key written by a different feature (always `{**data, key: ...}`):
-`interfaces` (overview rows; `system_management.refresh_inventory`), `protocols` (device
+`interfaces` (overview rows incl. `ipv4_mode`/`ipv6_mode`; `system_management.refresh_inventory`), `protocols` (device
 protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware` (`system_management.firmware_summary`: version, core/plugin updates, installed plugins), `vips`
 (passwords stripped), `dhcp` (`dhcp.refresh_dhcp`: backend, leases, reservations, Kea subnets, read_at), `rule_rollback` (`savepoint` | `config_history`; set by deployment).
 
@@ -115,17 +115,18 @@ protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware` 
   `delete:<uuid>`), `remove_definitions` (device UUIDs), `accept_warnings`, `allow_unprotected`.
 - `definitions.sync`: `approval_sha256`, `rule_id` (optional), `remove_definitions`.
 - `dhcp.reservations.sync`: `approval_sha256`, `selected` (reservation uids), `remove` (device UUIDs).
+- `interfaces.addresses`: `digest` (from the signed review), `selected` (`<device>:<family>` row ids).
 - `vip.apply`: `vip_id`, `digest` (from the signed review). `vip.delete`: `uuid` (device VIP), `digest`.
 - Old jobs may use `remove_aliases`; `jobs._removals()` reads both.
 
 ## Custom permissions
 
-On `Firewall.Meta`: `refresh_firewall`, `manage_credentials`, `sync_definitions`, `deploy_rules`, `sync_dhcp`.
+On `Firewall.Meta`: `refresh_firewall`, `manage_credentials`, `sync_definitions`, `deploy_rules`, `sync_dhcp`, `push_interface_addresses`.
 On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firewall`.
 
 ## Migrations
 
-`fleet/migrations/0001`–`0022`. Notable data migrations:
+`fleet/migrations/0001`–`0023`. Notable data migrations:
 - `0004` copies `Rule.interface` into `Rule.interfaces`.
 - `0013` removes stored authentication-server models (never deployable).
 - `0015` converts stored ICMPv6 type numbers to OPNsense option names.
@@ -138,6 +139,7 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
   `dhcp.reservations.sync` job kind.
 - `0022` adds `Firewall.position` (the user-chosen display order) and numbers existing firewalls
   alphabetically, so the order doesn't change on upgrade.
+- `0023` adds the `push_interface_addresses` permission and the `interfaces.addresses` job kind.
 
 `fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 (and from 0017) to latest with
 data; keep it passing. CI runs `makemigrations --check --dry-run`.

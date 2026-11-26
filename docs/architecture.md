@@ -66,6 +66,7 @@ fleet/               The only app. Everything below is in here.
   system_management.py Interface inventory, firmware, VIP read/plan and worker-side apply/delete
   ipam.py            Address templates (10.x.40.1/21), ranges, DHCP scope resolution/rendering (pure)
   ipam_checks.py     Overlap warnings across the address plan (site prefixes, subnets, ranges, pools, reservations)
+  interface_push.py  Push planned interface addresses (OPNsense 26.7+ assignment API), reviewed job
   dhcp.py            Dnsmasq/Kea leases & reservations: read, reservation plan, sync, import
   ipam_views.py      Addressing pages: address plan, DHCP scopes, ranges, reservations & leases
   views.py           Dashboard, firewall page, pull/import, rules grid, deploy review, jobs
@@ -80,7 +81,7 @@ fleet/               The only app. Everything below is in here.
   retention.py       Snapshot pruning (post_save signal wired in apps.py)
   templatetags/icons.py  {% icon "name" %} inlines static/icons/<name>.svg
   management/commands/   bootstrap_admin, run_jobs, plan, sync_aliases, seed_demo
-  migrations/        0001–0022
+  migrations/        0001–0023
   test_*.py, tests.py    Tests (one module per feature area; see testing.md)
   testing.py         Test runner (temporary DATA_DIR) and make_rule() helper; not a test module
 templates/           base.html/sidebar.html shell; fleet/*; admin overrides; registration/*

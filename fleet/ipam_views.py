@@ -20,6 +20,7 @@ from .ipam import (
     TemplateError,
     compare_observed,
     interface_plan,
+    ipv6_scope,
     observed_addresses,
     range_size,
     render_dnsmasq,
@@ -41,6 +42,7 @@ from .models import (
     LogicalInterface,
     ScopedPolicy,
     StaticReservation,
+    VirtualIP,
 )
 from .opnsense import DeviceError, OPNsenseClient
 
@@ -180,6 +182,92 @@ def subnet_info(request):
     return JsonResponse({"lines": lines, "warnings": warnings})
 
 
+IDENTITY_ASSOCIATION = ("track6", "idassoc6")
+
+
+def _ula_vip(firewall, logical, planned, entry, vips):
+    """For an interface whose IPv6 comes from Identity Association, the planned ULA is carried by a
+    virtual IP (IP alias) on that interface. Report whether one is defined and present on the device."""
+    if entry["mode"] not in IDENTITY_ASSOCIATION or not planned or "interface" not in planned:
+        return {}
+    wanted = planned["interface"]
+    if ipv6_scope(wanted) != "ula":
+        return {"ia": True, "ula_planned": False}
+    defined = next(
+        (
+            vip
+            for vip in vips
+            if vip.interface_id == logical.pk and vip.applies_to(firewall) and _same_interface(vip.network, wanted)
+        ),
+        None,
+    )
+    on_device = any(
+        _same_interface(f"{row.get('subnet', '')}/{row.get('subnet_bits', '')}", wanted)
+        for row in (getattr(getattr(firewall, "inventory", None), "data", None) or {}).get("vips", [])
+    )
+    return {
+        "ia": True,
+        "ula_planned": True,
+        "ula_vip": defined,
+        "ula_vip_applied": on_device or entry["state"] == "match",
+    }
+
+
+def _same_interface(text, wanted):
+    try:
+        return ipaddress.ip_interface(text) == wanted
+    except ValueError:
+        return False
+
+
+@login_required
+@permission_required(("fleet.view_firewall", "fleet.add_virtualip"), raise_exception=True)
+@require_POST
+def create_ula_vips(request):
+    """Define the ULA virtual IPs that Identity Association interfaces are missing (manager only).
+
+    `target` is "<firewall pk>:<logical interface pk>" (repeatable). Each becomes an IP alias VIP
+    targeting that one firewall; applying it to the device is the usual reviewed VIP apply.
+    """
+    created = []
+    for target in request.POST.getlist("target"):
+        fw_pk, _, li_pk = target.partition(":")
+        if not (fw_pk.isdigit() and li_pk.isdigit()):
+            continue
+        fw = Firewall.objects.filter(pk=fw_pk, enabled=True).first()
+        addressing = (
+            InterfaceAddressing.objects.filter(logical_interface_id=li_pk).select_related("logical_interface").first()
+        )
+        if not fw or not addressing:
+            continue
+        planned = interface_plan(addressing, fw)[6]
+        if not planned or "interface" not in planned or ipv6_scope(planned["interface"]) != "ula":
+            continue
+        logical = addressing.logical_interface
+        network = str(planned["interface"])
+        if VirtualIP.objects.filter(interface=logical, network=network, firewalls=fw).exists():
+            continue
+        name = f"{logical.name} ULA {fw.name}"[:100]
+        if VirtualIP.objects.filter(name=name).exists():
+            name = f"{name[:90]} {network.split('/')[0][-8:]}"
+        vip = VirtualIP(name=name, interface=logical, network=network, mode="ipalias", scope=VirtualIP.SELECTED)
+        vip.full_clean(exclude=["firewalls", "firewall_groups"])
+        vip.save()
+        vip.firewalls.add(fw)
+        created.append(vip)
+    if not created:
+        messages.info(request, "No ULA virtual IPs were missing. Nothing was created.")
+        return redirect("ipam_plan")
+    messages.success(
+        request,
+        f"Defined {len(created)} ULA virtual IP{'s' if len(created) != 1 else ''} in the manager. The firewalls are "
+        "unchanged until you review and apply each one below.",
+    )
+    if len(created) == 1:
+        return redirect("review_vip", pk=created[0].firewalls.get().pk, vip_id=created[0].pk)
+    return redirect("virtual_ips")
+
+
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def address_plan(request):
@@ -198,6 +286,7 @@ def address_plan(request):
         sites.append(site)
     rows = []
     addressing = {a.logical_interface_id: a for a in InterfaceAddressing.objects.all()}
+    vips = list(VirtualIP.objects.prefetch_related(*ScopedPolicy.SCOPE_PREFETCH))
     for logical in LogicalInterface.objects.all():
         plan = addressing.get(logical.pk)
         cells = []
@@ -209,14 +298,20 @@ def address_plan(request):
             planned = plans[(fw.pk, logical.pk)] if plan else {4: None, 6: None}
             families = []
             for family in (4, 6):
-                families.append(
-                    {
-                        "family": family,
-                        "plan": planned[family],
-                        "state": compare_observed(planned[family], observed) if observed_row else None,
-                        "observed": ", ".join(str(a) for a in observed if a.version == family),
-                    }
-                )
+                entry = {
+                    "family": family,
+                    "plan": planned[family],
+                    "state": compare_observed(planned[family], observed) if observed_row else None,
+                    "observed": ", ".join(str(a) for a in observed if a.version == family),
+                    "mode": (observed_row or {}).get(f"ipv{family}_mode", ""),
+                }
+                if family == 6:
+                    entry["ula"] = ", ".join(str(a) for a in observed if a.version == 6 and ipv6_scope(a) == "ula")
+                    entry["global"] = ", ".join(
+                        str(a) for a in observed if a.version == 6 and ipv6_scope(a) == "global"
+                    )
+                    entry.update(_ula_vip(fw, logical, planned[6], entry, vips))
+                families.append(entry)
             cells.append(
                 {
                     "firewall": fw,
@@ -534,4 +629,55 @@ def sync_reservations(request, pk):
         request,
         "fleet/ipam_sync.html",
         {"firewall": fw, "plan": plan, "read_at": parse_datetime(plan.get("read_at") or "")},
+    )
+
+
+@login_required
+@permission_required(("fleet.view_firewall", "fleet.push_interface_addresses"), raise_exception=True)
+def push_addresses(request, pk):
+    """Review the planned interface addresses against the firewall; applying runs as a job."""
+    from django.core import signing
+
+    from .interface_push import review
+
+    fw = get_object_or_404(Firewall, pk=pk, enabled=True)
+    if request.method == "POST":
+        try:
+            try:
+                approved = signing.loads(request.POST.get("approval", ""), salt="interface-addresses", max_age=600)
+            except signing.BadSignature:
+                raise DeviceError("The review expired or is invalid. Review again.") from None
+            if approved.get("firewall") != fw.pk:
+                raise DeviceError("The review is for another firewall. Review again.")
+            if request.POST.get("acknowledge") != "yes":
+                raise DeviceError("Confirm the warning before applying.")
+            selected = [value for value in request.POST.getlist("selected") if value]
+            if not selected:
+                raise DeviceError("Select one or more address changes.")
+            job = enqueue(
+                fw,
+                DeviceJob.INTERFACE_ADDRESSES,
+                {"digest": approved["digest"], "selected": selected},
+                request.user.username,
+            )
+        except DeviceError as exc:
+            messages.error(request, f"{exc} Nothing was queued.")
+            return redirect("ipam_push", pk=pk)
+        return redirect("job", pk=job.pk)
+    try:
+        _, rows, approval = review(fw, OPNsenseClient(fw))
+    except DeviceError as exc:
+        messages.error(request, f"{fw.name}: {exc}")
+        return redirect("ipam_plan")
+    token = signing.dumps({"firewall": fw.pk, "digest": approval}, salt="interface-addresses")
+    return render(
+        request,
+        "fleet/ipam_push.html",
+        {
+            "firewall": fw,
+            "changes": [row for row in rows if row["action"]],
+            "blocked": [row for row in rows if row["blocked"]],
+            "unchanged": [row for row in rows if not row["action"] and not row["blocked"]],
+            "approval": token,
+        },
     )

@@ -1,6 +1,6 @@
 import copy
 import ipaddress
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -138,7 +138,7 @@ class AddressPlanTests(TestCase):
         self.assertContains(page, "10.21.40.0/21")
         self.assertContains(page, "2001:db8:0:1410::/64")
         self.assertContains(page, 'title="Observed 10.20.40.1/21">✓</span>')
-        self.assertContains(page, "observed 10.20.9.1/21")
+        self.assertContains(page, "Observed 10.20.9.1/21")
 
     def test_dhcp_scope_resolves_router_aliases_and_unifi(self):
         Alias.objects.create(name="AD_DNS", content="10.20.10.5\n10.21.10.5")
@@ -650,3 +650,204 @@ class OverlapTests(TestCase):
         )
         page = self.client.get(f"/admin/fleet/addressrange/{self.switches.pk}/change/")
         self.assertContains(page, f'data-hint-self="{self.switches.pk}"')
+
+
+def assignment(type4="staticv4", ipaddr="", type6="", ipaddrv6=""):
+    """An interface assignment get_item response; option fields as OPNsense returns them."""
+
+    def option(value, choices):
+        return {key: {"value": key, "selected": int(key == value)} for key in choices}
+
+    return {
+        "interface": {
+            "type4": option(type4, ["staticv4", "dhcp", "pppoe"]),
+            "ipaddr": ipaddr,
+            "type6": option(type6, ["staticv6", "dhcp6", "idassoc6", "track6"]),
+            "ipaddrv6": ipaddrv6,
+        }
+    }
+
+
+class InterfaceAddressPushTests(TestCase):
+    def setUp(self):
+        self.fw = Firewall.objects.create(
+            name="Home",
+            base_url="https://10.20.1.1",
+            credential_prefix="HOME",
+            ipv4_site_prefix="10.20.0.0/16",
+            ipv6_site_prefix="fd5b:47d4:9272:2000::/56",
+        )
+        self.interfaces = {}
+        for name, device, v4 in (
+            ("LAN", "lan", "10.x.1.1/24"),
+            ("VL40", "opt4", "10.x.40.1/21"),
+            ("WAN2", "opt5", "10.x.50.1/24"),
+        ):
+            li = LogicalInterface.objects.create(name=name)
+            InterfaceAddressing.objects.create(
+                logical_interface=li, ipv4_address=v4, ipv6_address="x:x:x:40::1/64" if name == "VL40" else ""
+            )
+            InterfaceMapping.objects.create(firewall=self.fw, logical_interface=li, device_interface=device)
+            self.interfaces[name] = li
+        self.device = {
+            "lan": assignment(ipaddr="10.20.1.1/24"),  # the management address: never changed
+            "opt4": assignment(ipaddr="10.20.40.1/24", type6="idassoc6"),  # wrong prefix length
+            "opt5": assignment(type4="dhcp"),
+        }
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def device_client(self, after=None):
+        client = Mock()
+        state = {"reads": 0}
+
+        def get(path):
+            if path.endswith("/pending"):
+                return {"status": "ok"}
+            device = path.rsplit("/", 1)[1]
+            source = after if (after and state["reads"] >= 3) else self.device
+            state["reads"] += 1
+            return copy.deepcopy(source[device])
+
+        client.get.side_effect = get
+        client.post.side_effect = lambda path, payload, write=True: (
+            {"result": "saved"}
+            if "set_item" in path
+            else {"status": "ok"}
+            if path.endswith("reconfigure")
+            else {"rows": []}
+        )
+        return client
+
+    def test_plan_changes_only_static_non_management_addresses(self):
+        from .interface_push import review
+
+        _, rows, _ = review(self.fw, self.device_client())
+        by_id = {row["id"]: row for row in rows}
+        self.assertEqual(by_id["opt4:4"]["action"], "update")
+        self.assertEqual(by_id["opt4:4"]["payload"], {"type4": "staticv4", "ipaddr": "10.20.40.1/21"})
+        self.assertIn("Identity association", by_id["opt4:6"]["note"])
+        self.assertIsNone(by_id["opt5:4"]["action"])
+        self.assertIn("Configured as DHCP", by_id["opt5:4"]["note"])
+        self.assertEqual(by_id["lan:4"]["note"], "Already set.")
+        self.device["lan"] = assignment(ipaddr="10.20.1.1/23")
+        _, rows, _ = review(self.fw, self.device_client())
+        lan = next(row for row in rows if row["id"] == "lan:4")
+        self.assertIsNone(lan["action"])
+        self.assertIn("The manager reaches Home at 10.20.1.1", lan["blocked"])
+
+    def test_push_writes_applies_and_verifies(self):
+        from .interface_push import execute, review
+
+        _, _, approval = review(self.fw, self.device_client())
+        after = {**self.device, "opt4": assignment(ipaddr="10.20.40.1/21", type6="idassoc6")}
+        client = self.device_client(after=after)
+        self.assertEqual(execute(self.fw, approval, ["opt4:4"], client, "test"), 1)
+        client.post.assert_any_call(
+            "/api/interfaces/assignment/set_item/opt4", {"interface": {"type4": "staticv4", "ipaddr": "10.20.40.1/21"}}
+        )
+        client.post.assert_any_call("/api/interfaces/assignment/reconfigure", {})
+        self.assertTrue(AuditEvent.objects.filter(action="interfaces.addresses.completed").exists())
+
+    def test_push_refuses_pending_edits_changed_devices_and_old_firmware(self):
+        from .interface_push import execute, review
+
+        _, _, approval = review(self.fw, self.device_client())
+        pending = self.device_client()
+        pending.get.side_effect = lambda path: {"status": "pending"}
+        with self.assertRaisesMessage(DeviceError, "unapplied interface changes"):
+            execute(self.fw, approval, ["opt4:4"], pending, "test")
+        self.device["opt4"] = assignment(ipaddr="10.20.41.1/24")
+        changed = self.device_client()
+        with self.assertRaisesMessage(DeviceError, "changed since the review"):
+            execute(self.fw, approval, ["opt4:4"], changed, "test")
+        self.assertFalse(any("set_item" in call.args[0] for call in changed.post.call_args_list))
+        old = Mock()
+        old.get.side_effect = DeviceError("HTTP 404", status_code=404)
+        with self.assertRaisesMessage(DeviceError, "needs OPNsense 26.7 or later"):
+            review(self.fw, old)
+
+    @patch("fleet.ipam_views.OPNsenseClient")
+    def test_review_page_queues_a_job(self, factory):
+        factory.return_value = self.device_client()
+        page = self.client.get(f"/ipam/{self.fw.pk}/push/")
+        self.assertContains(page, "10.20.40.1/21")
+        self.assertContains(page, "only static addresses are changed")
+        token = page.context["approval"]
+        self.client.post(f"/ipam/{self.fw.pk}/push/", {"approval": token, "selected": ["opt4:4"]})
+        self.assertFalse(DeviceJob.objects.exists())  # not acknowledged
+        self.client.post(f"/ipam/{self.fw.pk}/push/", {"approval": token, "selected": ["opt4:4"], "acknowledge": "yes"})
+        job = DeviceJob.objects.get()
+        self.assertEqual((job.kind, job.params["selected"]), (DeviceJob.INTERFACE_ADDRESSES, ["opt4:4"]))
+
+
+class IdentityAssociationTests(TestCase):
+    def setUp(self):
+        from .models import DeviceInventory
+
+        self.fw = Firewall.objects.create(
+            name="Home",
+            base_url="https://home.test",
+            credential_prefix="HOME",
+            ipv4_site_prefix="10.20.0.0/16",
+            ipv6_site_prefix="fd5b:47d4:9272:2000::/56",
+        )
+        self.vl40 = LogicalInterface.objects.create(name="VL40")
+        InterfaceAddressing.objects.create(
+            logical_interface=self.vl40, ipv4_address="10.x.40.1/21", ipv6_address="x:x:x:40::1/64"
+        )
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=self.vl40, device_interface="opt4")
+        DeviceInventory.objects.create(
+            firewall=self.fw,
+            data={
+                "interfaces": [
+                    {
+                        "name": "opt4",
+                        "ipv4": "10.20.40.1/21",
+                        "ipv6": "2600:8805:5613:cf40::1/64, fe80::1/64",
+                        "ipv4_mode": "static",
+                        "ipv6_mode": "idassoc6",
+                    }
+                ]
+            },
+        )
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_inventory_records_address_types(self):
+        from .system_management import address_modes
+
+        self.assertEqual(
+            address_modes(
+                {"ipaddr": "10.20.40.1", "ipaddrv6": "idassoc6", "track6-interface": "wan", "track6-prefix-id": "40"}
+            ),
+            {"ipv4_mode": "static", "ipv6_mode": "idassoc6", "ipv6_track_interface": "wan", "ipv6_prefix_id": "40"},
+        )
+        self.assertEqual(address_modes({"ipaddr": "dhcp"}), {"ipv4_mode": "dhcp", "ipv6_mode": "none"})
+
+    def test_identity_association_interfaces_get_their_ula_as_a_virtual_ip(self):
+        from .models import VirtualIP
+
+        page = self.client.get("/ipam/")
+        self.assertContains(page, "Identity Association")
+        self.assertContains(page, "Global 2600:8805:5613:cf40::1/64")
+        self.assertContains(page, "Create ULA virtual IP")
+        response = self.client.post("/ipam/ula-vips/", {"target": f"{self.fw.pk}:{self.vl40.pk}"})
+        vip = VirtualIP.objects.get()
+        self.assertEqual(
+            (vip.network, vip.mode, vip.interface, vip.scope),
+            ("fd5b:47d4:9272:2040::1/64", "ipalias", self.vl40, "selected"),
+        )
+        self.assertEqual(list(vip.firewalls.all()), [self.fw])
+        self.assertRedirects(response, f"/interfaces/virtual-ips/{self.fw.pk}/{vip.pk}/", fetch_redirect_response=False)
+        page = self.client.get("/ipam/")
+        self.assertContains(page, "defined, not applied yet")
+        self.client.post("/ipam/ula-vips/", {"target": f"{self.fw.pk}:{self.vl40.pk}"})
+        self.assertEqual(VirtualIP.objects.count(), 1)  # not created twice
+        from .models import DeviceInventory
+
+        inventory = DeviceInventory.objects.get(firewall=self.fw)
+        inventory.data = {
+            **inventory.data,
+            "vips": [{"subnet": "fd5b:47d4:9272:2040::1", "subnet_bits": "64", "interface": "opt4"}],
+        }
+        inventory.save()
+        self.assertContains(self.client.get("/ipam/"), "ULA on the interface as a virtual IP ✓")

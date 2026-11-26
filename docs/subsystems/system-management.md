@@ -12,7 +12,8 @@ Refreshed by **Refresh** on Interfaces: Overview and after every successful snap
 
 `refresh_inventory(fw, client)`: `POST /api/interfaces/overview/interfaces_info` with
 `rowCount: -1` (otherwise OPNsense pages results). Stores rows in `DeviceInventory.data["interfaces"]`
-(identifier as `name`, plus description/device/status/addresses/VLAN/MTU). Also tries
+(identifier as `name`, plus description/device/status/addresses/VLAN/MTU, and `ipv4_mode`/`ipv6_mode`
+from the row's `config` block via `address_modes`). Also tries
 `GET /api/firewall/filter/get_rule` to store the device's protocol catalog in `data["protocols"]`
 (normalized: `any`, `IPv6-ICMP`, else upper-case). A catalog failure sets `catalog_error` and keeps
 the previous catalog; it never discards interface data. `choices.protocol_choices()` merges all

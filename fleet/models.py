@@ -124,6 +124,7 @@ class Firewall(models.Model):
             ("sync_definitions", "Can synchronize aliases, categories and interface groups"),
             ("deploy_rules", "Can deploy selected firewall rules"),
             ("sync_dhcp", "Can synchronize DHCP reservations"),
+            ("push_interface_addresses", "Can push planned interface addresses"),
         ]
 
 
@@ -553,12 +554,14 @@ class DeviceJob(models.Model):
     VIP_APPLY = "vip.apply"
     VIP_DELETE = "vip.delete"
     DHCP_SYNC = "dhcp.reservations.sync"
+    INTERFACE_ADDRESSES = "interfaces.addresses"
     KINDS = [
         (RULES_DEPLOY, "Rule deployment"),
         (DEFINITIONS_SYNC, "Definition synchronization"),
         (VIP_APPLY, "Virtual IP change"),
         (VIP_DELETE, "Virtual IP deletion"),
         (DHCP_SYNC, "DHCP reservation synchronization"),
+        (INTERFACE_ADDRESSES, "Interface address change"),
     ]
     QUEUED, RUNNING, SUCCEEDED, FAILED, INTERRUPTED = "queued", "running", "succeeded", "failed", "interrupted"
     STATUSES = [

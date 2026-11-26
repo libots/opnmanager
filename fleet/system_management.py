@@ -8,6 +8,45 @@ from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, FirmwareJob
 from .opnsense import DeviceError, flatten
 
+# OPNsense stores the configured address type in ipaddr / ipaddrv6: an address for static, otherwise a
+# keyword. "idassoc6" is Identity association; "track6" is the legacy Track Interface (OPNsense
+# interfaces.php and the Interfaces NetworkInterface model).
+IPV4_TYPES = {"dhcp": "DHCP", "pppoe": "PPPoE", "ppp": "PPP", "pptp": "PPTP", "l2tp": "L2TP"}
+IPV6_TYPES = {
+    "idassoc6": "Identity association",
+    "track6": "Track Interface (legacy)",
+    "dhcp6": "DHCPv6",
+    "slaac": "SLAAC",
+    "linklocal": "Link-local",
+    "pppoev6": "PPPoEv6",
+    "6rd": "6rd",
+    "6to4": "6to4",
+}
+
+
+def address_modes(config):
+    """How an interface gets its addresses, from the overview's config block (no secrets kept)."""
+    if not isinstance(config, dict):
+        return {}
+    modes = {}
+    for key, field, known in (("ipaddr", "ipv4_mode", IPV4_TYPES), ("ipaddrv6", "ipv6_mode", IPV6_TYPES)):
+        value = str(config.get(key, "") or "").strip().lower()
+        if not value:
+            modes[field] = "none"
+            continue
+        try:
+            ipaddress.ip_address(value)
+            modes[field] = "static"
+        except ValueError:
+            modes[field] = value if value in known else "other"
+    track = str(config.get("track6-interface", "") or "").strip()
+    if track:
+        modes["ipv6_track_interface"] = track[:30]
+    prefix_id = str(config.get("track6-prefix-id", "") or "").strip()
+    if prefix_id:
+        modes["ipv6_prefix_id"] = prefix_id[:10]
+    return modes
+
 
 def refresh_inventory(firewall, client):
     response = client.post(
@@ -33,6 +72,7 @@ def refresh_inventory(firewall, client):
                     str(ip.get("ipaddr", "")) if isinstance(ip, dict) else str(ip) for ip in addresses
                 )
         item["name"] = identifier
+        item.update(address_modes(config))
         interfaces.append(item)
     obj, _ = DeviceInventory.objects.get_or_create(firewall=firewall)
     data = {**obj.data, "interfaces": interfaces}

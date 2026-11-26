@@ -99,7 +99,7 @@ removals, `reconfigure_definitions(kinds)`, then verifies readback. Not transact
 
 - `enqueue(firewall, kind, params, actor)`: refuses a second active job of the same kind for the
   firewall; audits `job.queued`. Kinds: `DeviceJob.RULES_DEPLOY`, `DeviceJob.DEFINITIONS_SYNC`,
-  `DeviceJob.VIP_APPLY`, `DeviceJob.VIP_DELETE`, `DeviceJob.DHCP_SYNC` (`HANDLERS` maps kind → function; DHCP reservations: see ipam.md).
+  `DeviceJob.VIP_APPLY`, `DeviceJob.VIP_DELETE`, `DeviceJob.DHCP_SYNC`, `DeviceJob.INTERFACE_ADDRESSES` (`HANDLERS` maps kind → function; DHCP reservations and interface addresses: see ipam.md).
 - `claim_next()`: atomic `queued → running` via conditional `UPDATE`.
 - `run_job(job, client_factory=OPNsenseClient)`: `DeviceError` → `failed` with its message; any other
   exception → `failed` with a generic message (logged). Never re-raises.
