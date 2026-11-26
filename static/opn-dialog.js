@@ -46,14 +46,41 @@
     if (form && dialog.open && dialog.classList.contains('opn-dialog-small')) fit(form);
   });
 
+  // What a swapped region would otherwise lose: where its scrolling boxes were scrolled to and
+  // which of its <details> were open. Elements are matched by their position in the region.
+  const SCROLLERS = '.li-scroll, .table-scroll, [data-keep-scroll]';
+  function remember(region) {
+    const boxes = [region, ...region.querySelectorAll(SCROLLERS)];
+    return {
+      scroll: boxes.map(box => [box.scrollTop, box.scrollLeft]),
+      open: Array.from(region.querySelectorAll('details'), details => details.open),
+    };
+  }
+  function restore(region, state) {
+    const boxes = [region, ...region.querySelectorAll(SCROLLERS)];
+    boxes.forEach((box, index) => {
+      const [top, left] = state.scroll[index] || [0, 0];
+      box.scrollTop = top;
+      box.scrollLeft = left;
+    });
+    const details = region.querySelectorAll('details');
+    if (details.length === state.open.length) details.forEach((item, index) => { item.open = state.open[index]; });
+  }
+
   async function refresh() {
     const response = await fetch(location.href, {credentials: 'same-origin', headers: {'X-Requested-With': 'fetch'}});
     if (!response.ok) throw new Error(String(response.status));
     const fresh = new DOMParser().parseFromString(await response.text(), 'text/html');
+    const pageX = window.scrollX, pageY = window.scrollY;
     for (const region of document.querySelectorAll('[data-refresh][id]')) {
       const replacement = fresh.getElementById(region.id);
-      if (replacement) region.replaceWith(document.importNode(replacement, true));
+      if (!replacement) continue;
+      const state = remember(region);
+      const node = document.importNode(replacement, true);
+      region.replaceWith(node);
+      restore(node, state);
     }
+    window.scrollTo(pageX, pageY);
     document.dispatchEvent(new CustomEvent('opn-refreshed'));
   }
   function say(text, kind) {

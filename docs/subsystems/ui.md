@@ -62,7 +62,10 @@ does; they don't send you off to a separate admin page. Two implementations:
   with `?_modal=1`; `OpnDialogAdmin.framed()` relaxes `X-Frame-Options` to `SAMEORIGIN` for that
   request only. Saving renders `admin/opn_modal_done.html`, which `postMessage`s
   `{type: 'opn-dialog', done, message}`; the page re-fetches itself and swaps every element with
-  `data-refresh` and an `id`, so toggles, filters and scroll position survive. Cancel/Escape post
+  `data-refresh` and an `id`. The swap keeps the window scroll, the scroll position of scrolling
+  boxes inside a region (`.li-scroll`, `.table-scroll`, `[data-keep-scroll]`, matched by position) and
+  which `<details>` were open, so the page updates in place; toggles and filters outside the
+  regions are untouched. Cancel/Escape post
   `{type: 'opn-dialog', close: true}`. `?_section=<key>` (from `OpnDialogAdmin.sections`) shows a
   single fieldset and no inlines (e.g. the firewall's **Addressing and DHCP** for "Edit site
   prefixes"); only that fieldset's fields are in the form, so only they are saved. Outside a dialog,
