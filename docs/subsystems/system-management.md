@@ -20,6 +20,14 @@ firewalls' catalogs over the built-in `PROTOCOLS`.
 `firmware_action(fw, action, client, actor)` under the write lock; only `check` and `update`.
 `update` requires device status `update` (a prior successful check) and `fleet.install_firmware`
 (checked in the view) plus a confirm checkbox. Requires `running == "ready"` before queueing.
+`refresh_firmware` reads `core/firmware/status` and `core/firmware/info` and stores
+`firmware_summary()` in `DeviceInventory.data["firmware"]`: version/latest, `core_updates` and
+`plugin_updates` (split by `is_plugin`: `os-*` package names), `plugins` (installed only, with a
+`misconfigured` flag), `needs_reboot`, `upgrade_major`, `last_check`, `refreshed_at`. An info
+failure keeps the previous plugin list and sets `plugins_error`. `update_state()` reduces it to one
+word for the overview (`unknown`/`current`/`updates`/`major`/`reboot`/`error`). Status lists pending
+packages only after a `check` has run on the device. The overview's Check/Refresh buttons post to
+`firmware_task` with `next=/`.
 `FirmwareJob.status`: `starting` → `running` (accepted, not "succeeded") → on refresh
 `finished` / `reboot_required` / `uncertain` / `unconfirmed`. No reboot/major-upgrade actions.
 

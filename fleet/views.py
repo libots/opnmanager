@@ -6,6 +6,7 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
@@ -25,15 +26,29 @@ from .rule_filters import SEARCH_FIELDS, filter_rows
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def dashboard(request):
+    from .system_management import update_state
+
     devices = []
     policy = Policy()
-    for fw in Firewall.objects.all():
+    latest_jobs = {}
+    for job in DeviceJob.objects.filter(kind=DeviceJob.RULES_DEPLOY).order_by("-created_at", "-pk")[:200]:
+        latest_jobs.setdefault(job.firewall_id, job)
+    firewalls = Firewall.objects.select_related("inventory").prefetch_related("groups", "interface_mappings")
+    for fw in firewalls:
         plan = plan_for(fw, policy=policy)
+        inventory = getattr(getattr(fw, "inventory", None), "data", None) or {}
+        firmware = inventory.get("firmware", {})
         devices.append(
             {
                 "firewall": fw,
                 "plan": plan,
                 "drift": sum(i["status"] in ("missing", "changed", "conflict", "out_of_scope") for i in plan["items"]),
+                "firmware": firmware,
+                "update_state": update_state(firmware) if fw.enabled else "disabled",
+                "firmware_read": parse_datetime(firmware.get("refreshed_at", "")),
+                "observed": parse_datetime(plan["observed_at"] or ""),
+                "deploy_job": latest_jobs.get(fw.pk),
+                "mapped": len(fw.interface_mappings.all()),
             }
         )
     return render(
@@ -44,6 +59,9 @@ def dashboard(request):
             "rule_count": Rule.objects.count(),
             "alias_count": Alias.objects.count(),
             "interface_count": LogicalInterface.objects.count(),
+            "updates_count": sum(d["update_state"] in ("updates", "reboot", "major") for d in devices),
+            "drift_count": sum(bool(d["drift"] or d["plan"]["errors"]) for d in devices if d["firewall"].enabled),
+            "enabled_ids": [d["firewall"].pk for d in devices if d["firewall"].enabled],
         },
     )
 

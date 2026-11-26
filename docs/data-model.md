@@ -100,7 +100,7 @@ Snapshots are immutable observations; only the newest one is used for planning.
 
 Merged dict, each key written by a different feature (always `{**data, key: ...}`):
 `interfaces` (overview rows; `system_management.refresh_inventory`), `protocols` (device
-protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware`, `vips`
+protocol catalog → `choices.protocol_choices()`), `catalog_error`, `firmware` (`system_management.firmware_summary`: version, core/plugin updates, installed plugins), `vips`
 (passwords stripped), `rule_rollback` (`savepoint` | `config_history`; set by deployment).
 
 ### `DeviceJob.params`

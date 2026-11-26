@@ -1,6 +1,8 @@
 import ipaddress
 from urllib.parse import quote
 
+from django.utils import timezone
+
 from .alias_sync import digest
 from .locks import device_write_lock
 from .models import AuditEvent, DeviceInventory, FirmwareJob
@@ -85,17 +87,106 @@ def _firmware_action(firewall, action, client, actor):
     return job
 
 
+def _text(value, limit=200):
+    return str(value if value is not None else "")[:limit]
+
+
+def _packages(rows):
+    """Pending package changes from firmware status, as plain strings (capped)."""
+    packages = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not row.get("name"):
+            continue
+        packages.append(
+            {
+                "name": _text(row.get("name"), 100),
+                "current": _text(row.get("current_version", row.get("old_version", "")), 50),
+                "new": _text(row.get("new_version", row.get("version", "")), 50),
+            }
+        )
+    return sorted(packages, key=lambda p: p["name"])[:300]
+
+
+def is_plugin(name):
+    """OPNsense plugins are the os-* packages (os-acme-client, os-theme-…); everything else is base/core."""
+    return name.startswith("os-")
+
+
+def firmware_summary(response, info=None):
+    """What the overview needs from core/firmware/status (and optionally core/firmware/info).
+
+    Only after a check (`core/firmware/check`) does status list pending packages; the
+    plugin split is by package name, so plugin updates found by the same check are shown
+    separately. No raw response text beyond short, truncated fields is kept.
+    """
+    product = response.get("product") or {}
+    pending = _packages(response.get("upgrade_packages")) + [
+        {**p, "new": p["new"] or "new"} for p in _packages(response.get("new_packages"))
+    ]
+    summary = {
+        "status": _text(response.get("status", "unknown"), 30),
+        "version": _text(product.get("product_version", "unknown"), 50),
+        "latest": _text(product.get("product_latest", ""), 50),
+        "message": _text(response.get("status_msg", ""), 500),
+        "needs_reboot": str(response.get("needs_reboot", "0")) == "1",
+        "upgrade_major": _text(response.get("upgrade_major_version", ""), 30),
+        "last_check": _text(response.get("last_check", ""), 60),
+        "download_size": _text(response.get("download_size", ""), 30),
+        "core_updates": [p for p in pending if not is_plugin(p["name"])],
+        "plugin_updates": [p for p in pending if is_plugin(p["name"])],
+    }
+    if info is not None:
+        plugins = info.get("plugin") if isinstance(info, dict) else None
+        if isinstance(plugins, list):
+            summary["plugins"] = sorted(
+                (
+                    {
+                        "name": _text(row.get("name"), 100),
+                        "version": _text(row.get("version"), 50),
+                        "misconfigured": str(row.get("configured", "1")) == "0",
+                    }
+                    for row in plugins
+                    if isinstance(row, dict) and row.get("name") and str(row.get("installed", "0")) == "1"
+                ),
+                key=lambda p: p["name"],
+            )[:300]
+    return summary
+
+
+def update_state(firmware):
+    """One word for the overview: unknown, current, updates, major, reboot or error."""
+    if not firmware:
+        return "unknown"
+    if firmware.get("needs_reboot"):
+        return "reboot"
+    status = firmware.get("status")
+    if status == "error":
+        return "error"
+    if firmware.get("core_updates") or firmware.get("plugin_updates") or status == "update":
+        return "updates"
+    if status == "upgrade" or firmware.get("upgrade_major"):
+        return "major"
+    if status == "none":
+        return "current"
+    return "unknown"
+
+
 def refresh_firmware(firewall, client):
     response = client.get("/api/core/firmware/status")
     if not isinstance(response, dict):
         raise DeviceError("Unsupported firmware status response.")
-    product = response.get("product") or {}
-    safe = {
-        "status": str(response.get("status", "unknown")),
-        "version": str(product.get("product_version", "unknown")),
-        "message": str(response.get("status_msg", ""))[:500],
-    }
     inventory, _ = DeviceInventory.objects.get_or_create(firewall=firewall)
+    previous = inventory.data.get("firmware", {})
+    try:
+        info = client.get("/api/core/firmware/info")
+        safe = firmware_summary(response, info if isinstance(info, dict) else {})
+    except DeviceError:
+        # A missing privilege for the package list shouldn't hide the update status.
+        safe = firmware_summary(response)
+        if "plugins" in previous:
+            safe["plugins"] = previous["plugins"]
+        safe["plugins_error"] = "Installed plugins couldn't be read; the list shown is from an earlier refresh."
+    safe["refreshed_at"] = timezone.now().isoformat(timespec="seconds")
     inventory.data = {**inventory.data, "firmware": safe}
     inventory.save()
     job = firewall.firmwarejob_set.filter(status__in=["running", "starting", "uncertain"]).first()

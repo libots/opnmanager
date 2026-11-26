@@ -107,7 +107,7 @@ class SystemManagementTests(TestCase):
         job = firmware_action(self.fw, "update", client, "test")
         self.assertEqual(job.status, "running")
         client.post.assert_called_once_with("/api/core/firmware/update", {})
-        client.get.side_effect = [{"status": "ok", "product": {"product_version": "26.1"}}, {"status": "done"}]
+        client.get.side_effect = [{"status": "ok", "product": {"product_version": "26.1"}}, {}, {"status": "done"}]
         refresh_firmware(self.fw, client)
         job.refresh_from_db()
         self.assertEqual(job.status, "finished")
@@ -302,3 +302,67 @@ class SystemManagementTests(TestCase):
             from .models import AuditEvent
 
             self.assertTrue(AuditEvent.objects.filter(action="vip.applied").exists())
+
+
+class FirmwareSummaryTests(TestCase):
+    STATUS = {
+        "status": "update",
+        "status_msg": "There are 3 updates available.",
+        "needs_reboot": "0",
+        "product": {"product_version": "25.7.4", "product_latest": "25.7.5"},
+        "upgrade_packages": [
+            {"name": "opnsense", "current_version": "25.7.4", "new_version": "25.7.5"},
+            {"name": "os-acme-client", "current_version": "4.9", "new_version": "4.10"},
+            {"name": "curl", "current_version": "8.15.0", "new_version": "8.16.0"},
+        ],
+        "new_packages": [{"name": "os-new-dep", "version": "1.0"}],
+    }
+    INFO = {
+        "plugin": [
+            {"name": "os-acme-client", "version": "4.9", "installed": "1", "configured": "1"},
+            {"name": "os-wireguard", "version": "2.0", "installed": "0"},
+            {"name": "os-theme-cicada", "version": "1.38", "installed": "1", "configured": "0"},
+        ]
+    }
+
+    def setUp(self):
+        self.fw = Firewall.objects.create(name="Edge", base_url="https://edge.test", credential_prefix="EDGE")
+
+    def test_summary_separates_plugin_updates_and_installed_plugins(self):
+        from .system_management import firmware_summary, update_state
+
+        summary = firmware_summary(self.STATUS, self.INFO)
+        self.assertEqual([p["name"] for p in summary["core_updates"]], ["curl", "opnsense"])
+        self.assertEqual([p["name"] for p in summary["plugin_updates"]], ["os-acme-client", "os-new-dep"])
+        self.assertEqual(summary["latest"], "25.7.5")
+        self.assertEqual([p["name"] for p in summary["plugins"]], ["os-acme-client", "os-theme-cicada"])
+        self.assertTrue(summary["plugins"][1]["misconfigured"])
+        self.assertEqual(update_state(summary), "updates")
+        self.assertEqual(update_state(firmware_summary({"status": "none"})), "current")
+        self.assertEqual(update_state(firmware_summary({"status": "none", "needs_reboot": "1"})), "reboot")
+        self.assertEqual(update_state({}), "unknown")
+
+    def test_refresh_keeps_status_when_the_plugin_list_is_forbidden(self):
+        client = Mock()
+        client.get.side_effect = [self.STATUS, self.INFO]
+        refresh_firmware(self.fw, client)
+        client.get.side_effect = [self.STATUS, DeviceError("forbidden")]
+        safe = refresh_firmware(self.fw, client)
+        self.assertEqual(len(safe["plugin_updates"]), 2)
+        self.assertEqual(len(safe["plugins"]), 2)
+        self.assertIn("earlier refresh", safe["plugins_error"])
+
+    def test_overview_shows_update_and_plugin_status(self):
+        from django.contrib.auth import get_user_model
+
+        client = Mock()
+        client.get.side_effect = [self.STATUS, self.INFO]
+        refresh_firmware(self.fw, client)
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+        page = self.client.get("/")
+        self.assertContains(page, "2 packages · 2 plugins")
+        self.assertContains(page, "<code>os-acme-client</code> 4.9 → 4.10", html=False)
+        self.assertContains(page, "2 plugins installed")
+        self.assertContains(page, "Check for updates")
+        status = self.client.get("/system/firmware/status/")
+        self.assertContains(status, "needs configuration")

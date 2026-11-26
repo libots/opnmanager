@@ -502,3 +502,15 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .deploy-idle-list { background: var(--opn-surface, #fff); }
 .deploy-idle-list .deploy-firewall { margin-top: 10px; }
 .deploy-risk > summary { cursor: pointer; }
+
+/* Fleet: Overview — update status */
+.overview-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.overview-actions form { display: inline-flex; gap: 6px; margin: 0; }
+.fleet-overview td { vertical-align: top; }
+.fleet-overview .help { font-size: 12px; margin: 2px 0 0; }
+.fleet-overview .row-disabled td { color: var(--opn-muted); }
+.update-list { font-size: 12px; margin-top: 4px; max-width: 360px; }
+.update-list summary { cursor: pointer; color: var(--opn-muted); }
+.update-list ul { margin: 2px 0 6px; padding-left: 16px; }
+.update-list strong { display: block; margin-top: 4px; }
+.row-actions { white-space: nowrap; }

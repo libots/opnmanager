@@ -19,6 +19,7 @@ from .system_management import (
     read_vips,
     refresh_firmware,
     refresh_inventory,
+    update_state,
     vip_plan,
     vip_review_digest,
 )
@@ -88,7 +89,15 @@ def firmware(request, updates=False):
     rows = []
     for fw in Firewall.objects.all():
         inventory = getattr(getattr(fw, "inventory", None), "data", {})
-        rows.append({"firewall": fw, "status": inventory.get("firmware", {}), "job": fw.firmwarejob_set.first()})
+        status = inventory.get("firmware", {})
+        rows.append(
+            {
+                "firewall": fw,
+                "status": status,
+                "state": update_state(status) if fw.enabled else "disabled",
+                "job": fw.firmwarejob_set.first(),
+            }
+        )
     return render(request, "fleet/firmware.html", {"rows": rows, "updates": updates})
 
 
@@ -118,6 +127,15 @@ def firmware_task(request):
             )
         except DeviceError as exc:
             messages.error(request, fw.name + ": " + str(exc))
+    if action == "check":
+        messages.info(
+            request,
+            "A check downloads the package catalog on each firewall, which takes a minute. Refresh the update status "
+            "afterwards to see core and plugin updates.",
+        )
+    target = request.POST.get("next", "")
+    if url_has_allowed_host_and_scheme(target, {request.get_host()}, request.is_secure()):
+        return redirect(target)
     return redirect("firmware_updates" if action == "update" else "firmware_status")
 
 
