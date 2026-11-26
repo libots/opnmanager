@@ -19,6 +19,8 @@ from .models import (
     Category,
     DhcpOption,
     DhcpScope,
+    DnsBase,
+    DnsBaseValue,
     DnsPreference,
     DNSProfile,
     Firewall,
@@ -238,7 +240,7 @@ class FirewallAdmin(OpnDialogAdmin):
         ("Interfaces", {"fields": ["auto_map_interfaces", "mapping_overview"]}),
         (
             "Addressing and DHCP",
-            {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "site_dns_servers", "site_domain", "dhcp_backend"]},
+            {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "dhcp_backend"]},
         ),
     ]
     sections = {"addressing": "Addressing and DHCP"}
@@ -697,3 +699,19 @@ class DnsPreferenceAdmin(OpnDialogAdmin):
         (None, {"fields": ["name", "is_default", "description"]}),
         ("Order", {"fields": ["dns_servers", "search_domains"]}),
     ]
+
+
+class DnsBaseValueInline(PlainRelationsMixin, admin.TabularInline):
+    model = DnsBaseValue
+    extra = 0
+    fields = ["firewall", "value"]
+    verbose_name = "Site value"
+    verbose_name_plural = "Site values (replace the default at that site)"
+
+
+@admin.register(DnsBase)
+class DnsBaseAdmin(OpnDialogAdmin):
+    return_view = "ipam_dns"
+    inlines = [DnsBaseValueInline]
+    list_display = ["name", "kind", "default"]
+    fieldsets = [(None, {"fields": ["name", "kind", "default", "description"]})]

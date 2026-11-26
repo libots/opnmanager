@@ -357,118 +357,181 @@ def _resolve_servers(text, subnet, site, router, aliases):
     return unique, problems
 
 
-# --- DNS preference lists ----------------------------------------------------------------------
+# --- DNS options: bases and preference lists ----------------------------------------------------
 #
-# One ordered list for the whole fleet, resolved per site. Tokens:
-#   site               this site's DNS servers (Firewall.site_dns_servers) / domain (site_domain)
-#   site:<firewall>    a named site's servers or domain
-#   other-sites        every other enabled site's, in the fleet order, skipping ones already listed
-#   router / 0.0.0.0   the firewall's own address on the interface (DNS servers only)
-# plus literal addresses, templates (10.x.10.5) or host aliases (servers) and literal domains (search).
+# A DNS base is a named per-site value: DNS servers (kind "servers") or domains (kind "domains"),
+# with an optional fleet-wide default (templates such as 10.x.10.5 resolve at each site) and a
+# value per site that replaces it ("none" for no value there). Preference lists order them:
+#   this.<base>         this site's value
+#   others.<base>       every other enabled site's, in the fleet order, skipping sites named
+#                       elsewhere in the list for that base
+#   <base>              this.<base> then others.<base>
+#   <firewall>.<base>   a named site's value
+#   router / 0.0.0.0    the firewall's own address on the interface (DNS servers only)
+# plus literal addresses, templates or host aliases (servers) and literal domains (search).
+#
+# Bases are passed as {lower name: {"name", "kind", "default", "values": {firewall pk: text}}}.
 
 DOMAIN = re.compile(
     r"^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
 )
-PREFERENCE_WORDS = ("site", "other-sites", "router")
+BASE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")
+RESERVED_BASES = ("this", "others", "router")
+LIST_KINDS = {"servers": "servers", "search": "domains"}
 
 
 def preference_tokens(text):
     return [t.strip() for t in re.split(r"[,\s]+", text or "") if t.strip()]
 
 
-def check_preference(text, kind, firewall_names, aliases):
-    """Problems with a preference list (kind "servers" or "search"); [] when it is valid."""
+def check_base_value(text, kind, aliases):
+    """Problems with a base's default or per-site value; [] when it is valid."""
     problems = []
-    for token in preference_tokens(text):
-        lower = token.lower()
-        if lower in ("site", "other-sites"):
-            continue
-        if lower.startswith("site:"):
-            if token[5:] not in firewall_names:
-                problems.append(f"{token}: there is no firewall named {token[5:]}")
-            continue
+    tokens = preference_tokens(text)
+    if [t.lower() for t in tokens] == ["none"]:
+        return []
+    for token in tokens:
         if kind == "servers":
-            if lower == "router" or token == ROUTER or token in aliases:
+            if token in aliases:
                 continue
             try:
                 if check_template(token) != 4:
                     problems.append(f"{token}: DHCP hands out IPv4 DNS servers only")
             except TemplateError:
-                problems.append(f"{token} isn't an address, template, host alias or keyword")
+                problems.append(f"{token} isn't an IPv4 address, template or host alias")
         elif not DOMAIN.match(token.rstrip(".")):
-            problems.append(f"{token} isn't a domain name or keyword")
+            problems.append(f"{token} isn't a domain name")
     return problems
 
 
-def site_servers(firewall, aliases):
-    """A site's own DNS servers (IPv4), resolved with its own site prefix."""
-    servers, problems = [], []
-    site = None
-    for token in preference_tokens(getattr(firewall, "site_dns_servers", "")):
+def _base_reference(token, bases, firewall_names):
+    """(scope, site name or None, base) for a base token, else None. scope: this|others|both|site."""
+    lower = token.lower()
+    if lower in bases:
+        return "both", None, bases[lower]
+    head, dot, tail = token.rpartition(".")
+    if not dot or tail.lower() not in bases:
+        return None
+    base = bases[tail.lower()]
+    if head.lower() in ("this", "others"):
+        return head.lower(), None, base
+    if head in firewall_names:
+        return "site", head, base
+    named = {name.lower(): name for name in firewall_names}
+    if head.lower() in named:
+        return "site", named[head.lower()], base
+    return None
+
+
+def check_preference(text, kind, firewall_names, aliases, bases):
+    """Problems with a preference list (kind "servers" or "search"); [] when it is valid."""
+    problems = []
+    wanted = LIST_KINDS[kind]
+    for token in preference_tokens(text):
+        reference = _base_reference(token, bases, firewall_names)
+        if reference:
+            base = reference[2]
+            if base["kind"] != wanted:
+                other = "DNS servers" if base["kind"] == "servers" else "domains"
+                problems.append(f"{token}: base {base['name']} holds {other}")
+            continue
+        head, dot, tail = token.rpartition(".")
+        if dot and head.lower() in ("this", "others"):
+            problems.append(f"{token}: there is no DNS base named {tail}")
+            continue
+        if kind == "servers":
+            if token.lower() == "router" or token == ROUTER or token in aliases:
+                continue
+            try:
+                if check_template(token) != 4:
+                    problems.append(f"{token}: DHCP hands out IPv4 DNS servers only")
+            except TemplateError:
+                problems.append(f"{token} isn't a DNS base, address, template, host alias or router")
+        elif not DOMAIN.match(token.rstrip(".")):
+            problems.append(f"{token} isn't a DNS base or a domain name")
+    return problems
+
+
+def base_values(base, firewall, aliases):
+    """A base's values at one site (its own value, else the default), resolved; and problems."""
+    text = base["values"].get(firewall.pk)
+    if text is None:
+        text = base["default"]
+    tokens = preference_tokens(text)
+    if [t.lower() for t in tokens] == ["none"]:
+        return [], []
+    values, problems = [], []
+    for token in tokens:
+        if base["kind"] == "domains":
+            values.append(token.rstrip("."))
+            continue
         if token in aliases:
             for member in (m.strip() for m in aliases[token].splitlines() if m.strip()):
                 try:
                     if ipaddress.ip_address(member).version == 4:
-                        servers.append(member)
+                        values.append(member)
                 except ValueError:
                     problems.append(f"alias {token} member {member} is not a single address")
             continue
         try:
             if "x" in token.lower():
-                site = site or site_prefix(firewall, 4)
+                site = site_prefix(firewall, 4)
                 if site is None:
-                    raise TemplateError(f"{firewall.name} has no IPv4 site prefix for {token}")
-            servers.append(
-                str(resolve_address(token, site) if site and "x" in token.lower() else ipaddress.ip_address(token))
-            )
-        except (TemplateError, ValueError) as exc:
-            problems.append(str(exc) if isinstance(exc, TemplateError) else f"{token} isn't an IPv4 address")
-    return servers, problems
+                    raise TemplateError(f"{firewall.name} has no IPv4 site prefix for {token} ({base['name']})")
+                values.append(str(resolve_address(token, site)))
+            else:
+                values.append(str(ipaddress.ip_address(token)))
+        except TemplateError as exc:
+            problems.append(str(exc))
+        except ValueError:
+            problems.append(f"{token} isn't an IPv4 address ({base['name']})")
+    return values, problems
 
 
-def resolve_preference(text, kind, firewall, firewalls, aliases, router=None):
+def resolve_preference(text, kind, firewall, firewalls, aliases, bases, router=None):
     """An ordered, de-duplicated list for one site: [{"value", "source"}], and problems.
 
-    `firewalls` is the fleet in display order (for other-sites and site:<name>); `router` is the
-    interface address that `router` / 0.0.0.0 stands for (None outside an interface context).
+    `firewalls` is the fleet in display order (for others.<base> and <firewall>.<base>); `router` is
+    the interface address that `router` / 0.0.0.0 stands for (None outside an interface context).
     """
-    entries, problems, seen, named = [], [], set(), {fw.name: fw for fw in firewalls}
+    entries, problems, seen = [], [], set()
+    named = {fw.name: fw for fw in firewalls}
 
     def add(value, source):
         if value and value.lower() not in seen:
             seen.add(value.lower())
             entries.append({"value": value, "source": source})
 
-    def add_site(fw, source):
-        if kind == "servers":
-            servers, issues = site_servers(fw, aliases)
-            problems.extend(issues)
-            for server in servers:
-                add(server, source)
-        elif getattr(fw, "site_domain", ""):
-            add(fw.site_domain.strip().rstrip("."), source)
+    def add_base(base, fw, source):
+        values, issues = base_values(base, fw, aliases)
+        problems.extend(issues)
+        for value in values:
+            add(value, source)
 
-    included = set()
     tokens = preference_tokens(text)
-    for token in tokens:
+    references = [(_base_reference(t, bases, named), t) for t in tokens]
+    # Sites a list names for a base (this.ad, Cloud.ad) are left out of others.ad.
+    claimed = {}
+    for reference, _ in references:
+        if reference and reference[0] in ("this", "both", "site"):
+            site = firewall if reference[0] != "site" else named[reference[1]]
+            claimed.setdefault(reference[2]["name"].lower(), set()).add(site.pk)
+    for reference, token in references:
         lower = token.lower()
-        if lower.startswith("site:") and token[5:] in named:
-            included.add(named[token[5:]].pk)
-    for token in tokens:
-        lower = token.lower()
-        if lower == "site":
-            add_site(firewall, f"{firewall.name} (this site)")
-            included.add(firewall.pk)
-        elif lower.startswith("site:"):
-            other = named.get(token[5:])
-            if other is None:
-                problems.append(f"{token}: there is no firewall named {token[5:]}")
-            else:
-                add_site(other, other.name)
-        elif lower == "other-sites":
-            for other in firewalls:
-                if other.pk != firewall.pk and other.pk not in included and other.enabled:
-                    add_site(other, other.name)
+        if reference:
+            scope, site_name, base = reference
+            label = base["name"]
+            if base["kind"] != LIST_KINDS[kind]:
+                problems.append(f"{token}: base {label} holds other values")
+                continue
+            if scope in ("this", "both"):
+                add_base(base, firewall, f"{label} · {firewall.name} (this site)")
+            if scope == "site":
+                add_base(base, named[site_name], f"{label} · {site_name}")
+            if scope in ("others", "both"):
+                for other in firewalls:
+                    if other.enabled and other.pk != firewall.pk and other.pk not in claimed.get(label.lower(), set()):
+                        add_base(base, other, f"{label} · {other.name}")
         elif kind == "servers" and (lower == "router" or token == ROUTER):
             if router is None:
                 add("router", "the firewall on each interface")
@@ -546,13 +609,15 @@ def scope_settings(scope, subnet, site, router, aliases, dns_context=None):
         settings["options"].append({"code": 3, "name": "routers", "kind": "ip", "values": gateways})
     preference = getattr(scope, "dns_preference", None)
     if preference is not None and dns_context is not None:
-        firewall, firewalls = dns_context
-        servers, issues = resolve_preference(preference.dns_servers, "servers", firewall, firewalls, aliases, router)
+        firewall, firewalls, bases = dns_context
+        servers, issues = resolve_preference(
+            preference.dns_servers, "servers", firewall, firewalls, aliases, bases, router
+        )
         problems += issues
         if preference.dns_servers:
             values = [entry["value"] for entry in servers]
             settings["options"].append({"code": 6, "name": OPTION_NAMES[6], "kind": "ip", "values": values})
-        search, issues = resolve_preference(preference.search_domains, "search", firewall, firewalls, aliases)
+        search, issues = resolve_preference(preference.search_domains, "search", firewall, firewalls, aliases, bases)
         problems += issues
         if search:
             domains = [entry["value"] for entry in search]

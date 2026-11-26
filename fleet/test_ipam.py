@@ -963,9 +963,11 @@ class DhcpPageTests(TestCase):
 
 
 class DnsPreferenceTests(TestCase):
-    """Home, VH, Afton and a Cloud site, each with AD DNS servers and a domain."""
+    """Home, Cloud, VH and Afton: an AD base (template default) and a corp domain base."""
 
     def setUp(self):
+        from .models import DnsBase, DnsBaseValue
+
         self.sites = {}
         for name, octet in (("Home", 20), ("Cloud", 50), ("VH", 21), ("Afton", 22)):
             self.sites[name] = Firewall.objects.create(
@@ -973,60 +975,66 @@ class DnsPreferenceTests(TestCase):
                 base_url=f"https://{name.lower()}.test",
                 credential_prefix=name.upper(),
                 ipv4_site_prefix=f"10.{octet}.0.0/16",
-                site_dns_servers="10.x.10.5, 10.x.10.6",
-                site_domain=f"{name.lower()}.corp.example",
             )
+        self.ad = DnsBase.objects.create(name="ad", kind="servers", default="10.x.10.5, 10.x.10.6")
+        DnsBaseValue.objects.create(base=self.ad, firewall=self.sites["Cloud"], value="10.50.1.4")
+        DnsBaseValue.objects.create(base=self.ad, firewall=self.sites["Afton"], value="none")
+        self.corp = DnsBase.objects.create(name="corp", kind="domains")
+        for name in self.sites:
+            DnsBaseValue.objects.create(base=self.corp, firewall=self.sites[name], value=f"{name.lower()}.corp.example")
+        self.pihole = DnsBase.objects.create(name="pihole", kind="servers", default="10.x.10.53")
         self.vl10 = LogicalInterface.objects.create(name="VL10")
         InterfaceAddressing.objects.create(logical_interface=self.vl10, ipv4_address="10.x.8.1/21")
         for fw in self.sites.values():
             InterfaceMapping.objects.create(firewall=fw, logical_interface=self.vl10, device_interface="opt1")
         self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
 
-    def test_order_is_resolved_per_site(self):
+    def resolve(self, text, kind, site, router=None):
         from .ipam import resolve_preference
+        from .models import dns_bases
 
-        fleet = list(Firewall.objects.all())
-        servers, problems = resolve_preference(
-            "site, site:Cloud, other-sites, router", "servers", self.sites["VH"], fleet, {}, router="10.21.8.1"
+        entries, problems = resolve_preference(
+            text, kind, self.sites[site], list(Firewall.objects.all()), {}, dns_bases(), router=router
         )
         self.assertEqual(problems, [])
+        return [entry["value"] for entry in entries]
+
+    def test_bases_are_referenced_per_site(self):
         self.assertEqual(
-            [entry["value"] for entry in servers],
-            [
-                "10.21.10.5",
-                "10.21.10.6",
-                "10.50.10.5",
-                "10.50.10.6",
-                "10.20.10.5",
-                "10.20.10.6",
-                "10.22.10.5",
-                "10.22.10.6",
-                "10.21.8.1",
-            ],
+            self.resolve("this.ad, Cloud.ad, others.ad, this.pihole, router", "servers", "VH", router="10.21.8.1"),
+            ["10.21.10.5", "10.21.10.6", "10.50.1.4", "10.20.10.5", "10.20.10.6", "10.21.10.53", "10.21.8.1"],
+        )  # Afton has no AD servers ("none"); Cloud is named, so others.ad skips it
+        self.assertEqual(
+            self.resolve("ad", "servers", "Afton"),
+            ["10.20.10.5", "10.20.10.6", "10.50.1.4", "10.21.10.5", "10.21.10.6"],
         )
-        self.assertEqual(servers[0]["source"], "VH (this site)")
-        search, _ = resolve_preference("site, other-sites", "search", self.sites["Afton"], fleet, {})
         self.assertEqual(
-            [entry["value"] for entry in search],
+            self.resolve("this.corp, others.corp", "search", "Afton"),
             ["afton.corp.example", "home.corp.example", "cloud.corp.example", "vh.corp.example"],
         )
 
-    def test_lists_and_site_settings_are_validated(self):
-        bad = DnsPreference(name="Bad", dns_servers="site, site:Nowhere, ad.example", search_domains="site, -bad-")
+    def test_lists_bases_and_values_are_validated(self):
+        from .models import DnsBase, DnsBaseValue
+
+        bad = DnsPreference(name="Bad", dns_servers="this.ad, Nowhere.ad, corp, others.nope", search_domains="this.ad")
         with self.assertRaises(ValidationError) as caught:
             bad.full_clean()
-        self.assertIn("no firewall named Nowhere", str(caught.exception))
-        self.assertIn("-bad- isn't a domain name", str(caught.exception))
-        home = self.sites["Home"]
-        home.site_domain = "not a domain"
+        message = str(caught.exception)
+        self.assertIn("corp: base corp holds domains", message)
+        self.assertIn("others.nope: there is no DNS base named nope", message)
+        self.assertIn("Nowhere.ad isn't a DNS base", message)
+        self.assertIn("this.ad: base ad holds DNS servers", message)
+        for name in ("this", "Home", "bad name"):
+            with self.subTest(name=name), self.assertRaises(ValidationError):
+                DnsBase(name=name, kind="servers").full_clean()
         with self.assertRaises(ValidationError):
-            home.full_clean()
+            DnsBaseValue(base=self.corp, firewall=self.sites["Home"], value="not a domain!").full_clean()
 
     def test_dhcp_scopes_hand_out_the_list_in_order(self):
         preference = DnsPreference.objects.create(
             name="AD first",
-            dns_servers="site, site:Cloud, other-sites, router",
-            search_domains="site, other-sites",
+            dns_servers="this.ad, Cloud.ad, others.ad, router",
+            search_domains="corp",
             is_default=True,
         )
         DhcpScope.objects.create(
@@ -1039,7 +1047,7 @@ class DnsPreferenceTests(TestCase):
         page = self.client.get("/ipam/dhcp/")
         cells = page.context["rows"][0]["cells"]
         home = {o["code"]: o for o in cells[0]["settings"]["options"]}
-        self.assertEqual(home[6]["values"][:3], ["10.20.10.5", "10.20.10.6", "10.50.10.5"])
+        self.assertEqual(home[6]["values"][:3], ["10.20.10.5", "10.20.10.6", "10.50.1.4"])
         self.assertEqual(home[6]["values"][-1], "10.20.8.1")
         self.assertNotIn("9.9.9.9", home[6]["values"])
         self.assertEqual(home[119]["values"][0], "home.corp.example")
@@ -1049,9 +1057,12 @@ class DnsPreferenceTests(TestCase):
             cells[0]["dnsmasq"],
         )
         dns = self.client.get("/ipam/dns/")
+        self.assertContains(dns, "Addressing: DNS Options")
         self.assertContains(dns, "AD first")
         self.assertContains(dns, "Used by VL10 clients")
-        self.assertContains(dns, "the firewall on each interface")
+        self.assertContains(dns, "ad · Cloud")
+        self.assertContains(dns, "From the default")
+        self.assertContains(dns, "This site's own value")
 
     def test_only_one_default_and_new_scopes_start_with_it(self):
         first = DnsPreference.objects.create(name="One", is_default=True)

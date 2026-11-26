@@ -16,7 +16,7 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | `/firewalls/order/` | `views.reorder_firewalls` | POST `order` = every firewall id in the new order (drag on the overview); 409 if the list changed |
 | `/ipam/<pk>/push/` | `ipam_views.push_addresses` | Review planned interface addresses against the firewall (GET reads the device) / enqueue `interfaces.addresses` (POST, signed review) |
 | `/ipam/ula-vips/` | `ipam_views.create_ula_vips` | POST `target=<fw>:<li>`: define ULA virtual IPs for Identity association interfaces |
-| `/ipam/dns/` | `ipam_views.dns_order` | Site DNS servers/domains and DNS preference lists resolved per firewall |
+| `/ipam/dns/` | `ipam_views.dns_order` | DNS Options: DNS bases and preference lists resolved per firewall |
 | `/ipam/subnet-info/` | `ipam_views.subnet_info` | JSON hint `lines` and overlap `warnings` for an address field (`kind`, `value`, optional `interface`, `firewall`, `self`) |
 | `/firewalls/<pk>/deploy/` | `views.deploy_rules` | Combined review (GET) / enqueue job (POST) |
 | `/fleet/deployment/deploy/` | `views.deploy_all` | Every enabled firewall's combined review; POST enqueues one `rules.deploy` job per checked firewall (fields prefixed `fw<pk>-`) |

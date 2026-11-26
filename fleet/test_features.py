@@ -498,3 +498,35 @@ class MigrationUpgradeTests(TransactionTestCase):
             self.assertEqual(list(migrated.interfaces.values_list("pk", flat=True)), [interface.pk])
         finally:
             MigrationExecutor(connection).migrate(latest)
+
+
+class DnsBaseMigrationTests(TransactionTestCase):
+    def test_site_dns_settings_become_bases_and_lists_are_rewritten(self):
+        executor = MigrationExecutor(connection)
+        old = [("fleet", "0024_dns_preferences")]
+        latest = executor.loader.graph.leaf_nodes()
+        try:
+            executor.migrate(old)
+            apps = executor.loader.project_state(old).apps
+            Firewall = apps.get_model("fleet", "Firewall")
+            home = Firewall.objects.create(
+                name="Home", base_url="https://home.test", site_dns_servers="10.x.10.5", site_domain="home.example"
+            )
+            Firewall.objects.create(name="VH", base_url="https://vh.test")
+            preference = apps.get_model("fleet", "DnsPreference").objects.create(
+                name="AD", dns_servers="site, site:VH, other-sites, router", search_domains="site, other-sites"
+            )
+            executor = MigrationExecutor(connection)
+            executor.migrate(latest)
+            apps = executor.loader.project_state(latest).apps
+            DnsBase = apps.get_model("fleet", "DnsBase")
+            self.assertEqual(DnsBase.objects.get(name="dns").kind, "servers")
+            values = apps.get_model("fleet", "DnsBaseValue").objects
+            self.assertEqual(values.get(base__name="dns", firewall_id=home.pk).value, "10.x.10.5")
+            self.assertEqual(values.get(base__name="domain", firewall_id=home.pk).value, "home.example")
+            self.assertEqual(values.count(), 2)  # VH had no site DNS settings
+            migrated = apps.get_model("fleet", "DnsPreference").objects.get(pk=preference.pk)
+            self.assertEqual(migrated.dns_servers, "this.dns, VH.dns, others.dns, router")
+            self.assertEqual(migrated.search_domains, "this.domain, others.domain")
+        finally:
+            MigrationExecutor(connection).migrate(latest)
