@@ -358,11 +358,18 @@ def scope_cells(scope, firewalls, plans, aliases):
             continue
         device = _mappings(fw).get(scope.logical_interface_id)
         planned = (plans.get((fw.pk, scope.logical_interface_id)) or {}).get(4)
+        # Not mapped here or not planned yet is a normal state, not a fault: shown muted, not red.
+        if not device:
+            cell["muted"] = "Not mapped here"
+            if planned and "subnet" in planned:
+                cell["subnet"] = planned["subnet"]
+            cells.append(cell)
+            continue
+        if not planned:
+            cell["muted"] = "No IPv4 address plan"
+            cells.append(cell)
+            continue
         try:
-            if not device:
-                raise TemplateError(f"{scope.logical_interface} isn't mapped on {fw.name}.")
-            if not planned:
-                raise TemplateError(f"{scope.logical_interface} has no IPv4 address plan.")
             if "error" in planned:
                 raise TemplateError(planned["error"])
             site = site_prefix(fw, 4)
