@@ -86,3 +86,9 @@ body.opn-modal { background: #fff; }
 body.opn-modal #container { margin-left: 0; padding-top: 0; }
 body.opn-modal #content { padding: 0; max-width: none; }
 body.opn-modal.delete-confirmation #content { padding: 16px; }
+/* Delete confirmations: "No, take me back" as OPNsense's default (white) button next to the red one.
+   Django draws it with white text on --close-button-bg, which is white in this theme. */
+#content .delete-confirmation form, .delete-confirmation #content form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.delete-confirmation #content form input[type="submit"] { min-height: 38px; padding: 8px 16px; border-radius: 3px; font: 400 14px var(--opn-font); }
+.delete-confirmation #content form .cancel-link { display: inline-flex; align-items: center; height: auto; min-height: 38px; box-sizing: border-box; margin: 0; padding: 8px 16px; border: 1px solid var(--opn-border-strong); border-radius: 3px; background: #fff; color: var(--opn-text); font-size: 14px; line-height: 20px; text-decoration: none; }
+.delete-confirmation #content form .cancel-link:hover, .delete-confirmation #content form .cancel-link:focus { background: #E5E5E5; color: var(--opn-text); }
