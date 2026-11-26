@@ -104,3 +104,5 @@ body.opn-modal.opn-form-page #content-main > form { border: 0; }
 .subnet-calc-actions .button { min-height: 34px; padding: 6px 14px; border: 1px solid var(--opn-border); background: #fff; color: #444; cursor: pointer; }
 .subnet-calc-actions .button[disabled] { opacity: .5; cursor: default; }
 .subnet-calc [hidden] { display: none !important; }
+/* Django admin's clearing <br> after the form adds a line of height that would make a fitted dialog scroll. */
+body.opn-modal #content > br.clear { display: none; }

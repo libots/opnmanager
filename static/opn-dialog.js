@@ -23,12 +23,27 @@
     event.preventDefault();
     open(link.href, link.dataset.dialog);
   });
-  dialog.addEventListener('close', () => { frame.src = 'about:blank'; dialog.style.height = ''; });
-  // A small dialog takes the height of its form (same origin), up to the viewport.
+  dialog.addEventListener('close', () => { watcher?.disconnect(); watcher = null; frame.src = 'about:blank'; dialog.style.height = ''; });
+  // A small dialog takes the height of its form (same origin), up to the viewport, and keeps
+  // following it: hints under address fields and validation errors arrive after the page loads.
+  let watcher = null;
+  function fit(form) {
+    dialog.style.height = Math.min(Math.ceil(form.getBoundingClientRect().height) + 4, window.innerHeight - 48) + 'px';
+  }
   frame.addEventListener('load', () => {
+    watcher?.disconnect();
+    watcher = null;
     if (!dialog.classList.contains('opn-dialog-small') || !frame.contentDocument?.body) return;
     const form = frame.contentDocument.querySelector('#content-main > form') || frame.contentDocument.body;
-    dialog.style.height = Math.min(form.getBoundingClientRect().height + 4, window.innerHeight - 48) + 'px';
+    fit(form);
+    if ('ResizeObserver' in window) {
+      watcher = new ResizeObserver(() => fit(form));
+      watcher.observe(form);
+    }
+  });
+  window.addEventListener('resize', () => {
+    const form = frame.contentDocument?.querySelector('#content-main > form');
+    if (form && dialog.open && dialog.classList.contains('opn-dialog-small')) fit(form);
   });
 
   async function refresh() {
