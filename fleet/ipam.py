@@ -540,3 +540,103 @@ def suggest_template(samples):
         value = rest.pop()
         components.append(str(value) if family == 4 else f"{value:x}")
     return f"{_format(components, family)}/{lengths.pop()}"
+
+
+def _count(number):
+    return f"{number:,}"
+
+
+def describe_network(network, short=False):
+    """One line about a subnet: usable range and size, as a subnet calculator shows it."""
+    if short:
+        if network.version == 6:
+            return f"{network}" + (
+                f" · {_count(2 ** (64 - network.prefixlen))} /64 networks" if network.prefixlen < 64 else ""
+            )
+        if network.prefixlen >= 31:
+            return describe_network(network)
+        return (
+            f"usable {network.network_address + 1} – {network.broadcast_address - 1} "
+            f"({_count(network.num_addresses - 2)} hosts)"
+        )
+    if network.version == 4:
+        if network.prefixlen == 32:
+            return f"Single address {network.network_address}"
+        if network.prefixlen == 31:
+            return f"Point-to-point: {network.network_address} – {network.broadcast_address} (2 addresses)"
+        first, last = network.network_address + 1, network.broadcast_address - 1
+        return (
+            f"Usable {first} – {last} · {_count(network.num_addresses - 2)} hosts · "
+            f"mask {network.netmask} · broadcast {network.broadcast_address}"
+        )
+    size = (
+        f"{_count(network.num_addresses)} addresses"
+        if network.prefixlen >= 96
+        else f"2^{128 - network.prefixlen} addresses"
+    )
+    if network.prefixlen < 64:
+        size += f" · {_count(2 ** (64 - network.prefixlen))} /64 networks"
+    return f"Range {network.network_address} – {network.broadcast_address} · {size}"
+
+
+def hint_lines(kind, value, firewalls=(), subnets=None, site_of=None):
+    """Hint lines for a field value. kind: prefix, interface, template, range or address.
+
+    firewalls / subnets / site_of give the per-site context: subnets maps a firewall pk to that
+    site's interface subnet (for ranges and addresses) and site_of(firewall, family) its prefix.
+    Returns a list of {"label", "text", "error"} dicts.
+    """
+    value = (value or "").strip()
+    if not value:
+        return []
+    if kind == "prefix":
+        network = parse_site_prefix(value)
+        return [{"label": "", "text": describe_network(network)}]
+    if kind == "interface":
+        try:
+            interface = ipaddress.ip_interface(value)
+        except ValueError:
+            raise TemplateError(f"{value} is not an address with prefix length, e.g. 192.0.2.5/24.") from None
+        return [{"label": "", "text": f"Network {interface.network} · " + describe_network(interface.network)}]
+    lines = []
+    if kind == "template":
+        family = check_template(value, prefixed=True)
+        for fw in firewalls:
+            try:
+                site = site_of(fw, family)
+                if site is None:
+                    lines.append({"label": fw.name, "text": f"no IPv{family} site prefix", "error": True})
+                    continue
+                interface = resolve_interface(value, site)
+                lines.append(
+                    {
+                        "label": fw.name,
+                        "text": f"{interface.network}, firewall {interface.ip}"
+                        + (f" · {describe_network(interface.network, short=True)}" if family == 4 else ""),
+                    }
+                )
+            except TemplateError as exc:
+                lines.append({"label": fw.name, "text": str(exc), "error": True})
+        return lines
+    if kind == "range":
+        check_range(value)
+    for fw in firewalls:
+        subnet = (subnets or {}).get(fw.pk)
+        if subnet is None:
+            continue
+        if isinstance(subnet, str):
+            lines.append({"label": fw.name, "text": subnet, "error": True})
+            continue
+        try:
+            if kind == "range":
+                first, last = resolve_range(value, subnet, site_of(fw, 4))
+                lines.append(
+                    {"label": fw.name, "text": f"{first} – {last} ({_count(range_size(first, last))} addresses)"}
+                )
+            else:
+                address = ipaddress.ip_address(value)
+                where = "inside" if address in subnet else "outside"
+                lines.append({"label": fw.name, "text": f"{address} is {where} {subnet}", "error": where == "outside"})
+        except (TemplateError, ValueError) as exc:
+            lines.append({"label": fw.name, "text": str(exc), "error": True})
+    return lines

@@ -25,6 +25,9 @@ Templates `templates/fleet/ipam_*.html`. Tests: `fleet/test_ipam.py`.
   site (only when every observed site agrees). Site prefixes are edited in a small dialog: the
   firewall editor with `?_section=addressing`. All Addressing editors open as dialogs (ui.md).
 
+Address fields in the editors show live hints from `ipam.hint_lines` (`describe_network` for a
+subnet's usable range) via `/ipam/subnet-info/`, plus a client-side subnet calculator; see ui.md.
+
 ## DHCP scopes
 
 `DhcpScope` (a `ScopedPolicy`) + `DhcpOption` rows. `scope_settings()` resolves a scope at one site

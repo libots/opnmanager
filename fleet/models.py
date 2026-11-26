@@ -57,6 +57,8 @@ class Firewall(models.Model):
     )
     encrypted_api_key = models.TextField(blank=True, editable=False)
     encrypted_api_secret = models.TextField(blank=True, editable=False)
+    # Display order everywhere firewalls are listed (rows, matrix columns); set by dragging on the overview.
+    position = models.PositiveIntegerField(default=0, editable=False, db_index=True)
     ipv4_site_prefix = models.CharField(
         "IPv4 site prefix",
         max_length=50,
@@ -107,8 +109,15 @@ class Firewall(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        if self._state.adding and not self.position:
+            # New firewalls go to the end of the list.
+            last = Firewall.objects.aggregate(models.Max("position"))["position__max"]
+            self.position = (last or 0) + 1
+        super().save(*args, **kwargs)
+
     class Meta:
-        ordering = ["name"]
+        ordering = ["position", "name"]
         permissions = [
             ("refresh_firewall", "Can import and refresh firewall snapshots"),
             ("manage_credentials", "Can manage firewall API credentials"),
@@ -754,7 +763,7 @@ class StaticReservation(models.Model):
         return f"{self.hostname or self.mac_address} ({self.ip_address})"
 
     class Meta:
-        ordering = ["firewall__name", "logical_interface__sort_key", "ip_address"]
+        ordering = ["firewall__position", "firewall__name", "logical_interface__sort_key", "ip_address"]
         constraints = [
             models.UniqueConstraint(fields=["firewall", "ip_address"], name="one_reservation_per_address"),
             models.UniqueConstraint(

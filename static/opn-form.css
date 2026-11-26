@@ -62,3 +62,45 @@ body.opn-modal.opn-form-page #content-main > form { border: 0; }
   #content .opn-form-row { grid-template-columns: 1fr; gap: 2px; }
   .opn-field-label { min-height: 0; }
 }
+
+/* Address fields: live hint below, calculator button beside (static/subnet-tools.js). */
+.subnet-field { display: flex; align-items: stretch; gap: 0; max-width: 390px; }
+.subnet-field > input { flex: 1 1 auto; min-width: 0; width: auto !important; }
+.subnet-field > input:not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.subnet-calc-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; flex: 0 0 36px; border: 1px solid var(--opn-border-strong); border-left: 0; border-radius: 0 3px 3px 0; background: #EEE; color: var(--opn-text); cursor: pointer; padding: 0; }
+.subnet-calc-button:hover { background: #E2E2E2; }
+.subnet-calc-button .icon { width: 13px; height: 15px; }
+.subnet-hint { margin: 4px 0 0; font-size: 13px; color: var(--opn-muted); line-height: 1.45; overflow-wrap: anywhere; }
+.subnet-hint strong { color: var(--opn-text); font-weight: 600; }
+.subnet-hint-error { color: var(--opn-danger); }
+
+.subnet-calc { width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 0; border: 1px solid rgba(0,0,0,.2); border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,.5); }
+.subnet-calc::backdrop { background: rgba(0,0,0,.35); }
+.subnet-calc-body { margin: 0; }
+.subnet-calc-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--opn-border); }
+.subnet-calc-head h2 { margin: 0; font-size: 18px; font-weight: 600; background: none; color: var(--opn-text); padding: 0; }
+.subnet-calc-close { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--opn-muted); cursor: pointer; }
+.subnet-calc-inputs { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; padding: 12px 16px 4px; align-items: end; }
+.subnet-calc-inputs label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.subnet-calc-inputs input[name=address] { width: 100%; font-family: var(--opn-mono); }
+.subnet-calc-prefix { display: flex; align-items: center; gap: 4px; }
+.subnet-calc-prefix input { width: 70px; }
+.subnet-calc-inputs input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--opn-primary); }
+.subnet-calc-error { margin: 4px 16px; color: var(--opn-danger); font-size: 13px; }
+.subnet-calc table { width: calc(100% - 32px); margin: 8px 16px; font-size: 13px; border-collapse: collapse; }
+.subnet-calc td, .subnet-calc th { padding: 4px 8px; border-bottom: 1px solid #EEE; text-align: left; }
+.subnet-calc-result td:first-child { color: var(--opn-muted); width: 32%; }
+.subnet-calc-result td:last-child, .subnet-calc-split td { font-family: var(--opn-mono); overflow-wrap: anywhere; }
+.subnet-calc-split { margin: 4px 16px; }
+.subnet-calc-split summary { cursor: pointer; font-size: 14px; font-weight: 600; padding: 4px 0; }
+.subnet-calc-split label { font-size: 13px; }
+.subnet-calc-split input { width: 70px; margin-left: 4px; }
+.subnet-calc-split table { width: 100%; margin: 6px 0; }
+.subnet-calc-split tbody { display: block; max-height: 200px; overflow: auto; }
+.subnet-calc-split thead, .subnet-calc-split tbody tr { display: table; width: 100%; table-layout: fixed; }
+.subnet-calc-note, .subnet-calc-more { margin: 4px 16px; }
+.subnet-calc-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--opn-border); }
+.subnet-calc-actions .button.primary { background: var(--opn-primary); color: #fff; border: 1px solid var(--opn-primary); }
+.subnet-calc-actions .button { min-height: 34px; padding: 6px 14px; border: 1px solid var(--opn-border); background: #fff; color: #444; cursor: pointer; }
+.subnet-calc-actions .button[disabled] { opacity: .5; cursor: default; }
+.subnet-calc [hidden] { display: none !important; }

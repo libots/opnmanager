@@ -143,7 +143,7 @@ def target_choices():
     return [
         (ALL_TARGETS, "All enabled firewalls"),
         ("Firewall groups", [(f"group:{g.pk}", g.name) for g in FirewallGroup.objects.order_by("name")]),
-        ("Firewalls", [(f"firewall:{f.pk}", f.name) for f in Firewall.objects.order_by("name")]),
+        ("Firewalls", [(f"firewall:{f.pk}", f.name) for f in Firewall.objects.all()]),
     ]
 
 

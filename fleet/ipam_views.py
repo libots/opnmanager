@@ -100,6 +100,46 @@ def _suggestions(logical, firewalls):
 
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
+def subnet_info(request):
+    """Live hint under an address field: usable range, size, and what a template means at each site."""
+    from django.http import JsonResponse
+
+    from .ipam import hint_lines
+
+    kind = request.GET.get("kind", "")
+    if kind not in ("prefix", "interface", "template", "range", "address"):
+        return JsonResponse({"error": "Unknown field kind."}, status=400)
+    value = request.GET.get("value", "")[:200]
+    firewalls = list(Firewall.objects.filter(enabled=True).prefetch_related("interface_mappings"))
+    if request.GET.get("firewall", "").isdigit():
+        firewalls = [fw for fw in firewalls if str(fw.pk) == request.GET["firewall"]]
+    subnets = {}
+    interface = request.GET.get("interface", "")
+    if kind in ("range", "address") and interface.isdigit():
+        addressing = InterfaceAddressing.objects.filter(logical_interface_id=interface).first()
+        for fw in firewalls:
+            planned = interface_plan(addressing, fw)[4] if addressing else None
+            if planned is None:
+                subnets[fw.pk] = "the interface has no IPv4 address plan"
+            elif "error" in planned:
+                subnets[fw.pk] = planned["error"]
+            else:
+                subnets[fw.pk] = planned["subnet"]
+
+    def site_of(fw, family):
+        return site_prefix(fw, family)
+
+    try:
+        lines = hint_lines(kind, value, firewalls, subnets, site_of)
+    except TemplateError as exc:
+        return JsonResponse({"lines": [], "error": str(exc)})
+    if kind in ("range", "address") and not interface.isdigit():
+        return JsonResponse({"lines": [], "error": "Choose the logical interface to see this at each site."})
+    return JsonResponse({"lines": lines})
+
+
+@login_required
+@permission_required("fleet.view_firewall", raise_exception=True)
 def address_plan(request):
     firewalls = _firewalls(request)
     plans = site_plans(firewalls)

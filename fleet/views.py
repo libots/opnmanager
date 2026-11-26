@@ -67,6 +67,25 @@ def dashboard(request):
 
 
 @login_required
+@permission_required(("fleet.view_firewall", "fleet.change_firewall"), raise_exception=True)
+@require_POST
+def reorder_firewalls(request):
+    """Save the firewall order set by dragging rows on the overview: `order` lists every firewall id."""
+    ids = [value for value in request.POST.getlist("order") if value.isdigit()]
+    existing = set(Firewall.objects.values_list("pk", flat=True))
+    if len(ids) != len(set(ids)) or {int(v) for v in ids} != existing:
+        return JsonResponse(
+            {"error": "The firewall list changed in the meantime. Reload the page; the order was not saved."},
+            status=409,
+        )
+    with transaction.atomic():
+        for position, pk in enumerate(ids, start=1):
+            Firewall.objects.filter(pk=pk).update(position=position)
+    AuditEvent.objects.create(actor=request.user.username, action="firewalls.reordered", detail=",".join(ids))
+    return JsonResponse({"message": "Firewall order saved. Every page lists firewalls in this order."})
+
+
+@login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def firewall_detail(request, pk):
     fw = get_object_or_404(Firewall, pk=pk)

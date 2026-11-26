@@ -22,7 +22,7 @@ ScopedPolicy (abstract): scope ∈ {all, selected} + M2M firewalls + M2M firewal
 Rule M2M: interfaces, interface_groups, origin_interfaces, origin_interface_groups, categories
 RuleOrigin(firewall, rule, remote_uuid)          unique (firewall, remote_uuid) — imported-from link
 VirtualIPOrigin(firewall, virtual_ip, remote_uuid) unique (firewall, remote_uuid)
-Firewall: ipv4_site_prefix, ipv6_site_prefix, dhcp_backend (dnsmasq|kea)
+Firewall: position (display order, Meta ordering), ipv4_site_prefix, ipv6_site_prefix, dhcp_backend (dnsmasq|kea)
 InterfaceAddressing 1─1 LogicalInterface (templates ipv4_address / ipv6_address)
 AddressRange *─1 LogicalInterface (name, "10.x.10.10-29")
 DhcpScope (ScopedPolicy) *─1 LogicalInterface; DhcpOption *─1 DhcpScope (code, kind, value)
@@ -125,7 +125,7 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 
 ## Migrations
 
-`fleet/migrations/0001`–`0021`. Notable data migrations:
+`fleet/migrations/0001`–`0022`. Notable data migrations:
 - `0004` copies `Rule.interface` into `Rule.interfaces`.
 - `0013` removes stored authentication-server models (never deployable).
 - `0015` converts stored ICMPv6 type numbers to OPNsense option names.
@@ -136,6 +136,8 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 - `0021` adds IPAM: firewall site prefixes and DHCP backend, `InterfaceAddressing`, `AddressRange`,
   `DhcpScope`/`DhcpOption`, `StaticReservation`, the `sync_dhcp` permission and the
   `dhcp.reservations.sync` job kind.
+- `0022` adds `Firewall.position` (the user-chosen display order) and numbers existing firewalls
+  alphabetically, so the order doesn't change on upgrade.
 
 `fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 (and from 0017) to latest with
 data; keep it passing. CI runs `makemigrations --check --dry-run`.

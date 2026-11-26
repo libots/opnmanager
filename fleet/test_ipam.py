@@ -483,3 +483,78 @@ class DialogEditorTests(TestCase):
         # Interfaces that already have a plan aren't offered again.
         form = self.client.get("/admin/fleet/interfaceaddressing/add/")
         self.assertNotContains(form, f'<option value="{self.vl40.pk}">')
+
+
+class SubnetHintTests(TestCase):
+    def setUp(self):
+        self.home = Firewall.objects.create(
+            name="Home", base_url="https://home.test", credential_prefix="HOME", ipv4_site_prefix="10.20.0.0/16"
+        )
+        self.vh = Firewall.objects.create(
+            name="VH", base_url="https://vh.test", credential_prefix="VH", ipv4_site_prefix="10.21.0.0/16"
+        )
+        self.vl10 = LogicalInterface.objects.create(name="VL10")
+        InterfaceAddressing.objects.create(logical_interface=self.vl10, ipv4_address="10.x.8.1/21")
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def hint(self, **params):
+        return self.client.get("/ipam/subnet-info/", params).json()
+
+    def test_prefix_and_interface_show_the_usable_range(self):
+        from .ipam import describe_network
+
+        self.assertEqual(
+            self.hint(kind="prefix", value="10.20.40.0/21")["lines"][0]["text"],
+            "Usable 10.20.40.1 – 10.20.47.254 · 2,046 hosts · mask 255.255.248.0 · broadcast 10.20.47.255",
+        )
+        self.assertIn("Network 192.0.2.0/24", self.hint(kind="interface", value="192.0.2.5/24")["lines"][0]["text"])
+        self.assertIn("256 /64 networks", describe_network(ipaddress.ip_network("2001:db8:0:1400::/56")))
+        self.assertEqual(
+            describe_network(ipaddress.ip_network("10.0.0.0/31")), "Point-to-point: 10.0.0.0 – 10.0.0.1 (2 addresses)"
+        )
+        self.assertIn("no host bits", self.hint(kind="prefix", value="10.20.1.0/16")["error"])
+
+    def test_templates_and_ranges_resolve_at_each_site(self):
+        lines = self.hint(kind="template", value="10.x.40.1/21")["lines"]
+        self.assertEqual([line["label"] for line in lines], ["Home", "VH"])
+        self.assertEqual(
+            lines[1]["text"], "10.21.40.0/21, firewall 10.21.40.1 · usable 10.21.40.1 – 10.21.47.254 (2,046 hosts)"
+        )
+        lines = self.hint(kind="range", value="10.x.10.10-29", interface=self.vl10.pk)["lines"]
+        self.assertEqual(lines[0]["text"], "10.20.10.10 – 10.20.10.29 (20 addresses)")
+        self.assertIn("Choose the logical interface", self.hint(kind="range", value="10.x.10.10-29")["error"])
+        lines = self.hint(kind="address", value="10.21.10.5", interface=self.vl10.pk, firewall=self.home.pk)["lines"]
+        self.assertEqual(lines, [{"label": "Home", "text": "10.21.10.5 is outside 10.20.8.0/21", "error": True}])
+
+    def test_editors_mark_address_fields(self):
+        page = self.client.get(f"/admin/fleet/firewall/{self.home.pk}/change/")
+        self.assertContains(page, 'data-subnet-hint="prefix"')
+        self.assertContains(page, 'data-calculator="use"')
+        self.assertContains(page, "subnet-tools.js")
+        page = self.client.get("/admin/fleet/addressrange/add/")
+        self.assertContains(page, 'data-hint-context="logical_interface"')
+
+
+class FirewallOrderTests(TestCase):
+    def setUp(self):
+        self.firewalls = [
+            Firewall.objects.create(name=name, base_url=f"https://{name.lower()}.test", credential_prefix=name.upper())
+            for name in ("Home", "VH", "Afton")
+        ]
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_new_firewalls_go_last_and_order_is_saved(self):
+        self.assertEqual([fw.name for fw in Firewall.objects.all()], ["Home", "VH", "Afton"])
+        home, vh, afton = self.firewalls
+        response = self.client.post("/firewalls/order/", {"order": [afton.pk, home.pk, vh.pk]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([fw.name for fw in Firewall.objects.all()], ["Afton", "Home", "VH"])
+        self.assertContains(self.client.get("/"), "drag-handle")
+
+    def test_partial_or_stale_orders_are_refused(self):
+        home, vh, afton = self.firewalls
+        self.assertEqual(self.client.post("/firewalls/order/", {"order": [afton.pk, home.pk]}).status_code, 409)
+        self.assertEqual(self.client.post("/firewalls/order/", {"order": [home.pk, home.pk, vh.pk]}).status_code, 409)
+        self.assertEqual([fw.name for fw in Firewall.objects.all()], ["Home", "VH", "Afton"])
+        self.client.force_login(get_user_model().objects.create_user("viewer"))
+        self.assertEqual(self.client.post("/firewalls/order/", {"order": [afton.pk, home.pk, vh.pk]}).status_code, 403)

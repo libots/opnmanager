@@ -13,6 +13,8 @@ help texts from OPNsense's `dialogFilterRule.xml`).
 | `/firewalls/<pk>/pull/` | `views.pull_snapshot` | POST; JSON reply when `Accept: application/json` (bulk pull, `static/pull-firewalls.js`) |
 | `/firewalls/<pk>/import/` | `views.import_snapshot` | POST JSON file upload (≤5 MiB) |
 | `/firewalls/<pk>/plan/` | `views.download_plan` | `plan_for` as JSON download |
+| `/firewalls/order/` | `views.reorder_firewalls` | POST `order` = every firewall id in the new order (drag on the overview); 409 if the list changed |
+| `/ipam/subnet-info/` | `ipam_views.subnet_info` | JSON hint lines for an address field (`kind`, `value`, optional `interface`, `firewall`) |
 | `/firewalls/<pk>/deploy/` | `views.deploy_rules` | Combined review (GET) / enqueue job (POST) |
 | `/fleet/deployment/deploy/` | `views.deploy_all` | Every enabled firewall's combined review; POST enqueues one `rules.deploy` job per checked firewall (fields prefixed `fw<pk>-`) |
 | `/firewalls/<pk>/sync/` | `views.sync_definitions` | Definitions-only review / enqueue |
@@ -77,6 +79,17 @@ editor (`admin/fleet/rule/change_form.html`, `rule-editor.css`) is the original.
 OPNsense's sections ("General settings", …) and use OPNsense's field labels (`labels` on the admin).
 New or reworked editors should use `OpnDialogAdmin` rather than Django's default change form.
 
+### Address fields: hints and calculator
+
+`OpnDialogAdmin.address_fields = {field: (kind, context_fields)}` marks address inputs
+(`data-subnet-hint`). `static/subnet-tools.js` puts a live hint under each (debounced fetch of
+`/ipam/subnet-info/`, computed by `ipam.hint_lines` so it matches what saving will accept) and, for
+`prefix`, `interface` and `template` kinds, a calculator button. The calculator is client-side
+(BigInt, IPv4/IPv6): network, mask, wildcard, usable range, hosts, broadcast, and a split table;
+**Use this network** writes back except on templates. Kinds: `prefix` (site prefixes), `interface`
+(VIP address/prefix), `template` (interface plans, per site), `range` (ranges and DHCP ranges,
+needs `logical_interface`), `address` (reservations, needs `logical_interface` and `firewall`).
+
 ### Rule dialog and rules grid
 
 - `/admin/fleet/rule/` changelist redirects to `/rules/` (except popups).
@@ -116,6 +129,8 @@ Grid layout prefs, the sidebar collapse state, and rule-editor switches are kept
 | `static/deploy.js` | `deploy.html`, `deploy_all.html` | Per-firewall and total selection counts; disables Deploy when nothing is selected |
 | `static/opn-dialog.js` | pages including `partials/opn_dialog.html` | Opens `data-dialog` links in the editor dialog; refreshes `data-refresh` regions after a save |
 | `static/opn-form.js` / `opn-form.css` | `admin/opn_change_form.html` | OPNsense dialog layout for `OpnDialogAdmin` editors: help icons, full-help switch, dialog close |
+| `static/subnet-tools.js` | `admin/opn_change_form.html` | Address field hints and the subnet calculator |
+| `static/firewall-order.js` | `dashboard.html` | Drag (or arrow keys on the handle) to reorder firewalls; saves via `/firewalls/order/` |
 | `static/ipam.js` | `ipam_plan.html` | "Show interfaces without a plan" toggle (remembered) |
 | `static/pull-firewalls.js` | `dashboard.html`, `deployment_overview.html` | Per-row and "pull all" (2 concurrent) via JSON |
 | `static/admin-shell.css` | `admin/base_site.html` | Admin restyle |

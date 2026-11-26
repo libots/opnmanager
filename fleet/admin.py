@@ -110,6 +110,27 @@ class OpnDialogAdmin(PlainRelationsMixin, admin.ModelAdmin):
     MODAL_VAR = "_modal"
     return_view = None
     sections = {}
+    # Address fields: field name -> (kind, other fields the hint depends on). The form shows the
+    # usable range / per-site result under the field (static/subnet-tools.js, ipam_views.subnet_info)
+    # and, for prefix, interface and template fields, a subnet calculator button.
+    address_fields = {}
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        field = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if field is not None and db_field.name in self.address_fields:
+            kind, context = self.address_fields[db_field.name]
+            field.widget.attrs.update(
+                {
+                    "data-subnet-hint": kind,
+                    "data-hint-url": reverse("ipam_subnet_info"),
+                    "data-hint-context": " ".join(context),
+                    "autocomplete": "off",
+                    "spellcheck": "false",
+                }
+            )
+            if kind in ("prefix", "interface", "template"):
+                field.widget.attrs["data-calculator"] = "use" if kind != "template" else "view"
+        return field
 
     @classmethod
     def is_modal(cls, request):
@@ -207,6 +228,7 @@ class FirewallAdmin(OpnDialogAdmin):
         ("Addressing and DHCP", {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "dhcp_backend"]}),
     ]
     sections = {"addressing": "Addressing and DHCP"}
+    address_fields = {"ipv4_site_prefix": ("prefix", ()), "ipv6_site_prefix": ("prefix", ())}
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         # Plain inputs, as OPNsense shows them (no "Currently/Change" URL widget, no oversized notes box).
@@ -585,7 +607,8 @@ class DNSProfileAdmin(DesiredProfileAdmin):
 
 
 @admin.register(VirtualIP)
-class VirtualIPAdmin(admin.ModelAdmin):
+class VirtualIPAdmin(OpnDialogAdmin):
+    address_fields = {"network": ("interface", ())}
     form = VirtualIPForm
     list_display = ["name", "interface", "network", "mode", "scope"]
 
@@ -593,6 +616,7 @@ class VirtualIPAdmin(admin.ModelAdmin):
 @admin.register(InterfaceAddressing)
 class InterfaceAddressingAdmin(OpnDialogAdmin):
     return_view = "ipam_plan"
+    address_fields = {"ipv4_address": ("template", ()), "ipv6_address": ("template", ())}
 
     def get_form(self, request, obj=None, change=False, **kwargs):
         form = super().get_form(request, obj, change, **kwargs)
@@ -610,6 +634,7 @@ class InterfaceAddressingAdmin(OpnDialogAdmin):
 @admin.register(AddressRange)
 class AddressRangeAdmin(OpnDialogAdmin):
     return_view = "ipam_ranges"
+    address_fields = {"addresses": ("range", ("logical_interface",))}
     list_display = ["logical_interface", "name", "addresses", "description"]
     list_filter = ["logical_interface"]
     fields = ["logical_interface", "name", "addresses", "description"]
@@ -624,6 +649,7 @@ class DhcpOptionInline(admin.TabularInline):
 @admin.register(DhcpScope)
 class DhcpScopeAdmin(OpnDialogAdmin):
     return_view = "ipam_dhcp"
+    address_fields = {"dynamic_range": ("range", ("logical_interface",))}
     form = DhcpScopeForm
     inlines = [DhcpOptionInline]
     list_display = ["name", "logical_interface", "dynamic_range", "enabled", "scope"]
@@ -638,6 +664,7 @@ class DhcpScopeAdmin(OpnDialogAdmin):
 @admin.register(StaticReservation)
 class StaticReservationAdmin(OpnDialogAdmin):
     return_view = "ipam_reservations"
+    address_fields = {"ip_address": ("address", ("logical_interface", "firewall"))}
     list_display = ["firewall", "logical_interface", "ip_address", "mac_address", "hostname", "description"]
     list_filter = ["firewall", "logical_interface"]
     search_fields = ["hostname", "mac_address", "ip_address", "description"]

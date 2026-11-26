@@ -59,6 +59,9 @@ Short, verified list. Each item names where it bites.
 - Custom permission checks are per view decorator; when adding a view, copy the decorator stack of a
   similar view (`login_required` + `permission_required(..., raise_exception=True)` + `require_POST`).
 
+- **Firewalls have a user-chosen order** (`Firewall.position`, the model's default ordering). Don't
+  `order_by("name")` when listing firewalls; use `Firewall.objects.all()`.
+
 ## Frontend
 - Icons used by `rules.js` must be listed in `views.RULE_ICONS`; `{% icon %}` raises on unknown names.
 - `opn-select.js` is loaded through widget `Media` (`forms.TokenWidget`), so templates rendering
