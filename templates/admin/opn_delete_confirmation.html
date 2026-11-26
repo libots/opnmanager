@@ -1,0 +1,6 @@
+{% extends "admin/delete_confirmation.html" %}
+{% comment %}Opened from an editor in a page's dialog (?_modal=1): no app chrome around the confirmation.{% endcomment %}
+{% block bodyclass %}{{ block.super }}{% if modal %} opn-modal{% endif %}{% endblock %}
+{% block header %}{% if not modal %}{{ block.super }}{% endif %}{% endblock %}
+{% block footer %}{% if not modal %}{{ block.super }}{% endif %}{% endblock %}
+{% block breadcrumbs %}{% if not modal %}{{ block.super }}{% endif %}{% endblock %}

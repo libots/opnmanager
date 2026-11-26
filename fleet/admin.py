@@ -96,17 +96,125 @@ class FirewallGroupMembershipInline(PlainRelationsMixin, admin.TabularInline):
     verbose_name_plural = "Firewall group memberships"
 
 
+class OpnDialogAdmin(PlainRelationsMixin, admin.ModelAdmin):
+    """An editor laid out like an OPNsense dialog (sections, info icons, Cancel/Save).
+
+    Pages open it in a dialog frame with ?_modal=1 (static/opn-dialog.js); saving then answers
+    with admin/opn_modal_done.html, which asks the page to close the dialog and refresh in place.
+    Outside a dialog, saving returns to a safe ?next= or to `return_view`. ?_section=<key> limits
+    the form to one fieldset named in `sections` (and drops inlines), for focused dialogs.
+    """
+
+    change_form_template = "admin/opn_change_form.html"
+    delete_confirmation_template = "admin/opn_delete_confirmation.html"
+    MODAL_VAR = "_modal"
+    return_view = None
+    sections = {}
+
+    @classmethod
+    def is_modal(cls, request):
+        return cls.MODAL_VAR in request.GET or cls.MODAL_VAR in request.POST
+
+    @staticmethod
+    def is_popup(request):
+        return admin.options.IS_POPUP_VAR in request.POST or admin.options.IS_POPUP_VAR in request.GET
+
+    def section(self, request):
+        key = request.GET.get("_section") or request.POST.get("_section")
+        return key if key in self.sections else None
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        key = self.section(request)
+        if key:
+            return [fieldset for fieldset in fieldsets if fieldset[0] == self.sections[key]]
+        return fieldsets
+
+    def get_inline_instances(self, request, obj=None):
+        return [] if self.section(request) else super().get_inline_instances(request, obj)
+
+    def framed(self, request, response):
+        # Only same-origin pages may frame an editor opened as a dialog; everything else stays DENY.
+        if self.is_modal(request):
+            response["X-Frame-Options"] = "SAMEORIGIN"
+        return response
+
+    def modal_done(self, request, message):
+        return TemplateResponse(request, "admin/opn_modal_done.html", {"result": {"message": message}})
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        key = self.section(request)
+        extra_context = {
+            **(extra_context or {}),
+            "modal": self.is_modal(request),
+            "section": key,
+            "section_title": self.sections.get(key, ""),
+            "return_url": self.return_url(request),
+        }
+        return self.framed(request, super().changeform_view(request, object_id, form_url, extra_context))
+
+    def delete_view(self, request, object_id, extra_context=None):
+        extra_context = {**(extra_context or {}), "modal": self.is_modal(request)}
+        return self.framed(request, super().delete_view(request, object_id, extra_context))
+
+    def return_url(self, request):
+        target = request.GET.get("next") or request.POST.get("next") or ""
+        if target and url_has_allowed_host_and_scheme(target, {request.get_host()}, request.is_secure()):
+            return target
+        return reverse(self.return_view) if self.return_view else ""
+
+    def _finish(self, request, response, message):
+        if "_continue" in request.POST or "_addanother" in request.POST or self.is_popup(request):
+            return response
+        if self.is_modal(request):
+            return self.modal_done(request, message)
+        target = self.return_url(request)
+        if target:
+            return HttpResponseRedirect(target)
+        return response
+
+    def response_add(self, request, obj, post_url_continue=None):
+        response = super().response_add(request, obj, post_url_continue)
+        return self._finish(request, response, f"{self.opts.verbose_name.capitalize()} “{obj}” added.")
+
+    def response_change(self, request, obj):
+        response = super().response_change(request, obj)
+        return self._finish(request, response, f"{self.opts.verbose_name.capitalize()} “{obj}” saved.")
+
+    def response_delete(self, request, obj_display, obj_id):
+        response = super().response_delete(request, obj_display, obj_id)
+        return self._finish(request, response, f"{self.opts.verbose_name.capitalize()} “{obj_display}” deleted.")
+
+
 @admin.register(Firewall)
-class FirewallAdmin(admin.ModelAdmin):
+class FirewallAdmin(OpnDialogAdmin):
     list_display = ["name", "base_url", "enabled"]
+    labels = {
+        "base_url": "Management URL",
+        "ca_bundle": "CA bundle",
+        "credential_prefix": "Credential variable prefix",
+        "auto_map_interfaces": "Auto map interfaces",
+        "ipv4_site_prefix": "IPv4 site prefix",
+        "ipv6_site_prefix": "IPv6 site prefix",
+        "dhcp_backend": "DHCP server",
+    }
     inlines = [MappingInline, FirewallGroupMembershipInline]
     readonly_fields = ["credential_settings", "mapping_overview"]
     fieldsets = [
-        (None, {"fields": ["name", "base_url", "enabled", "credential_prefix", "ca_bundle", "credential_settings"]}),
+        ("General settings", {"fields": ["enabled", "name", "notes"]}),
+        ("Connection", {"fields": ["base_url", "ca_bundle", "credential_prefix", "credential_settings"]}),
         ("Interfaces", {"fields": ["auto_map_interfaces", "mapping_overview"]}),
         ("Addressing and DHCP", {"fields": ["ipv4_site_prefix", "ipv6_site_prefix", "dhcp_backend"]}),
-        ("Notes", {"fields": ["notes"]}),
     ]
+    sections = {"addressing": "Addressing and DHCP"}
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        # Plain inputs, as OPNsense shows them (no "Currently/Change" URL widget, no oversized notes box).
+        if db_field.name == "base_url":
+            kwargs["widget"] = forms.URLInput(attrs={"placeholder": "https://fw.example.net"})
+        elif db_field.name == "notes":
+            kwargs["widget"] = forms.Textarea(attrs={"rows": 3})
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
 
     def get_deleted_objects(self, objs, request):
         deleted, counts, permissions, protected = super().get_deleted_objects(objs, request)
@@ -482,40 +590,26 @@ class VirtualIPAdmin(admin.ModelAdmin):
     list_display = ["name", "interface", "network", "mode", "scope"]
 
 
-def _back_to(view_name):
-    """After saving an IPAM object, return to its overview page instead of the admin list."""
-
-    class BackMixin:
-        def response_add(self, request, obj, post_url_continue=None):
-            response = super().response_add(request, obj, post_url_continue)
-            return self._back(request, response)
-
-        def response_change(self, request, obj):
-            return self._back(request, super().response_change(request, obj))
-
-        def response_delete(self, request, obj_display, obj_id):
-            response = super().response_delete(request, obj_display, obj_id)
-            return self._back(request, response)
-
-        def _back(self, request, response):
-            if request.POST.get("_continue") or request.POST.get("_addanother") or "_popup" in request.POST:
-                return response
-            target = request.GET.get("next", "")
-            if not url_has_allowed_host_and_scheme(target, {request.get_host()}, request.is_secure()):
-                target = reverse(view_name)
-            return HttpResponseRedirect(target)
-
-    return BackMixin
-
-
 @admin.register(InterfaceAddressing)
-class InterfaceAddressingAdmin(_back_to("ipam_plan"), PlainRelationsMixin, admin.ModelAdmin):
+class InterfaceAddressingAdmin(OpnDialogAdmin):
+    return_view = "ipam_plan"
+
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        form = super().get_form(request, obj, change, **kwargs)
+        # One plan per interface: offer only interfaces that don't have one yet.
+        field = form.base_fields.get("logical_interface")
+        if field is not None:
+            taken = InterfaceAddressing.objects.exclude(pk=obj.pk if obj else None).values("logical_interface")
+            field.queryset = LogicalInterface.objects.exclude(pk__in=taken)
+        return form
+
     list_display = ["logical_interface", "ipv4_address", "ipv6_address", "notes"]
     fields = ["logical_interface", "ipv4_address", "ipv6_address", "notes"]
 
 
 @admin.register(AddressRange)
-class AddressRangeAdmin(_back_to("ipam_ranges"), PlainRelationsMixin, admin.ModelAdmin):
+class AddressRangeAdmin(OpnDialogAdmin):
+    return_view = "ipam_ranges"
     list_display = ["logical_interface", "name", "addresses", "description"]
     list_filter = ["logical_interface"]
     fields = ["logical_interface", "name", "addresses", "description"]
@@ -528,7 +622,8 @@ class DhcpOptionInline(admin.TabularInline):
 
 
 @admin.register(DhcpScope)
-class DhcpScopeAdmin(_back_to("ipam_dhcp"), PlainRelationsMixin, admin.ModelAdmin):
+class DhcpScopeAdmin(OpnDialogAdmin):
+    return_view = "ipam_dhcp"
     form = DhcpScopeForm
     inlines = [DhcpOptionInline]
     list_display = ["name", "logical_interface", "dynamic_range", "enabled", "scope"]
@@ -541,7 +636,8 @@ class DhcpScopeAdmin(_back_to("ipam_dhcp"), PlainRelationsMixin, admin.ModelAdmi
 
 
 @admin.register(StaticReservation)
-class StaticReservationAdmin(_back_to("ipam_reservations"), PlainRelationsMixin, admin.ModelAdmin):
+class StaticReservationAdmin(OpnDialogAdmin):
+    return_view = "ipam_reservations"
     list_display = ["firewall", "logical_interface", "ip_address", "mac_address", "hostname", "description"]
     list_filter = ["firewall", "logical_interface"]
     search_fields = ["hostname", "mac_address", "ip_address", "description"]

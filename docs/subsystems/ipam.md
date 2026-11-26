@@ -19,6 +19,11 @@ Templates `templates/fleet/ipam_*.html`. Tests: `fleet/test_ipam.py`.
 - `interface_plan(addressing, firewall)` → `{4: ..., 6: ...}`, each `None`, `{interface, subnet,
   router}` or `{error}`. `compare_observed` checks it against `DeviceInventory.data["interfaces"]`.
 - Interface addresses are never written to devices (no OPNsense API).
+- The Address Plan page lists every logical interface; those without a plan are rows hidden until
+  "Show interfaces without a plan" is ticked (`static/ipam.js`, localStorage). Their **Add plan**
+  opens the editor prefilled by `suggest_template()` from the addresses currently observed at each
+  site (only when every observed site agrees). Site prefixes are edited in a small dialog: the
+  firewall editor with `?_section=addressing`. All Addressing editors open as dialogs (ui.md).
 
 ## DHCP scopes
 

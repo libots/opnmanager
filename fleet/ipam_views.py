@@ -27,6 +27,7 @@ from .ipam import (
     resolve_range,
     scope_settings,
     site_prefix,
+    suggest_template,
 )
 from .jobs import enqueue
 from .models import (
@@ -66,6 +67,37 @@ def _mappings(firewall):
     return {m.logical_interface_id: m.device_interface for m in firewall.interface_mappings.all()}
 
 
+def _observed_row(firewall, device):
+    return next((r for r in _inventory(firewall).get("interfaces", []) if r.get("name") == device), None)
+
+
+def _suggestions(logical, firewalls):
+    """Templates matching the addresses this interface has now at every site that observed it."""
+    samples = {4: [], 6: []}
+    for fw in firewalls:
+        device = _mappings(fw).get(logical.pk)
+        row = _observed_row(fw, device) if device else None
+        if not row:
+            continue
+        for family in (4, 6):
+            try:
+                site = site_prefix(fw, family)
+            except TemplateError:
+                site = None
+            if site is None:
+                continue
+            inside = [
+                a
+                for a in observed_addresses(row)
+                if isinstance(a, ipaddress.IPv4Interface | ipaddress.IPv6Interface)
+                and a.version == family
+                and a.ip in site
+            ]
+            if len(inside) == 1:
+                samples[family].append((site, inside[0]))
+    return {family: suggest_template(found) for family, found in samples.items()}
+
+
 @login_required
 @permission_required("fleet.view_firewall", raise_exception=True)
 def address_plan(request):
@@ -82,35 +114,46 @@ def address_plan(request):
                 site["prefixes"].append("invalid: " + str(exc))
         sites.append(site)
     rows = []
-    for addressing in InterfaceAddressing.objects.select_related("logical_interface"):
-        logical = addressing.logical_interface
+    addressing = {a.logical_interface_id: a for a in InterfaceAddressing.objects.all()}
+    for logical in LogicalInterface.objects.all():
+        plan = addressing.get(logical.pk)
         cells = []
         for fw in firewalls:
             device = _mappings(fw).get(logical.pk)
-            observed_row = next((r for r in _inventory(fw).get("interfaces", []) if r.get("name") == device), None)
+            observed_row = _observed_row(fw, device) if device else None
             observed = observed_addresses(observed_row) if observed_row else []
-            planned = plans[(fw.pk, logical.pk)]
+            planned = plans[(fw.pk, logical.pk)] if plan else {4: None, 6: None}
             families = []
             for family in (4, 6):
-                plan = planned[family]
                 families.append(
                     {
                         "family": family,
-                        "plan": plan,
-                        "state": compare_observed(plan, observed) if observed_row else None,
+                        "plan": planned[family],
+                        "state": compare_observed(planned[family], observed) if observed_row else None,
                         "observed": ", ".join(str(a) for a in observed if a.version == family),
                     }
                 )
             cells.append({"firewall": fw, "device": device, "families": families, "inventory": bool(observed_row)})
-        rows.append({"addressing": addressing, "logical": logical, "cells": cells})
-    unplanned = LogicalInterface.objects.filter(addressing__isnull=True)
+        row = {"addressing": plan, "logical": logical, "cells": cells}
+        if plan is None:
+            suggested = _suggestions(logical, firewalls)
+            row["add_query"] = urlencode(
+                {
+                    "logical_interface": logical.pk,
+                    **({"ipv4_address": suggested[4]} if suggested[4] else {}),
+                    **({"ipv6_address": suggested[6]} if suggested[6] else {}),
+                }
+            )
+            row["suggested"] = [value for value in (suggested[4], suggested[6]) if value]
+        rows.append(row)
     return render(
         request,
         "fleet/ipam_plan.html",
         {
             "sites": sites,
             "rows": rows,
-            "unplanned": unplanned,
+            "planned_count": sum(1 for row in rows if row["addressing"]),
+            "unplanned_count": sum(1 for row in rows if not row["addressing"]),
             "firewalls": firewalls,
             "all_firewalls": Firewall.objects.all(),
         },

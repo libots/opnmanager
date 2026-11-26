@@ -46,6 +46,37 @@ Snapshot and AuditEvent are registered read-only. Scoped models use forms with a
 field (`forms.TargetsFormMixin`). `templates/admin/base_site.html` wraps admin in the app shell
 (`static/admin-shell.css`).
 
+### Editing from a page: dialogs, not navigation
+
+Pages that list things edit them **in a dialog over the page** and refresh in place, as OPNsense
+does; they don't send you off to a separate admin page. Two implementations:
+
+- **Generic (`admin.OpnDialogAdmin`)**: used by Firewall, InterfaceAddressing, AddressRange, DhcpScope,
+  StaticReservation. The page includes `templates/fleet/partials/opn_dialog.html` (a `<dialog>` with
+  an iframe, a status line and `static/opn-dialog.js`) and marks links with `data-dialog`
+  (`data-dialog="small"` for short forms; the dialog then takes the form's height). The editor opens
+  with `?_modal=1`; `OpnDialogAdmin.framed()` relaxes `X-Frame-Options` to `SAMEORIGIN` for that
+  request only. Saving renders `admin/opn_modal_done.html`, which `postMessage`s
+  `{type: 'opn-dialog', done, message}`; the page re-fetches itself and swaps every element with
+  `data-refresh` and an `id`, so toggles, filters and scroll position survive. Cancel/Escape post
+  `{type: 'opn-dialog', close: true}`. `?_section=<key>` (from `OpnDialogAdmin.sections`) shows a
+  single fieldset and no inlines (e.g. the firewall's **Addressing and DHCP** for "Edit site
+  prefixes"); only that fieldset's fields are in the form, so only they are saved. Outside a dialog,
+  saving returns to a safe `?next=` or the admin's `return_view`.
+- **Rules grid**: the older, rule-specific version described below (`RuleAdmin`, message type
+  `opn-rule-dialog`, JSON re-fetch).
+
+### OPNsense dialog layout for editors
+
+Editors follow OPNsense's dialog layout: a head with the title, a **full help** switch and (in a
+dialog) a close button; collapsible section header rows; rows of *info icon + label | control*, with
+help text behind the icon (or all of it with full help); inline tables as further sections; a footer
+with secondary links (History, Delete) left and Cancel / Save right. `OpnDialogAdmin` uses
+`templates/admin/opn_change_form.html` + `static/opn-form.css` / `opn-form.js` for this; the rule
+editor (`admin/fleet/rule/change_form.html`, `rule-editor.css`) is the original. Name fieldsets after
+OPNsense's sections ("General settings", …) and use OPNsense's field labels (`labels` on the admin).
+New or reworked editors should use `OpnDialogAdmin` rather than Django's default change form.
+
 ### Rule dialog and rules grid
 
 - `/admin/fleet/rule/` changelist redirects to `/rules/` (except popups).
@@ -83,6 +114,9 @@ Grid layout prefs, the sidebar collapse state, and rule-editor switches are kept
 | `static/rule-editor.js` / `.css` | `admin/fleet/rule/change_form.html` | Dialog behavior (advanced/help switches, protocol-dependent fields, bulk greyed fields) |
 | `static/logical-interfaces.js` | `fleet/logical_interfaces.html` | Mapping matrix edits, conflict highlighting, fill by name |
 | `static/deploy.js` | `deploy.html`, `deploy_all.html` | Per-firewall and total selection counts; disables Deploy when nothing is selected |
+| `static/opn-dialog.js` | pages including `partials/opn_dialog.html` | Opens `data-dialog` links in the editor dialog; refreshes `data-refresh` regions after a save |
+| `static/opn-form.js` / `opn-form.css` | `admin/opn_change_form.html` | OPNsense dialog layout for `OpnDialogAdmin` editors: help icons, full-help switch, dialog close |
+| `static/ipam.js` | `ipam_plan.html` | "Show interfaces without a plan" toggle (remembered) |
 | `static/pull-firewalls.js` | `dashboard.html`, `deployment_overview.html` | Per-row and "pull all" (2 concurrent) via JSON |
 | `static/admin-shell.css` | `admin/base_site.html` | Admin restyle |
 

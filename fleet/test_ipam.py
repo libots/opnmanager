@@ -412,3 +412,74 @@ class ReservationSyncTests(TestCase):
         self.client.force_login(basic)
         self.assertEqual(self.client.get(f"/ipam/reservations/{self.fw.pk}/sync/").status_code, 403)
         self.assertEqual(self.client.get("/ipam/").status_code, 403)
+
+
+class SuggestTemplateTests(SimpleTestCase):
+    def test_templates_from_observed_addresses(self):
+        from .ipam import suggest_template
+
+        sites4 = [ipaddress.ip_network(f"10.{o}.0.0/16") for o in (20, 21, 22)]
+        observed4 = [ipaddress.ip_interface(f"10.{o}.40.1/21") for o in (20, 21, 22)]
+        self.assertEqual(suggest_template(list(zip(sites4, observed4, strict=True))), "10.x.40.1/21")
+        self.assertEqual(suggest_template([(sites4[0], observed4[0])]), "x.x.40.1/21")
+        sites6 = [ipaddress.ip_network(f"2001:db8:0:{o}00::/56") for o in (14, 15)]
+        observed6 = [ipaddress.ip_interface(f"2001:db8:0:{o}40::1/64") for o in (14, 15)]
+        self.assertEqual(suggest_template(list(zip(sites6, observed6, strict=True))), "x:x:x:40::1/64")
+        # Sites that disagree outside the site prefix have no common template.
+        mixed = [(sites4[0], observed4[0]), (sites4[1], ipaddress.ip_interface("10.21.41.1/21"))]
+        self.assertEqual(suggest_template(mixed), "")
+        self.assertEqual(suggest_template([(sites4[0], ipaddress.ip_interface("10.99.40.1/21"))]), "")
+
+
+class DialogEditorTests(TestCase):
+    def setUp(self):
+        self.fw = Firewall.objects.create(
+            name="Home", base_url="https://home.test", credential_prefix="HOME", ipv4_site_prefix="10.20.0.0/16"
+        )
+        self.vl40 = LogicalInterface.objects.create(name="VL40")
+        InterfaceMapping.objects.create(firewall=self.fw, logical_interface=self.vl40, device_interface="opt4")
+        from .models import DeviceInventory
+
+        DeviceInventory.objects.create(
+            firewall=self.fw, data={"interfaces": [{"name": "opt4", "ipv4": "10.20.40.1/21"}]}
+        )
+        self.client.force_login(get_user_model().objects.create_superuser("admin-test", password="Test-only-pw-1"))
+
+    def test_site_prefix_dialog_edits_only_its_section_and_tells_the_page(self):
+        url = f"/admin/fleet/firewall/{self.fw.pk}/change/?_section=addressing&_modal=1"
+        page = self.client.get(url)
+        self.assertEqual(page["X-Frame-Options"], "SAMEORIGIN")
+        self.assertContains(page, "Addressing and DHCP: Home")
+        self.assertNotContains(page, 'name="base_url"')
+        self.assertNotContains(page, "interface_mappings-TOTAL_FORMS")
+        done = self.client.post(
+            url, {"ipv4_site_prefix": "10.21.0.0/16", "ipv6_site_prefix": "", "dhcp_backend": "kea"}
+        )
+        self.assertContains(done, "opn-dialog")
+        self.fw.refresh_from_db()
+        self.assertEqual(
+            (self.fw.ipv4_site_prefix, self.fw.dhcp_backend, self.fw.name), ("10.21.0.0/16", "kea", "Home")
+        )
+        self.assertEqual(self.client.get(f"/admin/fleet/firewall/{self.fw.pk}/change/")["X-Frame-Options"], "DENY")
+
+    def test_firewall_editor_uses_the_opnsense_layout(self):
+        page = self.client.get(f"/admin/fleet/firewall/{self.fw.pk}/change/")
+        self.assertContains(page, "opn-form-section")
+        self.assertContains(page, "General settings")
+        self.assertContains(page, "Management URL")
+        self.assertNotContains(page, "Currently:")
+
+    def test_unplanned_interfaces_are_listed_with_a_prefilled_add_plan(self):
+        page = self.client.get("/ipam/")
+        self.assertContains(page, 'class="ipam-unplanned"')
+        self.assertContains(page, "ipv4_address=x.x.40.1%2F21")
+        self.assertContains(page, "data-dialog")
+        add = self.client.post(
+            f"/admin/fleet/interfaceaddressing/add/?_modal=1&logical_interface={self.vl40.pk}",
+            {"logical_interface": self.vl40.pk, "ipv4_address": "10.x.40.1/21", "ipv6_address": "", "notes": ""},
+        )
+        self.assertContains(add, "Interface address plan")
+        self.assertNotContains(self.client.get("/ipam/"), 'class="ipam-unplanned"')
+        # Interfaces that already have a plan aren't offered again.
+        form = self.client.get("/admin/fleet/interfaceaddressing/add/")
+        self.assertNotContains(form, f'<option value="{self.vl40.pk}">')

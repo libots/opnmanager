@@ -537,3 +537,18 @@ select.opn-native { position: absolute !important; width: 1px !important; height
 .ipam-tabs a.active { background: #fff; border-color: var(--opn-border); font-weight: 600; margin-bottom: -1px; }
 .ipam-select summary { cursor: pointer; }
 .ipam-matrix td { max-width: 340px; }
+/* Editors opened over a page (static/opn-dialog.js); "small" for short forms such as site prefixes. */
+.opn-dialog.opn-dialog-small { width: min(820px, calc(100vw - 32px)); height: min(360px, calc(100vh - 48px)); }
+.opn-dialog-status { margin: 0 24px 14px; }
+@media (max-width: 760px) { .opn-dialog-status { margin: 0 16px 14px; } }
+.ipam-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.ipam-toolbar .ipam-select { flex: 1 1 320px; margin-bottom: 0; }
+.ipam-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 12px 14px; background: #fff; border: 1px solid var(--opn-border); cursor: pointer; font-size: 14px; }
+.ipam-toggle .count { font-size: 12px; font-weight: 600; background: var(--opn-bg); border: 1px solid var(--opn-border); border-radius: 10px; padding: 0 7px; }
+.ipam-plan > .panel { margin-top: 14px; }
+.ipam-plan .ipam-unplanned { display: none; }
+.ipam-plan.show-unplanned .ipam-unplanned { display: table-row; }
+.ipam-plan.show-unplanned .ipam-none-planned { display: none; }
+.ipam-unplanned th, .ipam-unplanned td { background: #FCFCFC; }
+.ipam-add-plan { display: inline-block; margin: 6px 0 2px; padding: 2px 10px; font-size: 12px; }
+.ipam-observed { font-size: 12px; }

@@ -485,3 +485,58 @@ def next_free(first, last, taken):
             return address
         address += 1
     return None
+
+
+def _format(components, family):
+    if family == 4:
+        return ".".join(components)
+    # Compress the longest run of two or more zero hextets, as ipaddress does.
+    best_start, best_length, start = -1, 1, None
+    for index, value in enumerate([*components, "end"]):
+        if value == "0":
+            start = index if start is None else start
+            continue
+        if start is not None and index - start > best_length:
+            best_start, best_length = start, index - start
+        start = None
+    if best_start < 0:
+        return ":".join(components)
+    head = ":".join(components[:best_start])
+    tail = ":".join(components[best_start + best_length :])
+    return f"{head}::{tail}"
+
+
+def suggest_template(samples):
+    """A template that reproduces every observed (site prefix, ip_interface) pair, or '' if none does.
+
+    Parts entirely inside the site prefix become x (or stay literal for IPv4 when every site agrees);
+    parts outside it must agree across sites. Used to prefill "Add plan" from current addresses.
+    """
+    if not samples:
+        return ""
+    family = samples[0][1].version
+    if any(o.version != family or s.version != family or o.ip not in s for s, o in samples):
+        return ""
+    lengths = {o.network.prefixlen for _, o in samples}
+    if len(lengths) != 1 or min(lengths) < max(s.prefixlen for s, _ in samples):
+        return ""
+    bits, count = (8, 4) if family == 4 else (16, 8)
+    full = (1 << bits) - 1
+    components = []
+    for index in range(count):
+        shift = (count - 1 - index) * bits
+        values = [(int(o.ip) >> shift) & full for _, o in samples]
+        site_masks = {(int(s.netmask) >> shift) & full for s, _ in samples}
+        if len(site_masks) != 1:
+            return ""
+        site_mask = site_masks.pop()
+        if site_mask == full:
+            same = len(set(values)) == 1 and len(samples) > 1 and family == 4
+            components.append(str(values[0]) if same else "x")
+            continue
+        rest = {value & ~site_mask & full for value in values}
+        if len(rest) != 1:
+            return ""
+        value = rest.pop()
+        components.append(str(value) if family == 4 else f"{value:x}")
+    return f"{_format(components, family)}/{lengths.pop()}"

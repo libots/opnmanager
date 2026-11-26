@@ -47,8 +47,10 @@ Short, verified list. Each item names where it bites.
 - **OIDC settings are read at import time** in `config/settings.py`; changing them needs a restart, and
   `/oidc/` URLs exist only if enabled at startup. Tests exercise `SubjectOIDCBackend` directly under
   `override_settings`. A broken `.oidc-settings.json` stops startup.
-- **`X_FRAME_OPTIONS = "DENY"` globally**; only `RuleAdmin.framed()` (with `?_modal=1`) allows
-  `SAMEORIGIN`. A new framed page needs the same treatment.
+- **`X_FRAME_OPTIONS = "DENY"` globally**; only `RuleAdmin.framed()` and `OpnDialogAdmin.framed()`
+  (with `?_modal=1`) allow `SAMEORIGIN`. A new framed page needs the same treatment.
+- **Dialog refreshes swap elements by `id`.** A region marked `data-refresh` without an `id`, or
+  whose `id` differs between renders, is silently not refreshed (`static/opn-dialog.js`).
 - **Most editing is in Django admin**, not `views.py`. Look in `admin.py` + `forms.py` first for
   editor behavior.
 - **`DATA_DIR` defaults to the repo root**; dev runs drop `db.sqlite3`, `.local-secret` and lock

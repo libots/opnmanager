@@ -22,7 +22,13 @@ Full reference: `docs/subsystems/ui.md`.
 - Vanilla JS only, no build step; wrap `localStorage` access in try/catch like existing files.
 - Icons: add SVGs to `static/icons/` (Font Awesome Free; keep `THIRD_PARTY.md` accurate); icons used by
   `rules.js` must be in `views.RULE_ICONS`.
-- Framing is denied globally; only `RuleAdmin` with `?_modal=1` allows same-origin framing.
+- Edit from the page you're on: open editors in a dialog (`data-dialog` links +
+  `partials/opn_dialog.html`, editor = `admin.OpnDialogAdmin`) and refresh the page in place
+  (`data-refresh` regions). Don't link out to a standalone admin page from a list or matrix.
+- Editors follow OPNsense's dialog layout (sections, info icon + label | control, Cancel/Save):
+  subclass `OpnDialogAdmin` (`admin/opn_change_form.html`) for new or reworked editors.
+- Framing is denied globally; only `RuleAdmin` and `OpnDialogAdmin` with `?_modal=1` allow
+  same-origin framing.
 - Rule grid filters exist server-side (`rule_filters.py`) and client-side (`rules.js`); change both.
 - Scoped-model forms use `TargetsFormMixin` ("Deploy to"); keep accepting legacy scope fields.
 - User-visible behavior changes: update the root `README.md`.

@@ -48,3 +48,7 @@ Why things are the way they are. Each entry: decision → reason → where it li
     secret write-only in the UI; error messages never include raw exceptions/bodies.
 18. **Unsupported OPNsense areas are left alone** rather than written through guessed endpoints:
     DNS search domains (desired-only), authentication servers (removed), CARP VIPs, legacy rules, NAT.
+19. **Edit in dialogs, refresh in place.** Lists and matrices open editors in a dialog over the page
+    (OPNsense's modal pattern) and swap the changed regions afterwards instead of navigating to an
+    admin page and back, so context (filters, toggles, scroll) is kept. Editors share OPNsense's
+    dialog layout. → `admin.OpnDialogAdmin`, `static/opn-dialog.js`, `docs/subsystems/ui.md`.

@@ -1,0 +1,64 @@
+/* Editors laid out like OPNsense dialogs: section header rows, label | control rows with info icons,
+   Cancel / Save footer. The rule editor (rule-editor.css) is the original of this layout. */
+.opn-form-page #content { max-width: 1100px; padding-top: 16px; }
+.opn-form-page #content-main { float: none; }
+.opn-form-page #content-main > form { background: #fff; border: 1px solid var(--opn-border); }
+.opn-form-page .submit-row { display: none; }
+
+.opn-dialog-head { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--opn-border); }
+.opn-dialog-head h1 { margin: 0 auto 0 0 !important; font-size: 20px !important; font-weight: 600; }
+.opn-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: none; color: var(--opn-text); font: 400 14px/1.4 var(--opn-font); cursor: pointer; }
+.opn-toggle .switch { position: relative; width: 20px; height: 12px; border: 2px solid #D9534F; border-radius: 7px; }
+.opn-toggle .switch::after { content: ""; position: absolute; top: 1px; left: 1px; width: 6px; height: 6px; border-radius: 50%; background: #D9534F; transition: left .15s; }
+.opn-toggle[aria-checked=true] .switch { border-color: #5CB85C; background: #5CB85C; }
+.opn-toggle[aria-checked=true] .switch::after { left: 9px; background: #fff; }
+.opn-form-page .info-icon, .opn-form-page .opn-help-toggle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--opn-primary); color: #fff; font: 700 11px/1 Georgia, serif; padding: 0; cursor: pointer; }
+.opn-form-page .opn-help-toggle.no-help { background: #999; cursor: default; }
+.opn-dialog-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 3px; background: transparent; color: var(--opn-muted); cursor: pointer; }
+.opn-dialog-close:hover { background: #EEE; color: var(--opn-text); }
+.opn-dialog-close .icon { width: 16px; height: 16px; }
+
+.opn-form-section { margin: 0 !important; padding: 0; border: 0 !important; border-radius: 0; background: #fff; }
+.opn-form-section summary { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--opn-bg); border-bottom: 1px solid var(--opn-border); color: var(--opn-text); font-size: 17px; font-weight: 600; cursor: pointer; list-style: none; }
+.opn-form-section summary::-webkit-details-marker { display: none; }
+.opn-form-section summary::before { content: ""; width: 7px; height: 7px; margin: 0 4px 3px 3px; border-right: 2px solid var(--opn-text); border-bottom: 2px solid var(--opn-text); transform: rotate(45deg); transition: transform .15s; }
+.opn-form-section details:not([open]) summary::before { transform: rotate(-45deg); margin-bottom: 0; }
+.opn-section-note { margin: 0; padding: 8px 12px; font-size: 13px; color: var(--opn-muted); border-bottom: 1px solid #EEE; }
+
+#content .opn-form-row { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 10px; padding: 6px 12px; border-bottom: 1px solid #EEE; background: #fff; align-items: start; }
+#content .opn-form-row:nth-child(even) { background: #FCFCFC; }
+.opn-form-row > .opn-field-label { display: flex; flex-direction: row; align-items: center; gap: 7px; min-height: 34px; min-width: 0; }
+.opn-form-row > .opn-field-control { display: block; min-width: 0; max-width: 520px; }
+.opn-field-label label { float: none; width: auto; margin: 0; padding: 0; font-size: 15px; font-weight: 600; color: var(--opn-text); line-height: 1.3; }
+.opn-field-label label::after { content: none; }
+.opn-field-control > input[type=text], .opn-field-control > input[type=url], .opn-field-control > input[type=number], .opn-field-control > textarea, .opn-field-control > select { width: 100%; max-width: 390px; }
+.opn-field-control > textarea { min-height: 70px; }
+.opn-field-control input[type=checkbox] { margin: 9px 0; }
+.opn-field-control .readonly { padding-top: 7px; margin: 0; }
+.opn-field-help { display: none; margin: 4px 0 2px; font-size: 13px; color: var(--opn-muted); }
+.opn-full-help-visible .opn-field-help, .opn-help-open .opn-field-help { display: block; }
+.opn-form-row.errors .opn-field-label label { color: var(--opn-danger); }
+.opn-form-page .errorlist { margin: 4px 0 0; padding: 0; list-style: none; color: var(--opn-danger); }
+.opn-form-page .errornote { margin: 12px 16px 0; }
+
+/* Inline tables (a firewall's interface mappings, a scope's options) as OPNsense sections. */
+.opn-form-page .inline-group { margin: 0; border: 0; border-top: 1px solid var(--opn-border); }
+.opn-form-page .inline-group .module, .opn-form-page .inline-group fieldset.module { border: 0 !important; box-shadow: none; }
+.opn-form-page .inline-group h2 { margin: 0; padding: 9px 12px; background: var(--opn-bg); border: 0 !important; border-bottom: 1px solid var(--opn-border) !important; font-size: 17px; }
+
+.opn-form-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--opn-border); background: #fff; position: sticky; bottom: 0; z-index: 5; }
+.opn-secondary-actions { display: flex; gap: 14px; font-size: 14px; margin-right: auto; }
+.opn-delete { color: #D9534F; }
+.opn-cancel, .opn-secondary-submit { min-height: 34px; padding: 6px 14px; border: 1px solid var(--opn-border) !important; border-radius: 3px; background: #fff !important; color: #444 !important; font: 400 14px var(--opn-font); cursor: pointer; }
+.opn-cancel:hover, .opn-secondary-submit:hover { background: #E5E5E5 !important; text-decoration: none; }
+.opn-form-footer input[name=_save] { min-height: 34px; padding: 6px 16px; border: 1px solid var(--opn-primary); border-radius: 3px; background: var(--opn-primary); color: #fff; font: 400 14px var(--opn-font); cursor: pointer; }
+.opn-form-footer input[name=_save]:hover { background: var(--opn-primary-dark); }
+
+/* In a page's dialog the form is the whole frame; the footer stays in view. */
+body.opn-modal.opn-form-page #content { max-width: none; padding: 0; }
+body.opn-modal.opn-form-page #content-main > form { border: 0; }
+
+@media (max-width: 760px) {
+  #content .opn-form-row { grid-template-columns: 1fr; gap: 2px; }
+  .opn-field-label { min-height: 0; }
+}

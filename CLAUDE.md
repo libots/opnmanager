@@ -62,7 +62,8 @@ CI (`.github/workflows/test.yml`) runs format check, lint, tests and the migrati
 ## Conventions
 
 - Ruff: line length 120, double quotes, rules E/F/W/I/B/UP; migrations excluded.
-- Keep the UI faithful to OPNsense (labels, field order, behavior). Vanilla JS, no new dependencies
+- Keep the UI faithful to OPNsense (labels, field order, behavior, dialog layout). Edit in a dialog
+  over the page and refresh in place (`admin.OpnDialogAdmin`, `static/opn-dialog.js`); see `docs/subsystems/ui.md`. Vanilla JS, no new dependencies
   without a strong reason (pinned in `requirements.txt`; vendored assets listed in `THIRD_PARTY.md`).
 - Views: `login_required` + `permission_required(..., raise_exception=True)`; POST for changes.
 - User-facing messages are complete, actionable sentences that say what was (not) changed.
