@@ -24,7 +24,7 @@ RuleOrigin(firewall, rule, remote_uuid)          unique (firewall, remote_uuid) 
 VirtualIPOrigin(firewall, virtual_ip, remote_uuid) unique (firewall, remote_uuid)
 Firewall: position (display order, Meta ordering), ipv4_site_prefix, ipv6_site_prefix, dhcp_backend (dnsmasq|kea)
 DnsBase (name, kind servers|domains, default) 1─* DnsBaseValue *─1 Firewall (unique per base+firewall)
-DnsPreference (name, dns_servers / search_domains token lists, is_default) 1─* DhcpScope.dns_preference (SET_NULL)
+DnsPreference (name, dns_servers / search_domains token lists, is_default), referenced as list:<name> from other lists and DhcpScope.dns_servers
 InterfaceAddressing 1─1 LogicalInterface (templates ipv4_address / ipv6_address)
 AddressRange *─1 LogicalInterface (name, "10.x.10.10-29")
 DhcpScope (ScopedPolicy) *─1 LogicalInterface; DhcpOption *─1 DhcpScope (code, kind, value)
@@ -128,7 +128,7 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 
 ## Migrations
 
-`fleet/migrations/0001`–`0025`. Notable data migrations:
+`fleet/migrations/0001`–`0026`. Notable data migrations:
 - `0004` copies `Rule.interface` into `Rule.interfaces`.
 - `0013` removes stored authentication-server models (never deployable).
 - `0015` converts stored ICMPv6 type numbers to OPNsense option names.
@@ -147,6 +147,8 @@ On `FirmwareJob.Meta`: `install_firmware`. All pages also need `fleet.view_firew
 - `0025` adds `DnsBase`/`DnsBaseValue`, moves 0024's per-site DNS into bases `dns`/`domain`, rewrites
   preference lists to the base syntax, then drops the two firewall fields
   (`test_features.DnsBaseMigrationTests`).
+- `0026` writes each scope's `dns_preference` into its `dns_servers` as `list:<name>` and drops the
+  FK (`test_features.DnsServersBoxMigrationTests`).
 
 `fleet/test_features.py::MigrationUpgradeTests` migrates from 0002 (and from 0017) to latest with
 data; keep it passing. CI runs `makemigrations --check --dry-run`.

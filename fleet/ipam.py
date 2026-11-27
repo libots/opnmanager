@@ -381,7 +381,50 @@ LIST_KINDS = {"servers": "servers", "search": "domains"}
 
 
 def preference_tokens(text):
-    return [t.strip() for t in re.split(r"[,\s]+", text or "") if t.strip()]
+    """Tokens of a DNS list: separated by commas or new lines (or spaces, except inside list:<name>,
+    whose names may contain spaces)."""
+    tokens = []
+    for piece in re.split(r"[,\n]+", text or ""):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if piece.lower().startswith("list:"):
+            tokens.append("list:" + piece[5:].strip())
+        else:
+            tokens.extend(t for t in piece.split() if t)
+    return tokens
+
+
+def list_reference(token):
+    """The preference list a token names (list:<name>), lower-cased, or None."""
+    return token[5:].strip().lower() if token.lower().startswith("list:") else None
+
+
+def expand_lists(text, kind, lists, stack=()):
+    """Replace list:<name> tokens by that list's tokens for `kind` ("servers" or "search"), recursively.
+
+    `lists` is {lower name: {"name", "dns_servers", "search_domains"}}. Returns (tokens, problems,
+    names of the lists used, in order). A list that includes itself is reported, not followed.
+    """
+    tokens, problems, used = [], [], []
+    for token in preference_tokens(text):
+        name = list_reference(token)
+        if name is None:
+            tokens.append(token)
+            continue
+        found = lists.get(name)
+        if found is None:
+            problems.append(f"{token}: there is no DNS preference list named {token[5:].strip()}")
+        elif name in stack:
+            problems.append(f"{token}: the list includes itself")
+        else:
+            used.append(found["name"])
+            field = found["dns_servers"] if kind == "servers" else found["search_domains"]
+            inner, issues, inner_used = expand_lists(field, kind, lists, (*stack, name))
+            tokens += inner
+            problems += issues
+            used += [n for n in inner_used if n not in used]
+    return tokens, problems, used
 
 
 def check_base_value(text, kind, aliases):
@@ -423,11 +466,22 @@ def _base_reference(token, bases, firewall_names):
     return None
 
 
-def check_preference(text, kind, firewall_names, aliases, bases):
-    """Problems with a preference list (kind "servers" or "search"); [] when it is valid."""
+def check_preference(text, kind, firewall_names, aliases, bases, list_names=None, own=None):
+    """Problems with a preference list or a scope's DNS servers (kind "servers" or "search").
+
+    `list_names` (lower-cased) enables list:<name> tokens; `own` is the list being edited, which
+    can't include itself.
+    """
     problems = []
     wanted = LIST_KINDS[kind]
     for token in preference_tokens(text):
+        name = list_reference(token)
+        if name is not None:
+            if list_names is None or name not in list_names:
+                problems.append(f"{token}: there is no DNS preference list named {token[5:].strip()}")
+            elif own and name == own.lower():
+                problems.append(f"{token}: a list can't include itself")
+            continue
         reference = _base_reference(token, bases, firewall_names)
         if reference:
             base = reference[2]
@@ -488,13 +542,18 @@ def base_values(base, firewall, aliases):
     return values, problems
 
 
-def resolve_preference(text, kind, firewall, firewalls, aliases, bases, router=None):
+def resolve_preference(text, kind, firewall, firewalls, aliases, bases, router=None, lists=None, subnet=None):
     """An ordered, de-duplicated list for one site: [{"value", "source"}], and problems.
 
     `firewalls` is the fleet in display order (for others.<base> and <firewall>.<base>); `router` is
     the interface address that `router` / 0.0.0.0 stands for (None outside an interface context).
+    list:<name> tokens are expanded from `lists` first. Every value is kept at its first occurrence
+    only, so the earliest mention decides its priority. `subnet` enables +N / -N offsets.
     """
     entries, problems, seen = [], [], set()
+    text_tokens, issues, _ = expand_lists(text, kind, lists or {})
+    problems += issues
+    text = ", ".join(text_tokens)
     named = {fw.name: fw for fw in firewalls}
 
     def add(value, source):
@@ -546,8 +605,11 @@ def resolve_preference(text, kind, firewall, firewalls, aliases, bases, router=N
                     problems.append(f"alias {token} member {member} is not a single address")
         elif kind == "servers":
             try:
-                site = site_prefix(firewall, 4) if "x" in lower else None
-                address = resolve_address(token, site) if site else ipaddress.ip_address(token)
+                if subnet is not None and RELATIVE.match(token):
+                    address = resolve_in_subnet(token, subnet, None)
+                else:
+                    site = site_prefix(firewall, 4) if "x" in lower else None
+                    address = resolve_address(token, site) if site else ipaddress.ip_address(token)
                 add(str(address), "listed")
             except (TemplateError, ValueError):
                 problems.append(f"{token} doesn't resolve to an IPv4 address at {firewall.name}")
@@ -607,28 +669,33 @@ def scope_settings(scope, subnet, site, router, aliases, dns_context=None):
         gateways, issues = _resolve_servers(scope.gateway, subnet, site, router, aliases)
         problems += issues
         settings["options"].append({"code": 3, "name": "routers", "kind": "ip", "values": gateways})
-    preference = getattr(scope, "dns_preference", None)
-    if preference is not None and dns_context is not None:
-        firewall, firewalls, bases = dns_context
+    if scope.dns_servers and dns_context is not None:
+        # One ordered box: preference lists (list:<name>), bases, router and addresses. The domain
+        # search list follows the preference lists in it, in the same order.
+        firewall, firewalls, bases, lists = dns_context
         servers, issues = resolve_preference(
-            preference.dns_servers, "servers", firewall, firewalls, aliases, bases, router
+            scope.dns_servers, "servers", firewall, firewalls, aliases, bases, router, lists, subnet
         )
         problems += issues
-        if preference.dns_servers:
-            values = [entry["value"] for entry in servers]
-            settings["options"].append({"code": 6, "name": OPTION_NAMES[6], "kind": "ip", "values": values})
-        search, issues = resolve_preference(preference.search_domains, "search", firewall, firewalls, aliases, bases)
+        settings["options"].append(
+            {"code": 6, "name": OPTION_NAMES[6], "kind": "ip", "values": [entry["value"] for entry in servers]}
+        )
+        list_tokens = ", ".join(t for t in preference_tokens(scope.dns_servers) if list_reference(t) is not None)
+        search, issues = resolve_preference(list_tokens, "search", firewall, firewalls, aliases, bases, lists=lists)
         problems += issues
         if search:
             domains = [entry["value"] for entry in search]
             settings["options"].append({"code": 119, "name": OPTION_NAMES[119], "kind": "domains", "values": domains})
             if not scope.domain_name:
                 settings["options"].append({"code": 15, "name": "domain-name", "kind": "text", "values": domains[:1]})
-    for code, text in ((6, scope.dns_servers if preference is None else ""), (42, scope.ntp_servers)):
-        if text:
-            servers, issues = _resolve_servers(text, subnet, site, router, aliases)
-            problems += issues
-            settings["options"].append({"code": code, "name": OPTION_NAMES[code], "kind": "ip", "values": servers})
+    elif scope.dns_servers:
+        servers, issues = _resolve_servers(scope.dns_servers, subnet, site, router, aliases)
+        problems += issues
+        settings["options"].append({"code": 6, "name": OPTION_NAMES[6], "kind": "ip", "values": servers})
+    if scope.ntp_servers:
+        servers, issues = _resolve_servers(scope.ntp_servers, subnet, site, router, aliases)
+        problems += issues
+        settings["options"].append({"code": 42, "name": OPTION_NAMES[42], "kind": "ip", "values": servers})
     if scope.domain_name:
         settings["options"].append({"code": 15, "name": "domain-name", "kind": "text", "values": [scope.domain_name]})
     settings["lease_time"] = scope.lease_time

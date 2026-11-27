@@ -59,10 +59,16 @@ ordered token lists (`dns_servers`, `search_domains`; `check_preference`, normal
 tokens). Tokens: `this.<base>`, `others.<base>` (fleet order, enabled, skipping sites claimed by
 `this.`/`<firewall>.`/bare references to that base in the same list), `<base>` (= this + others),
 `<firewall>.<base>`, `router`/`0.0.0.0`, literals. Base names can't be `this`/`others`/`router` or a
-firewall's name. `resolve_preference(text, kind, firewall, fleet, aliases, bases, router)` returns
-`[{value, source}]`, de-duplicated in order. `scope_settings(..., dns_context=(firewall, fleet,
-bases))` uses a scope's `dns_preference` for options 6, 119 (`kind` "domains") and 15 (when the scope
-has no domain name); `DhcpScope.dns_servers` is then ignored. One list can be `is_default`. Page:
+firewall's name. `list:<name>` tokens include another list (`expand_lists`, recursive, loops reported; names may
+contain spaces, so `preference_tokens` splits on commas/new lines and keeps `list:` tokens whole).
+`resolve_preference(text, kind, firewall, fleet, aliases, bases, router, lists, subnet)` expands lists,
+then returns `[{value, source}]` keeping each value at its first occurrence only.
+`DhcpScope.dns_servers` is one ordered box of lists, bases, router, addresses, offsets and aliases:
+`scope_settings(..., dns_context=(firewall, fleet, bases, lists))` resolves it for option 6, the
+search domains of the lists in it (in order) for option 119, and option 15 when the scope has no
+domain name. `models.dns_lists()` gives the lists dict. One list can be `is_default`; the DHCP page
+prefills new scopes' DNS servers with `list:<default>`. Migration 0026 moved the former
+`DhcpScope.dns_preference` FK into `dns_servers`. Page:
 `ipam_views.dns_order` ("DNS Options"). Migration 0025 moved 0024's `Firewall.site_dns_servers` /
 `site_domain` into bases `dns` / `domain` and rewrote `site`, `site:X`, `other-sites`.
 

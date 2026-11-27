@@ -185,7 +185,9 @@ class AddressPlanTests(TestCase):
             }
         )
         self.assertFalse(form.is_valid())
-        self.assertIn("MISSING is not a host alias", str(form.errors["dns_servers"]))
+        self.assertIn(
+            "MISSING isn&#x27;t a DNS base, address, template, host alias or router", str(form.errors["dns_servers"])
+        )
 
     def test_ranges_page_counts_reservations_and_flags_overlaps(self):
         AddressRange.objects.create(logical_interface=self.vl10, name="Switches", addresses="10.x.10.10-29")
@@ -991,10 +993,17 @@ class DnsPreferenceTests(TestCase):
 
     def resolve(self, text, kind, site, router=None):
         from .ipam import resolve_preference
-        from .models import dns_bases
+        from .models import dns_bases, dns_lists
 
         entries, problems = resolve_preference(
-            text, kind, self.sites[site], list(Firewall.objects.all()), {}, dns_bases(), router=router
+            text,
+            kind,
+            self.sites[site],
+            list(Firewall.objects.all()),
+            {},
+            dns_bases(),
+            router=router,
+            lists=dns_lists(),
         )
         self.assertEqual(problems, [])
         return [entry["value"] for entry in entries]
@@ -1031,7 +1040,7 @@ class DnsPreferenceTests(TestCase):
             DnsBaseValue(base=self.corp, firewall=self.sites["Home"], value="not a domain!").full_clean()
 
     def test_dhcp_scopes_hand_out_the_list_in_order(self):
-        preference = DnsPreference.objects.create(
+        DnsPreference.objects.create(
             name="AD first",
             dns_servers="this.ad, Cloud.ad, others.ad, router",
             search_domains="corp",
@@ -1041,15 +1050,13 @@ class DnsPreferenceTests(TestCase):
             name="VL10 clients",
             logical_interface=self.vl10,
             dynamic_range="10.x.15.0-250",
-            dns_preference=preference,
-            dns_servers="9.9.9.9",
+            dns_servers="9.9.9.9, list:AD first",
         )
         page = self.client.get("/ipam/dhcp/")
         cells = page.context["rows"][0]["cells"]
         home = {o["code"]: o for o in cells[0]["settings"]["options"]}
-        self.assertEqual(home[6]["values"][:3], ["10.20.10.5", "10.20.10.6", "10.50.1.4"])
+        self.assertEqual(home[6]["values"][:4], ["9.9.9.9", "10.20.10.5", "10.20.10.6", "10.50.1.4"])
         self.assertEqual(home[6]["values"][-1], "10.20.8.1")
-        self.assertNotIn("9.9.9.9", home[6]["values"])
         self.assertEqual(home[119]["values"][0], "home.corp.example")
         self.assertEqual(home[15]["values"], ["home.corp.example"])
         self.assertIn(
@@ -1064,13 +1071,73 @@ class DnsPreferenceTests(TestCase):
         self.assertContains(dns, "From the default")
         self.assertContains(dns, "This site's own value")
 
+    def test_repeats_keep_their_first_position_across_lists(self):
+        DnsPreference.objects.create(name="Local", dns_servers="this.ad, router")
+        DnsPreference.objects.create(
+            name="Everything AD", dns_servers="others.ad, list:Local", search_domains="this.corp"
+        )
+        # Home's AD servers come from Local first, so Everything AD's others.ad doesn't move them later.
+        self.assertEqual(
+            self.resolve("list:Local, router, list:Everything AD", "servers", "Home", router="10.20.8.1"),
+            ["10.20.10.5", "10.20.10.6", "10.20.8.1", "10.50.1.4", "10.21.10.5", "10.21.10.6"],
+        )
+        self.assertEqual(self.resolve("list:Everything AD", "search", "Home"), ["home.corp.example"])
+
+    def test_lists_can_include_lists_but_not_themselves(self):
+        from .ipam import resolve_preference
+        from .models import dns_bases, dns_lists
+
+        a = DnsPreference.objects.create(name="A", dns_servers="this.ad")
+        DnsPreference.objects.create(name="B", dns_servers="list:A, router")
+        a.dns_servers = "list:B"
+        with self.assertRaisesMessage(ValidationError, "the list includes itself"):
+            a.full_clean()
+        a.dns_servers = "list:A"
+        with self.assertRaisesMessage(ValidationError, "a list can't include itself"):
+            a.full_clean()
+        DnsPreference.objects.filter(pk=a.pk).update(dns_servers="list:B")  # a loop saved behind the form's back
+        _, problems = resolve_preference(
+            "list:A", "servers", self.sites["Home"], list(Firewall.objects.all()), {}, dns_bases(), lists=dns_lists()
+        )
+        self.assertIn("list:A: the list includes itself", problems)
+
+    def test_scope_form_takes_lists_with_spaces_in_their_names(self):
+        from .forms import DhcpScopeForm
+
+        DnsPreference.objects.create(name="AD first", dns_servers="this.ad")
+        form = DhcpScopeForm(
+            data={
+                "name": "VL10",
+                "logical_interface": self.vl10.pk,
+                "enabled": "on",
+                "gateway": "0.0.0.0",
+                "dns_servers": ["list:AD first", "router", "this.pihole"],
+                "targets": ["all"],
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["dns_servers"], "list:AD first, router, this.pihole")
+        form = DhcpScopeForm(
+            data={
+                "name": "VL10",
+                "logical_interface": self.vl10.pk,
+                "enabled": "on",
+                "gateway": "0.0.0.0",
+                "dns_servers": ["list:Nope"],
+                "targets": ["all"],
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("no DNS preference list named Nope", str(form.errors["dns_servers"]))
+
     def test_only_one_default_and_new_scopes_start_with_it(self):
         first = DnsPreference.objects.create(name="One", is_default=True)
-        second = DnsPreference.objects.create(name="Two", is_default=True)
+        DnsPreference.objects.create(name="Two", is_default=True)
         first.refresh_from_db()
         self.assertFalse(first.is_default)
         page = self.client.get("/ipam/dhcp/")
-        self.assertContains(page, f"dns_preference={second.pk}")
+        self.assertContains(page, "dns_servers=list%3ATwo")
+        self.assertNotContains(page, "dns_servers=list%3AOne")
 
 
 class ChipSuggestionTests(TestCase):

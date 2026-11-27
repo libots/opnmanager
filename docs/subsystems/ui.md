@@ -92,7 +92,8 @@ defaults) use chips. Suggestions come from the widget's choices; `option_attrs` 
 `data-hint` (shown beside the suggestion) and `data-only` (with the select's `data-filter-by`, e.g.
 port names only while the alias type is `port`). `forms.server_suggestions` and
 `forms.dns_list_suggestions` build the common sets. The browser submits selected options in DOM
-order, so reordering chips reorders the saved value.
+order, so reordering chips reorders the saved value. `data-separators="comma"` (DNS lists) makes
+typed and pasted text split only on commas and new lines, so `list:AD first` stays one chip.
 
 ### Address fields: hints and calculator
 

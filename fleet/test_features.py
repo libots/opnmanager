@@ -530,3 +530,28 @@ class DnsBaseMigrationTests(TransactionTestCase):
             self.assertEqual(migrated.search_domains, "this.domain, others.domain")
         finally:
             MigrationExecutor(connection).migrate(latest)
+
+
+class DnsServersBoxMigrationTests(TransactionTestCase):
+    def test_a_scopes_preference_list_moves_into_its_dns_servers(self):
+        executor = MigrationExecutor(connection)
+        old = [("fleet", "0025_dns_bases")]
+        latest = executor.loader.graph.leaf_nodes()
+        try:
+            executor.migrate(old)
+            apps = executor.loader.project_state(old).apps
+            interface = apps.get_model("fleet", "LogicalInterface").objects.create(name="VL10", sort_key="vl10")
+            preference = apps.get_model("fleet", "DnsPreference").objects.create(name="AD first", dns_servers="router")
+            Scope = apps.get_model("fleet", "DhcpScope")
+            with_list = Scope.objects.create(
+                name="With", logical_interface=interface, dns_preference=preference, dns_servers="0.0.0.0"
+            )
+            without = Scope.objects.create(name="Without", logical_interface=interface, dns_servers="10.0.0.53")
+            executor = MigrationExecutor(connection)
+            executor.migrate(latest)
+            apps = executor.loader.project_state(latest).apps
+            Scope = apps.get_model("fleet", "DhcpScope")
+            self.assertEqual(Scope.objects.get(pk=with_list.pk).dns_servers, "list:AD first")
+            self.assertEqual(Scope.objects.get(pk=without.pk).dns_servers, "10.0.0.53")
+        finally:
+            MigrationExecutor(connection).migrate(latest)

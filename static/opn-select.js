@@ -285,6 +285,8 @@
     if (select.dataset.opnPicker) return;
     select.dataset.opnPicker = 'true';
     const free = select.dataset.tags === 'true';
+    // data-separators="comma": items may contain spaces (list:AD first), so only commas and new lines separate.
+    const separators = select.dataset.separators === 'comma' ? /[,\n]+/ : /[\s,]+/;
     const name = select.labels[0]?.textContent.trim().replace(/:$/, '') || 'Items';
     const root = el('div', 'opn-tokens');
     const box = el('div', 'opn-tokens-box');
@@ -490,7 +492,7 @@
       const entries = found.map(option => ({value: option.value, label: labelOf(option), hint: option.dataset.hint || ''}));
       // Free-form lists can always take exactly what was typed; it comes after the matches, so Enter
       // picks the best match and the typed text stays one arrow key away.
-      if (free && typed && !found.some(o => o.value.toLowerCase() === typed.toLowerCase()) && !/[\s,]/.test(typed)) {
+      if (free && typed && !found.some(o => o.value.toLowerCase() === typed.toLowerCase()) && !separators.test(typed)) {
         entries.push({value: typed, label: 'Add “' + typed + '”', hint: 'as typed', typed: true});
       }
       entries.forEach((entry, index) => {
@@ -522,7 +524,7 @@
     }
 
     function commitTyped() {
-      const items = input.value.split(/[\s,]+/).filter(Boolean);
+      const items = input.value.split(separators).map(item => item.trim()).filter(Boolean);
       if (!items.length) return;
       const rejected = add(items);
       input.value = rejected.join(' ');
@@ -554,7 +556,7 @@
     });
     input.addEventListener('paste', event => {
       const pasted = event.clipboardData?.getData('text');
-      if (!pasted || !/[\s,]/.test(pasted.trim())) return;
+      if (!pasted || !separators.test(pasted.trim())) return;
       event.preventDefault();
       input.value += pasted;
       commitTyped();
@@ -598,7 +600,7 @@
       try {
         const pasted = await navigator.clipboard.readText();
         if (!text.hidden) { text.value += (text.value && !text.value.endsWith('\n') ? '\n' : '') + pasted; return; }
-        const rejected = add(pasted.split(/[\s,]+/));
+        const rejected = add(pasted.split(separators));
         status.textContent = rejected.length ? 'Not in the list: ' + rejected.join(', ') : '';
         render(); fire(select);
       } catch (error) {

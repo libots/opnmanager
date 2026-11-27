@@ -702,19 +702,35 @@ class DhcpScopeForm(TargetsFormMixin, forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         choices, hints = server_suggestions()
-        for name in ("gateway", "dns_servers", "ntp_servers"):
-            field = self.fields[name]
-            field.widget = TokenWidget(choices=choices, tags=True, option_attrs=hints)
+        for name in ("gateway", "ntp_servers"):
+            self.fields[name].widget = TokenWidget(choices=choices, tags=True, option_attrs=hints)
+        choices, hints = dns_list_suggestions("servers", with_lists=True)
+        self.fields["dns_servers"].widget = TokenWidget(
+            choices=choices, tags=True, option_attrs=hints, attrs={"data-separators": "comma"}
+        )
 
     def clean(self):
         data = super().clean()
         aliases = set(Alias.objects.filter(type="host").values_list("name", flat=True))
-        for field in ("gateway", "dns_servers", "ntp_servers"):
+        for field in ("gateway", "ntp_servers"):
             if data.get(field):
                 try:
                     data[field] = check_server_list(data[field], self.fields[field].label, aliases)
                 except forms.ValidationError as exc:
                     self.add_error(field, exc)
+        if data.get("dns_servers"):
+            from .ipam import check_preference, preference_tokens
+            from .models import dns_bases, dns_lists
+
+            host_aliases = {a.name: a.content for a in Alias.objects.filter(type="host")}
+            names = set(Firewall.objects.values_list("name", flat=True))
+            problems = check_preference(
+                data["dns_servers"], "servers", names, host_aliases, dns_bases(), set(dns_lists())
+            )
+            if problems:
+                self.add_error("dns_servers", "DNS servers: " + "; ".join(problems) + ".")
+            else:
+                data["dns_servers"] = ", ".join(preference_tokens(data["dns_servers"]))
         return data
 
 
@@ -815,10 +831,10 @@ def rule_form_initial(data, names):
     return initial
 
 
-def dns_list_suggestions(kind):
-    """Suggestions for a DNS preference list: router, each base as base / this. / others. / <site>.,
-    and host aliases (servers) — with a hint saying what each one means."""
-    from .models import DnsBase
+def dns_list_suggestions(kind, with_lists=False, exclude=None):
+    """Suggestions for a DNS list: other preference lists (list:<name>), router, each base as
+    base / this. / others. / <site>., and host aliases (servers), each with a hint."""
+    from .models import DnsBase, DnsPreference
 
     wanted = "servers" if kind == "servers" else "domains"
     choices, hints = [], {}
@@ -826,6 +842,14 @@ def dns_list_suggestions(kind):
     def offer(value, hint):
         choices.append((value, value))
         hints[value] = {"data-hint": hint}
+
+    if with_lists:
+        for preference in DnsPreference.objects.exclude(pk=exclude):
+            field = preference.dns_servers if kind == "servers" else preference.search_domains
+            offer(
+                f"list:{preference.name}",
+                ("default list: " if preference.is_default else "list: ") + (field or "empty"),
+            )
 
     if kind == "servers":
         offer("router", "the firewall on the interface")
@@ -853,8 +877,10 @@ class DnsPreferenceForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for name, kind in (("dns_servers", "servers"), ("search_domains", "search")):
-            choices, hints = dns_list_suggestions(kind)
-            self.fields[name].widget = TokenWidget(choices=choices, tags=True, option_attrs=hints)
+            choices, hints = dns_list_suggestions(kind, with_lists=True, exclude=self.instance.pk)
+            self.fields[name].widget = TokenWidget(
+                choices=choices, tags=True, option_attrs=hints, attrs={"data-separators": "comma"}
+            )
 
 
 class DnsBaseForm(forms.ModelForm):

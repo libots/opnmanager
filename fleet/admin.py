@@ -676,7 +676,7 @@ class DhcpScopeAdmin(OpnDialogAdmin):
     fieldsets = [
         (None, {"fields": ["name", "enabled", "logical_interface", "description"]}),
         ("Addresses", {"fields": ["dynamic_range", "lease_time"]}),
-        ("Options", {"fields": ["gateway", "dns_preference", "dns_servers", "ntp_servers", "domain_name"]}),
+        ("Options", {"fields": ["gateway", "dns_servers", "ntp_servers", "domain_name"]}),
         ("Deployment", {"fields": ["targets"]}),
     ]
 

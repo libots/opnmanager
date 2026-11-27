@@ -18,6 +18,7 @@ from .ipam import (
     check_preference,
     check_range,
     check_template,
+    expand_lists,
     interface_plan,
     normalize_mac,
     parse_site_prefix,
@@ -741,6 +742,14 @@ class DnsBaseValue(models.Model):
         constraints = [models.UniqueConstraint(fields=["base", "firewall"], name="one_dns_value_per_site")]
 
 
+def dns_lists():
+    """All DNS preference lists as the resolver expects them: {lower name: {name, dns_servers, search_domains}}."""
+    return {
+        p.name.lower(): {"name": p.name, "dns_servers": p.dns_servers, "search_domains": p.search_domains}
+        for p in DnsPreference.objects.all()
+    }
+
+
 def dns_bases():
     """All DNS bases as the resolver expects them: {lower name: {name, kind, default, values}}."""
     return {
@@ -764,8 +773,8 @@ class DnsPreference(models.Model):
         blank=True,
         help_text="In order, e.g. this.ad, Cloud.ad, others.ad, router. this.<base> = this site's value of a DNS "
         "base; others.<base> = every other site's, in the fleet order; <base> = this site's, then the others'; "
-        "<firewall>.<base> = one site's; router = the firewall on the interface. Addresses, templates (10.x.10.5) "
-        "and host alias names work too.",
+        "<firewall>.<base> = one site's; router = the firewall on the interface; list:<name> = another list's. "
+        "Addresses, templates (10.x.10.5) and host alias names work too. Repeats keep their first position.",
     )
     search_domains = models.CharField(
         "Domain search",
@@ -783,9 +792,21 @@ class DnsPreference(models.Model):
         aliases = {a.name: a.content for a in Alias.objects.filter(type="host")}
         names = set(Firewall.objects.values_list("name", flat=True))
         bases = dns_bases()
+        lists = dns_lists()
+        lists[(self.name or "").lower()] = {
+            "name": self.name,
+            "dns_servers": self.dns_servers,
+            "search_domains": self.search_domains,
+        }
         errors = {}
         for field, kind in (("dns_servers", "servers"), ("search_domains", "search")):
-            problems = check_preference(getattr(self, field), kind, names, aliases, bases)
+            problems = check_preference(getattr(self, field), kind, names, aliases, bases, set(lists), self.name)
+            # Lists can include lists; a loop through other lists is reported here too.
+            problems += [
+                p
+                for p in expand_lists(getattr(self, field), kind, lists, ((self.name or "").lower(),))[1]
+                if p not in problems and "includes itself" in p
+            ]
             if problems:
                 errors[field] = "; ".join(problems) + "."
             setattr(self, field, ", ".join(preference_tokens(getattr(self, field))))
@@ -826,21 +847,13 @@ class DhcpScope(ScopedPolicy):
     )
     dns_servers = models.CharField(
         "DNS servers",
-        max_length=300,
+        max_length=500,
         blank=True,
-        default="0.0.0.0",
-        help_text="Comma-separated: 0.0.0.0 (the firewall), addresses or templates (10.x.10.5), offsets (+5), "
-        "or host alias names (their addresses in this family are used).",
-    )
-    dns_preference = models.ForeignKey(
-        DnsPreference,
-        verbose_name="DNS preference list",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="scopes",
-        help_text="Hands out DNS servers and the domain search list in this list's order at each site (and its "
-        "first search domain as the domain name if Domain name is empty). DNS servers below are then ignored.",
+        default="router",
+        help_text="In order: DNS preference lists (list:<name>), DNS bases (this.ad, others.ad, Cloud.ad), router "
+        "(the firewall on the interface, also 0.0.0.0), addresses or templates (10.x.10.5), offsets (+5) or host "
+        "aliases. An address that comes up again later is skipped, so its first mention sets its priority. The "
+        "domain search list follows the preference lists here, in the same order.",
     )
     ntp_servers = models.CharField("NTP servers", max_length=300, blank=True, help_text="Same notation as DNS.")
     domain_name = models.CharField(max_length=253, blank=True)
