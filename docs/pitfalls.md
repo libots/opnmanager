@@ -49,6 +49,9 @@ Short, verified list. Each item names where it bites.
   `override_settings`. A broken `.oidc-settings.json` stops startup.
 - **`X_FRAME_OPTIONS = "DENY"` globally**; only `RuleAdmin.framed()` and `OpnDialogAdmin.framed()`
   (with `?_modal=1`) allow `SAMEORIGIN`. A new framed page needs the same treatment.
+- **The dialog frame also loads `about:blank` (on close) and the save page.** Code reacting to the
+  frame's `load` must ignore those (no form, dialog closed), or state such as a fitted height leaks
+  into the next dialog (`static/opn-dialog.js`).
 - **Dialog refreshes swap elements by `id`.** A region marked `data-refresh` without an `id`, or
   whose `id` differs between renders, is silently not refreshed (`static/opn-dialog.js`).
 - **Most editing is in Django admin**, not `views.py`. Look in `admin.py` + `forms.py` first for

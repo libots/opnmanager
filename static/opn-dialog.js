@@ -10,6 +10,8 @@
   const status = document.getElementById('opn-dialog-status');
 
   function open(url, size) {
+    // Each dialog starts at its CSS size; a small one then fits its form once it has loaded.
+    dialog.style.height = '';
     dialog.classList.toggle('opn-dialog-small', size === 'small');
     const target = new URL(url, location.origin);
     target.searchParams.set('_modal', '1');
@@ -33,8 +35,11 @@
   frame.addEventListener('load', () => {
     watcher?.disconnect();
     watcher = null;
-    if (!dialog.classList.contains('opn-dialog-small') || !frame.contentDocument?.body) return;
-    const form = frame.contentDocument.querySelector('#content-main > form') || frame.contentDocument.body;
+    // Closing loads about:blank into the frame, and a save loads a page without a form: neither may
+    // resize the dialog, or the next one would open a few pixels high.
+    if (!dialog.open || !dialog.classList.contains('opn-dialog-small')) return;
+    const form = frame.contentDocument?.querySelector('#content-main > form');
+    if (!form) return;
     fit(form);
     if ('ResizeObserver' in window) {
       watcher = new ResizeObserver(() => fit(form));
